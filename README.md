@@ -1,3 +1,27 @@
+# AI Files
+
+## Specification toolkits
+
+### Spec-Kit
+
+With uv
+```sh
+uv tool install specify-cli --from git+https://github.com/github/spec-kit.git
+```
+
+With pipx
+```sh
+pipx install --python "$(pyenv root)/versions/3.11.2/bin/python" git+https://github.com/github/spec-kit.git#egg=specify-cli
+```
+
+## Profiles
+
+Naming pattern <scope>-<type>-<provider>
+
+## default-reasoning-openrouter
+
+
+
 ## How Instructions are Combined[​](https://docs.roocode.com/features/custom-instructions?_highlight=rules#how-instructions-are-combined "Direct link to How Instructions are Combined")
 
 Instructions are placed in the system prompt in this exact format:
