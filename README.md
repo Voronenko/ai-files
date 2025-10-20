@@ -2,17 +2,123 @@
 
 ## Specification toolkits
 
-### Spec-Kit
+### BMAD Method CLI
 
-With uv
+A command-line tool for applying the BMAD (Behavior, Model, Action, Data) method to structure and guide software development.
+
+#### Installation
+
+##### Global Installation
+```bash
+npm install -g bmad-method
+```
+
+##### Local Installation
+```bash
+npx bmad-method install
+```
+
+##### Usage
+```bash
+bmad-method <command>
+```
+
+##### Commands
+
+| Command | Description |
+| --- | --- |
+| `init` | Initialize a new project with the BMAD method |
+| `generate` | Generate a new component based on the BMAD method |
+| `lint` | Lint a component based on the BMAD method |
+
+### Speckit
+
+Spec Kit enables **Spec-Driven Development**—a methodology where executable specifications drive the creation of working software. It integrates with AI coding agents to guide development through structured prompts and workflows.
+
+#### Installation
+
+Using `pipx` (Recommended)
+
+Ensure you have Python 3.11+ and `pipx` installed, then run:
+
+```bash
+pipx install --python "$(pyenv which python)" "git+https://github.com/github/spec-kit.git#egg=specify-cli"
+```
+
+Alternative: Using uv (from official docs)
+
 ```sh
 uv tool install specify-cli --from git+https://github.com/github/spec-kit.git
 ```
 
-With pipx
+#### Usage
+
+Check system requirements:
 ```sh
-pipx install --python "$(pyenv root)/versions/3.11.2/bin/python" git+https://github.com/github/spec-kit.git#egg=specify-cli
+specify check
 ```
+
+Initialize a new project:
+```sh
+specify init my-project
+```
+
+Features
+
+| Command               | Description                     |
+|-----------------------|---------------------------------|
+| /speckit.constitution | Define project principles       |
+| /speckit.specify      | Describe what to build          |
+| /speckit.plan         | Choose your tech stack          |
+| /speckit.tasks        | Generate implementation tasks   |
+| /speckit.implement    | Auto-generate code              |
+
+Works with AI agents: Claude, Copilot, Cursor, Gemini, Qwen, Windsurf, and more.
+
+
+### OpenSpec
+
+OpenSpec is a specification framework that enables AI-assisted, contract-first development. It helps teams define, validate, and implement APIs and system behaviors using structured, human-readable specs.
+
+#### Installation
+
+Global Installation
+
+```bash
+npm install -g @fission-ai/openspec@latest
+```
+
+Local Installation
+```bash
+npx @fission-ai/openspec@latest install
+```
+
+#### Usage
+
+Common workflows include:
+
+- Generating client/server stubs from OpenAPI or custom spec formats
+- Validating spec consistency
+- Integrating with AI development agents for spec-driven coding
+
+```bash
+openspec <command>
+```
+
+Commands
+| Command | Description |
+| --- | --- |
+| `init` | Initialize a new project with the OpenSpec method |
+| `generate` | Generate a new component based on the OpenSpec method |
+| `lint` | Lint a component based on the OpenSpec method |
+
+
+
+
+## Roocode
+
+Roocode is a powerful code generation tool that allows you to create code from a set of instructions.
+
 
 ## Profiles
 

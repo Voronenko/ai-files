@@ -1,3 +1,15 @@
+### 
+install-spec-bmad:
+	npm install -g bmad-method
+install-spec-bmad-local:
+	npx bmad-method install
+install-spec-kit:
+	pipx install --python "$(shell pyenv which python)" git+https://github.com/github/spec-kit.git#egg=specify-cli
+install-spec-openspec:
+	npm install -g @fission-ai/openspec@latest
+install-spec-openspec-local:
+	npx @fission-ai/openspec install
+
 update-externals:
 	rm -rf plugins/spec-kit
 	gilt overlay
