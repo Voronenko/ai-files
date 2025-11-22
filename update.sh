@@ -11,7 +11,7 @@ set -euo pipefail  # Exit on errors, undefined variables, and pipe failures
 
 # Source directory - will be overridden by DIST_DIR environment variable if set
 SOURCE_DIR="${DIST_DIR:-$HOME/ai-files/dist}"
-TARGET_DIR=".ai-files"
+TARGET_DIR="."
 
 # Colors for output
 RED='\033[0;31m'
@@ -268,11 +268,6 @@ for dir_path in * .*; do
             # Special handling for .specify - only copy non-existing files
             copy_non_existing "$SOURCE_DIR/$dir_name" "$TARGET_FULL_PATH/.specify"
             PROCESSED_DIRS=$((PROCESSED_DIRS + 1))
-            ;;
-        ".ai-files")
-            # Skip .ai-files to avoid circular copying
-            print_warning "Skipping .ai-files directory to avoid conflicts"
-            SKIPPED_DIRS=$((SKIPPED_DIRS + 1))
             ;;
         *)
             # Copy all other directories recursively
