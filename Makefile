@@ -19,10 +19,11 @@ clean:
 	mkdir -p dist/.claude/commands
 	mkdir -p ./dist/.ai-files
 
-build: publish-spec-kit
+build: publish-spec-kit publish-memory-bank
 	mkdir -p ./dist/.ai-files
 	cp -r plugins ./dist/.ai-files/
 	@echo "Copying and linking plugin files..."
+	cp update.sh ./dist/.ai-files/
 
 
 link-roo:
