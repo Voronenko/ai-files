@@ -3,32 +3,32 @@ giltDir: ~/.gilt/clone
 debug: false
 parallel: true
 
-repositories:
-  - git: https://github.com/github/spec-kit.git
-    version: main
-    sources:
-      # Copy all Markdown files from templates/commands/
-      - src: templates/commands/*.md
-        dstDir: plugins/spec-kit/specflows
-      - src: templates/*-template.md
-        dstDir: plugins/spec-kit/dotspecify/templates
-      - src: scripts/bash/*
-        dstDir: plugins/spec-kit/dotspecify/scripts/bash/
-      - src: memory/*
-        dstDir: plugins/spec-kit/dotspecify/memory
-    commands:
-     # rename templates per spec-kit logic
-      - cmd: bash
-        args:
-          - -c
-          - |
-            cd plugins/spec-kit/specflows
-            for f in *.md; do
-              base=$(basename "$f" .md)
-              mv "$f" "speckit.${base}.md"
-            done
-      - cmd: bash
-        args:
-          - -c
-          - |
-            chmod +x ./plugins/spec-kit/dotspecify/scripts/bash/*.sh
+# repositories:
+#   - git: https://github.com/github/spec-kit.git
+#     version: main
+#     sources:
+#       # Copy all Markdown files from templates/commands/
+#       - src: templates/commands/*.md
+#         dstDir: plugins/spec-kit/specflows
+#       - src: templates/*-template.md
+#         dstDir: plugins/spec-kit/dotspecify/templates
+#       - src: scripts/bash/*
+#         dstDir: plugins/spec-kit/dotspecify/scripts/bash/
+#       - src: memory/*
+#         dstDir: plugins/spec-kit/dotspecify/memory
+#     commands:
+#      # rename templates per spec-kit logic
+#       - cmd: bash
+#         args:
+#           - -c
+#           - |
+#             cd plugins/spec-kit/specflows
+#             for f in *.md; do
+#               base=$(basename "$f" .md)
+#               mv "$f" "speckit.${base}.md"
+#             done
+#       - cmd: bash
+#         args:
+#           - -c
+#           - |
+#             chmod +x ./plugins/spec-kit/dotspecify/scripts/bash/*.sh

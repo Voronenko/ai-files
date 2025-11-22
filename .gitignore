@@ -1,2 +1,4 @@
 .roomodes
+.claude
 dist/*
+.env
