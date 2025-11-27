@@ -24,6 +24,8 @@ build: publish-spec-kit publish-memory-bank
 	cp -r plugins ./dist/.ai-files/
 	@echo "Copying and linking plugin files..."
 	cp update.sh ./dist/.ai-files/
+	cp AGENTS.md ./dist/
+	cp COMMON_CODE_TASKS.md ./dist/
 
 
 link-roo:
