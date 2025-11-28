@@ -1,15 +1,3 @@
-###
-install-spec-bmad:
-	npm install -g bmad-method
-install-spec-bmad-local:
-	npx bmad-method install
-install-spec-kit:
-	pipx install --python "$(shell pyenv which python)" git+https://github.com/github/spec-kit.git#egg=specify-cli
-install-spec-openspec:
-	npm install -g @fission-ai/openspec@latest
-install-spec-openspec-local:
-	npx @fission-ai/openspec install
-
 clean:
 	# Remove old build
 	rm -rf ./dist/
@@ -19,13 +7,19 @@ clean:
 	mkdir -p dist/.claude/commands
 	mkdir -p ./dist/.ai-files
 
-build: publish-spec-kit publish-memory-bank
+build: publish-spec-kit publish-memory-bank publish-prompts
 	mkdir -p ./dist/.ai-files
 	cp -r plugins ./dist/.ai-files/
 	@echo "Copying and linking plugin files..."
 	cp update.sh ./dist/.ai-files/
 	cp AGENTS.md ./dist/
 	cp COMMON_CODE_TASKS.md ./dist/
+	cp -r config/claude/* ./dist/.claude/
+	cp -r rules ./dist/.ai-files/
+
+publish-prompts:
+	mkdir -p ./dist/.ai-files/prompts
+	cp -r ./prompts/ ./dist/.ai-files/prompts/
 
 
 link-roo:
@@ -39,24 +33,6 @@ adr-toc: adr-graph
 adr-graph:
 	adr generate graph > ./docs/architecture/decisions/graph.dot
 	dot -Tsvg ./docs/architecture/decisions/graph.dot -o ./docs/architecture/decisions/graph.svg
-
-install-mermaid-cli:
-	npm install -g @mermaid-js/mermaid-cli
-
-install-cli-anthropic-claude-code:
-	npm install -g @anthropic-ai/claude-code
-	echo "Use cli command claude"
-	echo "Refer: obsidian://open?vault=KB&file=pages%2FDEVELOPMENT%2FAI-WORKPLACE%2Fai-workplace-claudecode"
-
-install-cli-aider:
-	pipx install aider-chat[all] --python $(shell which python)
-	pipx inject aider-chat google-generativeai
-	echo "Use cli command aider"
-	echo "Refer: obsidian://open?vault=KB&file=pages%2FDEVELOPMENT%2FAI-WORKPLACE%2Fai-workpace-aider"
-
-install-cli-taskmaster:
-	npm install -g task-master-ai
-	echo "Use task-master init on a new project"
 
 publish-spec-kit-kilo:
 	@echo "Fetching latest spec-kit release..."
@@ -198,3 +174,33 @@ publish-memory-bank:
 	@echo "✅ Memory bank successfully published to all agent directories:"
 	@echo "   • ./dist/.roo/rules/memory-bank/"
 	@echo "   • ./dist/.kilocode/rules/memory-bank/"
+
+
+## Common tools installation routines
+
+install-spec-bmad:
+	npm install -g bmad-method
+install-spec-bmad-local:
+	npx bmad-method install
+install-spec-kit:
+	pipx install --python "$(shell pyenv which python)" git+https://github.com/github/spec-kit.git#egg=specify-cli
+install-spec-openspec:
+	npm install -g @fission-ai/openspec@latest
+install-spec-openspec-local:
+	npx @fission-ai/openspec install
+install-mermaid-cli:
+	npm install -g @mermaid-js/mermaid-cli
+install-cli-anthropic-claude-code:
+	npm install -g @anthropic-ai/claude-code
+	echo "Use cli command claude"
+	echo "Refer: obsidian://open?vault=KB&file=pages%2FDEVELOPMENT%2FAI-WORKPLACE%2Fai-workplace-claudecode"
+install-cli-aider:
+	pipx install aider-chat[all] --python $(shell which python)
+	pipx inject aider-chat google-generativeai
+	echo "Use cli command aider"
+	echo "Refer: obsidian://open?vault=KB&file=pages%2FDEVELOPMENT%2FAI-WORKPLACE%2Fai-workpace-aider"
+install-cli-taskmaster:
+	npm install -g task-master-ai
+	echo "Use task-master init on a new project"
+
+

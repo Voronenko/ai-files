@@ -193,3 +193,13 @@ For team environments, consider these approaches:
 **Hybrid Approach**: Combine global rules for organization standards with project-specific workspace rules for project-specific requirements. Workspace rules can override global rules when needed.
 
 The directory-based approach offers better organization than single `.roorules` files and supports both global and project-level customization.
+
+
+
+## 3rd party work and ideas used
+
+### claude sessions  
+  - https://github.com/iannuttall/claude-sessions/
+  - see video https://www.youtube.com/watch?v=higAxJk_zig
+
+
