@@ -92,7 +92,7 @@ User asks to "find file/directory by name"?
 
 User asks for "directory structure/tree"?
   → USE: fd . -t d  (directories) + fd . -t f  (files)
-  → NEVER: tree (not installed!)
+  → NEVER: tree
 
 Need just current directory?
   → USE: ls -la  (OK for single dir)

@@ -13,7 +13,7 @@ build: publish-spec-kit publish-memory-bank publish-prompts
 	@echo "Copying and linking plugin files..."
 	cp update.sh ./dist/.ai-files/
 	cp AGENTS.md ./dist/
-	cp COMMON_CODE_TASKS.md ./dist/
+	cp COMMON_CODE_TASKS.md ./dist/.ai-files/
 	cp -r config/claude/* ./dist/.claude/
 	cp -r rules ./dist/.ai-files/
 
@@ -149,19 +149,19 @@ publish-spec-kit-templates:
 update-memory-bank:
 	@echo "Downloading memory bank from kilo.ai..."
 	@mkdir -p rules
-	@curl -s -o "rules/memory-bank-instructions.md" "https://kilo.ai/docs/downloads/memory-bank.md"
+	@curl -s -o "prompts/memory-bank-instructions.md" "https://kilo.ai/docs/downloads/memory-bank.md"
 	@if [ $$? -ne 0 ]; then \
 		echo "Error: Failed to download memory bank file"; \
 		exit 1; \
 	fi
 	@echo "Processing memory bank file..."
-	@sed -i 's/\.kilocode\//\.ai-files\//g' "rules/memory-bank-instructions.md"
-	@sed -i 's/Kilo Code/AI FILES/g' "rules/memory-bank-instructions.md"
-	@echo "✅ Memory bank successfully downloaded and updated to rules/memory-bank-instructions.md"
+	@sed -i 's/\.kilocode\/rules\//\.ai-files\//g' "prompts/memory-bank-instructions.md"
+	@sed -i 's/Kilo Code/AI FILES/g' "prompts/memory-bank-instructions.md"
+	@echo "✅ Memory bank successfully downloaded and updated to prompts/memory-bank-instructions.md"
 
 publish-memory-bank:
 	@echo "Publishing memory bank instructions to all agents..."
-	@if [ ! -f "rules/memory-bank-instructions.md" ]; then \
+	@if [ ! -f "prompts/memory-bank-instructions.md" ]; then \
 		echo "Error: Memory bank file not found. Run 'make update-memory-bank' first."; \
 		exit 1; \
 	fi
@@ -169,8 +169,8 @@ publish-memory-bank:
 	@mkdir -p ./dist/.roo/rules/memory-bank
 	@mkdir -p ./dist/.kilocode/rules/memory-bank
 	@echo "Copying memory bank instructions to agent directories..."
-	@cp "rules/memory-bank-instructions.md" "./dist/.roo/rules/memory-bank/"
-	@cp "rules/memory-bank-instructions.md" "./dist/.kilocode/rules/memory-bank/"
+	@cp "prompts/memory-bank-instructions.md" "./dist/.roo/rules/memory-bank/"
+	@cp "prompts/memory-bank-instructions.md" "./dist/.kilocode/rules/memory-bank/"
 	@echo "✅ Memory bank successfully published to all agent directories:"
 	@echo "   • ./dist/.roo/rules/memory-bank/"
 	@echo "   • ./dist/.kilocode/rules/memory-bank/"
