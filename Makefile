@@ -2,6 +2,7 @@ clean:
 	# Remove old build
 	rm -rf ./dist/
 	# Ensure target directories exist one level up from .ai-files
+	mkdir -p dist/.ai-files/commands/
 	mkdir -p dist/.roo/commands
 	mkdir -p dist/.kilocode/workflows
 	mkdir -p dist/.claude/commands
@@ -11,11 +12,21 @@ build: publish-spec-kit publish-memory-bank publish-prompts
 	mkdir -p ./dist/.ai-files
 	cp -r plugins ./dist/.ai-files/
 	@echo "Copying and linking plugin files..."
+        # updating utility
 	cp update.sh ./dist/.ai-files/
+        # unified stub for AGENTS.md 
 	cp AGENTS.md ./dist/
+	# redirector for claude code to use AGENTS.md
+	cp CLAUDE.md ./dist/
+	# instructions for more efficient tools using
 	cp COMMON_CODE_TASKS.md ./dist/.ai-files/
+	# clause specific configs
 	cp -r config/claude/* ./dist/.claude/
 	cp -r rules ./dist/.ai-files/
+	# unified commands (so-called custom prompts)
+	cp -r commands ./dist/.ai-files/
+	# claude supports resolving symlinks, only one source
+	ln -s ./dist/.ai-files/commands ./dist/.claude/commands
 
 publish-prompts:
 	mkdir -p ./dist/.ai-files/prompts

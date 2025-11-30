@@ -4,7 +4,11 @@
       "Bash(for:*)",
       "Bash(do grep -l \"## Communication Protocol\" \"$file\")",
       "Bash(done)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(terraform validate:*)",
+      "Bash(terraform fmt:*)"
+      "Edit(./ai-files/sessions/**)",
+      "Write(./ai-files/sessions/**)"
     ],
     "deny": [],
     "ask": []
