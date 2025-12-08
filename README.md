@@ -124,7 +124,7 @@ Roocode is a powerful code generation tool that allows you to create code from a
 
 Naming pattern <scope>-<type>-<provider>
 
-## default-reasoning-openrouter
+# default-reasoning-openrouter
 
 
 
@@ -195,10 +195,74 @@ For team environments, consider these approaches:
 The directory-based approach offers better organization than single `.roorules` files and supports both global and project-level customization.
 
 
+## MCP servers
+
+```json
+  {
+    "mcpServers": {
+      "memory": {
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-memory"]
+      },
+      "playwright": {
+        "command": "npx",
+        "args": ["-y", "@playwright/mcp@latest"]
+      },
+      "ssh": {
+        "command": "npx",
+        "args": ["-y", "@iflow-mcp/ssh-mcp-server"]
+      },
+      "browsermcp": {
+        "command": "npx",
+        "args": ["-y", "@anthropic/mcp-server-browserbase@latest"],
+        "env": {
+          "BROWSERBASE_API_KEY": "<YOUR_BROWSERBASE_API_KEY>",
+          "BROWSERBASE_PROJECT_ID": "<YOUR_BROWSERBASE_PROJECT_ID>"
+        }
+      },
+      "atlassian": {
+        "command": "npx",
+        "args": ["-y", "@anthropic/mcp-server-atlassian@latest"],
+        "env": {
+          "ATLASSIAN_CLIENT_ID": "<YOUR_ATLASSIAN_CLIENT_ID>",
+          "ATLASSIAN_CLIENT_SECRET": "<YOUR_ATLASSIAN_CLIENT_SECRET>",
+          "ATLASSIAN_CALLBACK_PORT": "48923"
+        }
+      },
+      "slack": {
+        "command": "npx",
+        "args": ["-y", "@anthropic/mcp-server-slack@latest"],
+        "env": {
+          "SLACK_BOT_TOKEN": "<YOUR_SLACK_BOT_TOKEN>",
+          "SLACK_TEAM_ID": "<YOUR_SLACK_TEAM_ID>"
+        }
+      },
+      "circleci": {
+        "command": "npx",
+        "args": ["-y", "@anthropic/mcp-server-circleci@latest"],
+        "env": {
+          "CIRCLECI_TOKEN": "<YOUR_CIRCLECI_TOKEN>",
+          "CIRCLECI_BASE_URL": "https://circleci.com"
+        }
+      }
+    }
+  }
+```
+
+  Де взяти credentials:
+
+  | Сервіс      | Де отримати                                                            |
+  |-------------|------------------------------------------------------------------------|
+  | Browserbase | https://browserbase.com → Dashboard → API Keys                         |
+  | Atlassian   | https://developer.atlassian.com/console/myapps/ → Create OAuth 2.0 app |
+  | Slack       | https://api.slack.com/apps → Create App → OAuth & Permissions          |
+  | CircleCI    | https://app.circleci.com → User Settings → Personal API Tokens         |
+
+
 
 ## 3rd party work and ideas used
 
-### claude sessions  
+### claude sessions
   - https://github.com/iannuttall/claude-sessions/
   - see video https://www.youtube.com/watch?v=higAxJk_zig
 
