@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "id": "ai-files-pattern-rules",
+      "name": "AI FILES Pattern Rule Loader",
+      "description": "Loads rules based on patterns.json and folder globs",
+      "type": "command",
+      "command": "python ~/.ai-files/engines/loader.py \"{{file_paths}}\"",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "file_paths": {
+            "type": "string",
+            "description": "Space-separated list of active files"
+          }
+        },
+        "required": ["file_paths"]
+      },
+      "outputType": "text"
+    }
+  ],
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "id": "auto-ai-files-rule-injection",
+            "type": "command",
+            "command": "python ~/.ai-files/engines/loader.py \"$CLAUDE_FILE_PATHS\"",
+            "inject_output_as_rules": true
+          }
+        ]
+      }
+    ]
+  }
+}
+

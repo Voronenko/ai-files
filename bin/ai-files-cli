@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+dispatch_to_external() {
+    local cmd="$1"
+    shift
+    local external="${SELF_DIR}/ai-files-cli-${cmd}"
+
+    if [[ -x "$external" ]]; then
+        exec "$external" "$@"
+    fi
+}
+
+show_root_help() {
+    cat <<EOF
+Usage: ai-files-cli <command> [options]
+
+Commands:
+  mcp          Configure and manage MCP servers
+  update       Update ai-files utilities (if ai-files-cli-update exists)
+
+Any command can be overridden by placing a file:
+  ai-files-cli-<command>
+
+Examples:
+  ai-files-cli mcp list
+  ai-files-cli update
+EOF
+}
+
+CMD="${1:-help}"
+shift || true
+
+# Try external override first
+dispatch_to_external "$CMD" "$@"
+
+case "$CMD" in
+    help|-h|--help)
+        show_root_help
+        ;;
+    mcp)
+        echo "Error: ai-files-cli-mcp not found. Create executable: ${SELF_DIR}/ai-files-cli-mcp" >&2
+        exit 1
+        ;;
+    update)
+        echo "No builtin update command. Provide ai-files-cli-update." >&2
+        exit 1
+        ;;
+    *)
+        echo "Unknown command: $CMD" >&2
+        show_root_help
+        exit 1
+        ;;
+esac

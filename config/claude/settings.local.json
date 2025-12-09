@@ -12,5 +12,11 @@
     ],
     "deny": [],
     "ask": []
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.ai-files/config/claude/statusline.sh",
+    "padding": 0 // Optional: set to 0 to let status line go to edge
   }
+
 }

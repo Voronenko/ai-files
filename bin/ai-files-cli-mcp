@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG="${HOME}/.kilocode/mcp.json"
+mkdir -p "$(dirname "$CONFIG")"
+
+ensure_config_exists() {
+    if [[ ! -f "$CONFIG" ]]; then
+        echo '{ "mcpServers": {} }' > "$CONFIG"
+    fi
+}
+
+show_mcp_help() {
+    cat <<EOF
+Usage: ai-files-cli mcp [options] [command]
+
+Configure and manage MCP servers
+
+Commands:
+  serve [options] -- <cmd> [args...]     Start an MCP stdio server
+  add [options] <name> <cmd|url> [...]   Add MCP server entry
+  remove <name>                          Remove MCP server
+  list                                   List configured MCP servers
+  get <name>                             Get details about a server
+  add-json <name> <json>                 Add server via JSON
+  help                                   Show this help
+
+Options for 'add':
+  --transport http|sse|stdio
+  --env NAME=VALUE      (can repeat)
+  --   end of options
+
+Examples:
+  ai-files-cli mcp add --transport http sentry https://mcp.sentry.dev/mcp
+  ai-files-cli mcp add --transport sse asana https://mcp.asana.com/sse
+  ai-files-cli mcp add --transport stdio git --env TOKEN=AA -- npx -y git-mcp-server
+
+Launching:
+  ai-files-cli mcp serve --env XYZ=111 -- ./server-binary --stdio
+EOF
+}
+
+############################################
+# add-json
+############################################
+mcp_add_json() {
+    local name="$1"
+    local json="$2"
+
+    ensure_config_exists
+    jq ".mcpServers.\"$name\" = $json" "$CONFIG" | sponge "$CONFIG"
+
+    echo "Added MCP server: $name"
+}
+
+############################################
+# list
+############################################
+mcp_list() {
+    ensure_config_exists
+    jq -r '.mcpServers | keys[]?' "$CONFIG"
+}
+
+############################################
+# get
+############################################
+mcp_get() {
+    local name="$1"
+    ensure_config_exists
+    jq ".mcpServers.\"$name\"" "$CONFIG"
+}
+
+############################################
+# remove
+############################################
+mcp_remove() {
+    local name="$1"
+    ensure_config_exists
+    jq "del(.mcpServers.\"$name\")" "$CONFIG" | sponge "$CONFIG"
+    echo "Removed MCP server: $name"
+}
+
+############################################
+# add (FULL IMPLEMENTATION)
+############################################
+mcp_add() {
+    local transport=""
+    declare -A envvars
+    local name=""
+    local commandOrUrl=""
+    local -a command_args=()
+
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --transport)
+                transport="$2"
+                shift 2
+                ;;
+            --env)
+                env_line="$2"
+                if [[ "$env_line" != *=* ]]; then
+                    echo "Invalid env format: $env_line"
+                    exit 1
+                fi
+                key="${env_line%%=*}"
+                val="${env_line#*=}"
+                envvars["$key"]="$val"
+                shift 2
+                ;;
+            --)
+                shift
+                command_args=("$@")
+                break
+                ;;
+            *)
+                if [[ -z "$name" ]]; then
+                    name="$1"
+                elif [[ -z "$commandOrUrl" ]]; then
+                    commandOrUrl="$1"
+                else
+                    command_args+=("$1")
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$transport" ]]; then
+        echo "--transport is required"
+        exit 1
+    fi
+
+    case "$transport" in
+        http|sse)
+            if [[ -z "$commandOrUrl" ]]; then
+                echo "URL required for http/sse transport"
+                exit 1
+            fi
+            local json
+            json="$(jq -n \
+                --arg url "$commandOrUrl" \
+                --arg tr "$transport" \
+                '{
+                    transport: $tr,
+                    url: $url
+                }'
+            )"
+            ;;
+        stdio)
+            if [[ -z "$commandOrUrl" ]]; then
+                echo "Command required for stdio transport"
+                exit 1
+            fi
+            # env → array of { "NAME": "VALUE" }
+            local envjson
+            if (( ${#envvars[@]} > 0 )); then
+                envjson=$(printf '%s\n' "${!envvars[@]}" | jq -Rn '
+                    [inputs | {key: ., val: env.vars[.] }] | 
+                    map({( .key ): .val})
+                ' vars="$(declare -p envvars)")
+            else
+                envjson="null"
+            fi
+
+            local json
+            json="$(jq -n \
+                --arg tr "stdio" \
+                --arg cmd "$commandOrUrl" \
+                --argjson env "$(jq -n "$(for k in "${!envvars[@]}"; do printf '.%s="%s" ' "$k" "${envvars[$k]}"; done)")" \
+                --argjson args "$(printf '%s\n' "${command_args[@]}" | jq -R . | jq -s .)" \
+                '{
+                    transport: $tr,
+                    command: $cmd,
+                    args: $args,
+                    env: (if ($env|length)==0 then null else $env end)
+                }'
+            )"
+            ;;
+        *)
+            echo "Unsupported transport: $transport"
+            exit 1
+            ;;
+    esac
+
+    mcp_add_json "$name" "$json"
+}
+
+############################################
+# serve (FULL IMPLEMENTATION)
+############################################
+mcp_serve() {
+    declare -A envvars
+    local -a cmd=()
+
+    # Parse
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --env)
+                env_line="$2"
+                key="${env_line%%=*}"
+                val="${env_line#*=}"
+                envvars["$key"]="$val"
+                shift 2
+                ;;
+            --)
+                shift
+                cmd=("$@")
+                break
+                ;;
+            *)
+                echo "Unknown serve option: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    if (( ${#cmd[@]} == 0 )); then
+        echo "Usage: ai-files-cli mcp serve -- <cmd> [args...]"
+        exit 1
+    fi
+
+    # Export env vars
+    for k in "${!envvars[@]}"; do
+        export "$k"="${envvars[$k]}"
+    done
+
+    exec "${cmd[@]}"
+}
+
+############################################
+# MAIN DISPATCH
+############################################
+SUB="${1:-help}"
+shift || true
+
+case "$SUB" in
+    help|-h|--help)
+        show_mcp_help
+        ;;
+    list)
+        mcp_list
+        ;;
+    get)
+        [[ $# -lt 1 ]] && { echo "name required"; exit 1; }
+        mcp_get "$1"
+        ;;
+    remove)
+        [[ $# -lt 1 ]] && { echo "name required"; exit 1; }
+        mcp_remove "$1"
+        ;;
+    add-json)
+        [[ $# -lt 2 ]] && { echo "name and json required"; exit 1; }
+        mcp_add_json "$1" "$2"
+        ;;
+    add)
+        mcp_add "$@"
+        ;;
+    serve)
+        mcp_serve "$@"
+        ;;
+    *)
+        echo "Unknown command: $SUB"
+        show_mcp_help
+        exit 1
+        ;;
+esac
