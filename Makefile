@@ -2,11 +2,14 @@ clean:
 	# Remove old build
 	rm -rf ./dist/
 	# Ensure target directories exist one level up from .ai-files
-	mkdir -p dist/.ai-files/commands/
-	mkdir -p dist/.roo/commands
-	mkdir -p dist/.kilocode/workflows
-	mkdir -p dist/.claude/commands
 	mkdir -p ./dist/.ai-files
+	mkdir -p ./dist/.ai-files/commands/
+	mkdir -p ./dist/.roo/commands
+	mkdir -p ./dist/.kilocode/workflows
+	# claude supports resolving symlinks, only one source
+	mkdir -p ./dist/.claude/commands
+	ln -s ./dist/.ai-files/commands/ ./dist/.claude/commands
+
 
 build: publish-spec-kit publish-memory-bank publish-prompts
 	mkdir -p ./dist/.ai-files
@@ -14,7 +17,7 @@ build: publish-spec-kit publish-memory-bank publish-prompts
 	@echo "Copying and linking plugin files..."
         # updating utility
 	cp update.sh ./dist/.ai-files/
-        # unified stub for AGENTS.md 
+        # unified stub for AGENTS.md
 	cp AGENTS.md ./dist/
 	# redirector for claude code to use AGENTS.md
 	cp CLAUDE.md ./dist/
@@ -25,8 +28,6 @@ build: publish-spec-kit publish-memory-bank publish-prompts
 	cp -r rules ./dist/.ai-files/
 	# unified commands (so-called custom prompts)
 	cp -r commands ./dist/.ai-files/
-	# claude supports resolving symlinks, only one source
-	ln -s ./dist/.ai-files/commands ./dist/.claude/commands
 
 publish-prompts:
 	mkdir -p ./dist/.ai-files/prompts
@@ -54,13 +55,25 @@ publish-spec-kit-kilo:
 	fi; \
 	echo "Latest release: $$LATEST_RELEASE"; \
 	DOWNLOAD_URL="https://github.com/github/spec-kit/releases/download/$$LATEST_RELEASE/spec-kit-template-kilocode-sh-$$LATEST_RELEASE.zip"; \
-	echo "Downloading from: $$DOWNLOAD_URL"; \
-	mkdir -p ./dist; \
-	curl -L -o "./dist/spec-kit-kilo.zip" "$$DOWNLOAD_URL"; \
-	if [ $$? -ne 0 ]; then \
-		echo "Error: Failed to download spec-kit template"; \
-		exit 1; \
+	CACHE_DIR="./.cache"; \
+	CACHE_FILE="$$CACHE_DIR/spec-kit-kilo-$$LATEST_RELEASE.zip"; \
+	mkdir -p "$$CACHE_DIR"; \
+	\
+	# Check if cached version exists \
+	if [ -f "$$CACHE_FILE" ]; then \
+		echo "Using cached version from $$CACHE_FILE"; \
+		cp "$$CACHE_FILE" "./dist/spec-kit-kilo.zip"; \
+	else \
+		echo "Downloading from: $$DOWNLOAD_URL"; \
+		curl -L -o "./dist/spec-kit-kilo.zip" "$$DOWNLOAD_URL"; \
+		if [ $$? -ne 0 ]; then \
+			echo "Error: Failed to download spec-kit template"; \
+			exit 1; \
+		fi; \
+		# Cache the downloaded file \
+		cp "./dist/spec-kit-kilo.zip" "$$CACHE_FILE"; \
 	fi; \
+	\
 	echo "Extracting .kilocode/ contents..."; \
 	cd ./dist && unzip -q -o spec-kit-kilo.zip ".kilocode/*" && rm spec-kit-kilo.zip; \
 	if [ $$? -ne 0 ]; then \
@@ -78,13 +91,25 @@ publish-spec-kit-roo:
 	fi; \
 	echo "Latest release: $$LATEST_RELEASE"; \
 	DOWNLOAD_URL="https://github.com/github/spec-kit/releases/download/$$LATEST_RELEASE/spec-kit-template-roo-sh-$$LATEST_RELEASE.zip"; \
-	echo "Downloading from: $$DOWNLOAD_URL"; \
-	mkdir -p ./dist; \
-	curl -L -o "./dist/spec-kit-roo.zip" "$$DOWNLOAD_URL"; \
-	if [ $$? -ne 0 ]; then \
-		echo "Error: Failed to download spec-kit roo template"; \
-		exit 1; \
+	CACHE_DIR="./.cache"; \
+	CACHE_FILE="$$CACHE_DIR/spec-kit-roo-$$LATEST_RELEASE.zip"; \
+	mkdir -p "$$CACHE_DIR"; \
+	\
+	# Check if cached version exists \
+	if [ -f "$$CACHE_FILE" ]; then \
+		echo "Using cached version from $$CACHE_FILE"; \
+		cp "$$CACHE_FILE" "./dist/spec-kit-roo.zip"; \
+	else \
+		echo "Downloading from: $$DOWNLOAD_URL"; \
+		curl -L -o "./dist/spec-kit-roo.zip" "$$DOWNLOAD_URL"; \
+		if [ $$? -ne 0 ]; then \
+			echo "Error: Failed to download spec-kit roo template"; \
+			exit 1; \
+		fi; \
+		# Cache the downloaded file \
+		cp "./dist/spec-kit-roo.zip" "$$CACHE_FILE"; \
 	fi; \
+	\
 	echo "Extracting .roo/ contents..."; \
 	cd ./dist && unzip -q -o spec-kit-roo.zip ".roo/*" && rm spec-kit-roo.zip; \
 	if [ $$? -ne 0 ]; then \
@@ -102,20 +127,35 @@ publish-spec-kit-claude:
 	fi; \
 	echo "Latest release: $$LATEST_RELEASE"; \
 	DOWNLOAD_URL="https://github.com/github/spec-kit/releases/download/$$LATEST_RELEASE/spec-kit-template-claude-sh-$$LATEST_RELEASE.zip"; \
-	echo "Downloading from: $$DOWNLOAD_URL"; \
-	mkdir -p ./dist; \
-	curl -L -o "./dist/spec-kit-claude.zip" "$$DOWNLOAD_URL"; \
-	if [ $$? -ne 0 ]; then \
-		echo "Error: Failed to download spec-kit claude template"; \
-		exit 1; \
+	CACHE_DIR="./.cache"; \
+	CACHE_FILE="$$CACHE_DIR/spec-kit-claude-$$LATEST_RELEASE.zip"; \
+	mkdir -p "$$CACHE_DIR"; \
+	\
+	# Check if cached version exists \
+	if [ -f "$$CACHE_FILE" ]; then \
+		echo "Using cached version from $$CACHE_FILE"; \
+		cp "$$CACHE_FILE" "./dist/spec-kit-claude.zip"; \
+	else \
+		echo "Downloading from: $$DOWNLOAD_URL"; \
+		curl -L -o "./dist/spec-kit-claude.zip" "$$DOWNLOAD_URL"; \
+		if [ $$? -ne 0 ]; then \
+			echo "Error: Failed to download spec-kit claude template"; \
+			exit 1; \
+		fi; \
+		# Cache the downloaded file \
+		cp "./dist/spec-kit-claude.zip" "$$CACHE_FILE"; \
 	fi; \
-	echo "Extracting .claude/ contents..."; \
-	cd ./dist && unzip -q -o spec-kit-claude.zip ".claude/*" && rm spec-kit-claude.zip; \
+	\
+	echo "Extracting .claude/commands/ contents..."
+	rm -rf ./dist/.ai-files/commands/claude-speckit/
+	mkdir -p ./dist/.ai-files/commands/claude-speckit/
+	cd ./dist && unzip -q -o spec-kit-claude.zip ".claude/commands/*" -d .ai-files/commands/claude-speckit/ && rm spec-kit-claude.zip; \
+	mv .ai-files/commands/claude-speckit/.claude/commands/* .ai-files/commands/claude-speckit/ && rm -rf .ai-files/commands/claude-speckit/.claude/; \
 	if [ $$? -ne 0 ]; then \
 		echo "Error: Failed to extract spec-kit claude template"; \
 		exit 1; \
 	fi; \
-	echo "✅ Successfully extracted .claude/ contents to ./dist/.claude/"
+	echo "✅ Successfully extracted .claude/commands/ contents to ./dist/.ai-files/commands/claude-speckit/"
 
 publish-spec-kit: publish-spec-kit-kilo publish-spec-kit-roo publish-spec-kit-claude publish-spec-kit-templates
 	@echo ""
