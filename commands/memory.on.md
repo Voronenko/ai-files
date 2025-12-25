@@ -1,1 +1,1 @@
-Read @./ai-files/prompts/memory-bank-instructions.md
+Read @./.ai-files/prompts/memory-bank-instructions.md

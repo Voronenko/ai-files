@@ -8,10 +8,9 @@ clean:
 	mkdir -p ./dist/.kilocode/workflows
 	# claude supports resolving symlinks, only one source
 	mkdir -p ./dist/.claude/commands
-	ln -s ./dist/.ai-files/commands/ ./dist/.claude/commands
 
 
-build: publish-spec-kit publish-memory-bank publish-prompts
+prepare-dist: publish-spec-kit publish-memory-bank publish-prompts
 	mkdir -p ./dist/.ai-files
 	cp -r plugins ./dist/.ai-files/
 	@echo "Copying and linking plugin files..."
@@ -28,10 +27,27 @@ build: publish-spec-kit publish-memory-bank publish-prompts
 	cp -r rules ./dist/.ai-files/
 	# unified commands (so-called custom prompts)
 	cp -r commands ./dist/.ai-files/
+	chmod +x ./dist/.specify/scripts/bash/*.sh
+
+prepare-claude:
+	@mkdir -p ./dist/.claude/commands
+	@find ./dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
+		for f do \
+			ln -sfr "$$f" "./dist/.claude/commands/$$(basename "$$f")"; \
+		done \
+	' sh {} +
+	@find ./dist/.ai-files/commands/claude-speckit/ -type f -name '*.md' -exec sh -c '\
+		for f do \
+			ln -sfr "$$f" "./dist/.claude/commands/$$(basename "$$f")"; \
+		done \
+	' sh {} +
+
+build: prepare-dist prepare-claude
+	echo build completed
 
 publish-prompts:
 	mkdir -p ./dist/.ai-files/prompts
-	cp -r ./prompts/ ./dist/.ai-files/prompts/
+	cp -r ./prompts/ ./dist/.ai-files
 
 
 link-roo:
@@ -254,4 +270,11 @@ install-cli-taskmaster:
 	npm install -g task-master-ai
 	echo "Use task-master init on a new project"
 
-
+install-antigravity-apt:
+	sudo mkdir -p /etc/apt/keyrings
+	curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | \
+		sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
+	echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | \
+		sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
+	sudo apt update
+	sudo apt install antigravity
