@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -e
+
+token="$(pass show psst/github/github_token 2>/dev/null || true)"
+
+if [ -z "$token" ]; then
+  echo "ERROR: Could not load token from pass." >&2
+  exit 1
+fi
+
+export GITHUB_PERSONAL_ACCESS_TOKEN="$token"
+exec github-mcp-server stdio

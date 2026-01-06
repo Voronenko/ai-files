@@ -278,3 +278,55 @@ install-antigravity-apt:
 		sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
 	sudo apt update
 	sudo apt install antigravity
+
+install-ai-goose:
+	@set -e; \
+        LATEST_TAG="$$(curl -fsSL https://api.github.com/repos/block/goose/releases/latest \
+                | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p')"; \
+        echo "Latest goose release: $$LATEST_TAG"; \
+        echo "Downloading installer..."; \
+        curl -fsSL \
+                "https://github.com/block/goose/releases/download/$$LATEST_TAG/download_cli.sh" \
+                -o /tmp/download_goose_cli.sh; \
+        chmod +x /tmp/download_goose_cli.sh; \
+        echo "Installing goose to $$HOME/dotfiles/bin"; \
+        GOOSE_BIN_DIR="$$HOME/ai-files/bin" \
+                bash /tmp/download_goose_cli.sh
+
+install-aider-desk:
+	@set -e; \
+	echo "Detecting latest aider-desk release..."; \
+	RELEASE_JSON="$$(curl -fsSL https://api.github.com/repos/hotovo/aider-desk/releases/latest)"; \
+	TAG="$$(echo "$$RELEASE_JSON" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p')"; \
+	APPIMAGE_URL="$$(echo "$$RELEASE_JSON" \
+		| sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*x86_64\.AppImage\)".*/\1/p')"; \
+	if [ -z "$$APPIMAGE_URL" ]; then \
+		echo "ERROR: x86_64 AppImage not found for $$TAG"; \
+		exit 1; \
+	fi; \
+	mkdir -p "$$HOME/Applications"; \
+	DEST="$$HOME/Applications/$$(basename $$APPIMAGE_URL)"; \
+	echo "Latest version: $$TAG"; \
+	echo "Downloading to $$DEST"; \
+	curl -fsSL "$$APPIMAGE_URL" -o "$$DEST"; \
+	chmod +x "$$DEST"; \
+	echo "aider-desk installed successfully"
+
+install-desktop-ai-goose:
+	@set -e; \
+        echo "Detecting latest goose desktop release..."; \
+        RELEASE_JSON="$$(curl -fsSL https://api.github.com/repos/block/goose/releases/latest)"; \
+        TAG="$$(echo "$$RELEASE_JSON" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p')"; \
+        DEB_URL="$$(echo "$$RELEASE_JSON" \
+                | sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]*goose_[^"]*_amd64\.deb\)".*/\1/p')"; \
+        if [ -z "$$DEB_URL" ]; then \
+                echo "ERROR: amd64 .deb not found for $$TAG"; \
+                exit 1; \
+        fi; \
+        DEB_FILE="/tmp/$$(basename $$DEB_URL)"; \
+        echo "Latest version: $$TAG"; \
+        echo "Downloading $$DEB_FILE"; \
+        curl -fsSL "$$DEB_URL" -o "$$DEB_FILE"; \
+        echo "Installing goose desktop (requires sudo)..."; \
+        sudo dpkg -i "$$DEB_FILE"; \
+        echo "goose desktop installed successfully"
