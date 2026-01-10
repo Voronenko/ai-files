@@ -330,3 +330,26 @@ install-desktop-ai-goose:
         echo "Installing goose desktop (requires sudo)..."; \
         sudo dpkg -i "$$DEB_FILE"; \
         echo "goose desktop installed successfully"
+
+install-opencode-desktop:
+	@set -e; \
+	APPIMAGE_URL="https://opencode.ai/download/linux-x64-appimage"; \
+	mkdir -p "$$HOME/Applications"; \
+	DEST="$$HOME/Applications/opencode-desktop.AppImage"; \
+	echo "Downloading to $$DEST"; \
+	curl -fsSL "$$APPIMAGE_URL" -o "$$DEST"; \
+	chmod +x "$$DEST";\
+	echo "opencode-desktop installed successfully"
+install-opencode-cli:
+	@INSTALL_DIR="$${INSTALL_DIR:-$$HOME/dotfiles/bin}" && \
+	mkdir -p "$$INSTALL_DIR" && \
+	rm -rf /tmp/opencode-install && \
+	mkdir -p /tmp/opencode-install && \
+	echo "Installing opencode into $$INSTALL_DIR" && \
+	curl -fsSL \
+	  https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-x64.tar.gz \
+	  -o /tmp/opencode-install/opencode.tar.gz && \
+	tar -xzf /tmp/opencode-install/opencode.tar.gz -C /tmp/opencode-install && \
+	install -m 755 /tmp/opencode-install/opencode "$$INSTALL_DIR/opencode" && \
+	rm -rf /tmp/opencode-install && \
+	echo "opencode installed successfully"
