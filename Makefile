@@ -1,13 +1,19 @@
+SHELL := /bin/bash
+.SHELLFLAGS := -euo pipefail -c
+
 clean:
 	# Remove old build
 	rm -rf ./dist/
 	# Ensure target directories exist one level up from .ai-files
 	mkdir -p ./dist/.ai-files
+	mkdir -p ./dist/.ai-files/skills/
 	mkdir -p ./dist/.ai-files/commands/
 	mkdir -p ./dist/.roo/commands
 	mkdir -p ./dist/.kilocode/workflows
 	# claude supports resolving symlinks, only one source
 	mkdir -p ./dist/.claude/commands
+	# skill directories are shared
+	ln -sfn ../.ai-files/skills dist/.kilocode/skills
 
 
 prepare-dist: publish-spec-kit publish-memory-bank publish-prompts
@@ -28,6 +34,8 @@ prepare-dist: publish-spec-kit publish-memory-bank publish-prompts
 	# unified commands (so-called custom prompts)
 	cp -r commands ./dist/.ai-files/
 	chmod +x ./dist/.specify/scripts/bash/*.sh
+	# unified skills
+	cp -r skills ./dist/.ai-files/
 
 prepare-claude:
 	@mkdir -p ./dist/.claude/commands
@@ -257,6 +265,46 @@ install-spec-openspec-local:
 	npx @fission-ai/openspec install
 install-mermaid-cli:
 	npm install -g @mermaid-js/mermaid-cli
+
+# @BIN="$(HOME)/dotfiles/bin/claude"; \
+
+install-cli-claude-code:
+	@BIN="$(HOME)/.local/bin/claude"; \
+	DL="$(HOME)/.claude/downloads"; \
+	GCS="https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"; \
+	mkdir -p "$$(dirname $$BIN)" "$$DL"; \
+	\
+	case "$$(uname -s)" in \
+		Darwin) OS=darwin ;; \
+		Linux) OS=linux ;; \
+	esac; \
+	case "$$(uname -m)" in \
+		x86_64|amd64) ARCH=x64 ;; \
+		arm64|aarch64) ARCH=arm64 ;; \
+	esac; \
+	if [ "$$OS" = linux ] && ldd /bin/ls 2>&1 | grep -q musl; then \
+		PLATFORM="linux-$${ARCH}-musl"; \
+	else \
+		PLATFORM="$${OS}-$${ARCH}"; \
+	fi; \
+	\
+	VERSION="$$(curl -fsSL $$GCS/latest)"; \
+	MANIFEST="$$(curl -fsSL $$GCS/$$VERSION/manifest.json)"; \
+	CHECKSUM="$$(echo "$$MANIFEST" | jq -r '.platforms["'$$PLATFORM'"].checksum')"; \
+	TMP="$$DL/claude-$$VERSION-$$PLATFORM"; \
+	\
+	curl -fsSL "$$GCS/$$VERSION/$$PLATFORM/claude" -o "$$TMP"; \
+	if [ "$$OS" = darwin ]; then \
+		echo "$$CHECKSUM  $$TMP" | shasum -a 256 -c -; \
+	else \
+		echo "$$CHECKSUM  $$TMP" | sha256sum -c -; \
+	fi; \
+	chmod +x "$$TMP"; \
+	mv "$$TMP" "$$BIN"; \
+	\
+	"$$BIN" install $(TARGET); \
+	echo "✅ Claude installed at $$BIN"
+
 install-cli-anthropic-claude-code:
 	npm install -g @anthropic-ai/claude-code
 	echo "Use cli command claude"
