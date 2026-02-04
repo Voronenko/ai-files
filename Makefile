@@ -14,6 +14,11 @@ clean:
 	mkdir -p ./dist/.claude/commands
 	# skill directories are shared
 	ln -sfn ../.ai-files/skills dist/.kilocode/skills
+	ln -sfn ../.ai-files/skills dist/.claude/skills
+	# ai-files repo uses own dist
+	ln -sfn ../.kilocode dist/.kilocode
+	ln -sfn ../.claude dist/.claude
+	ln -sfn ../.roo dist/.roo
 
 
 prepare-dist: publish-spec-kit publish-memory-bank publish-prompts
@@ -401,3 +406,7 @@ install-opencode-cli:
 	install -m 755 /tmp/opencode-install/opencode "$$INSTALL_DIR/opencode" && \
 	rm -rf /tmp/opencode-install && \
 	echo "opencode installed successfully"
+
+install-gemini-cli:
+	npm install -g @google/gemini-cli
+
