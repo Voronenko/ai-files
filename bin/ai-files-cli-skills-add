@@ -1,0 +1,792 @@
+#!/usr/bin/env bash
+#
+# ai-files-cli-skills-add - Install Claude Code skills from git repositories
+#
+# This script discovers, lists, and installs skills from git repositories to
+# .claude/skills/ (project-local) or ~/.claude/skills/ (global).
+#
+# Usage: ai-files-cli-skills-add <REPO_SOURCE> [OPTIONS]
+
+set -euo pipefail
+
+#=============================================================================
+# EXIT CODE CONSTANTS
+#=============================================================================
+
+readonly EXIT_SUCCESS=0
+readonly EXIT_EXPECTED_FAILURE=1
+readonly EXIT_ERROR=2
+readonly EXIT_PERMISSION=3
+readonly EXIT_NETWORK=4
+readonly EXIT_INVALID_SKILL=5
+
+#=============================================================================
+# GLOBAL VARIABLES
+#=============================================================================
+
+# Command-line options
+LIST_MODE=false
+ALL_SKILLS=false
+GLOBAL_MODE=false
+YES_MODE=false
+INSTALL_METHOD="symlink"
+declare -a SKILLS=()
+REPO_SOURCE=""
+
+# Temporary directory (created later)
+TEMP_DIR=""
+
+#=============================================================================
+# SIGNAL TRAPPING
+#=============================================================================
+
+# shellcheck disable=SC2317
+cleanup() {
+    local exit_code=$?
+    if [[ -n "${TEMP_DIR:-}" ]] && [[ -d "$TEMP_DIR" ]]; then
+        rm -rf "$TEMP_DIR"
+    fi
+    exit "$exit_code"
+}
+
+trap cleanup EXIT INT ERR
+
+#=============================================================================
+# ERROR HANDLING
+#=============================================================================
+
+# Print error message to stderr with context
+error() {
+    local message="$1"
+    echo "Error: $message" >&2
+}
+
+#=============================================================================
+# PREREQUISITE CHECKS
+#=============================================================================
+
+# Check if git binary is available
+check_git() {
+    if ! command -v git &>/dev/null; then
+        error "git is not installed"
+        echo "  Ubuntu/Debian: sudo apt-get install git" >&2
+        echo "  macOS: xcode-select --install" >&2
+        exit "$EXIT_ERROR"
+    fi
+}
+
+# Check if jq utility is available
+check_jq() {
+    if ! command -v jq &>/dev/null; then
+        error "jq is not installed"
+        echo "  Install: https://stedolan.github.io/jq/download/" >&2
+        exit "$EXIT_ERROR"
+    fi
+}
+
+# Check if yq utility is available
+check_yq() {
+    if ! command -v yq &>/dev/null; then
+        error "yq is not installed"
+        echo "  Install: https://github.com/mikefarah/yq#install" >&2
+        exit "$EXIT_ERROR"
+    fi
+}
+
+#=============================================================================
+# URL NORMALIZATION
+#=============================================================================
+
+# Normalize repository URL to full https URL
+normalize_url() {
+    local source="$1"
+    local normalized_url=""
+
+    # GitHub shorthand: owner/repo
+    if [[ "$source" =~ ^[^/]+/[^/]+$ ]]; then
+        normalized_url="https://github.com/${source}"
+    # Already has protocol
+    elif [[ "$source" =~ ^https?:// ]]; then
+        normalized_url="$source"
+    # SSH URL
+    elif [[ "$source" =~ ^git@ ]]; then
+        normalized_url="$source"
+    else
+        error "Invalid repository source: $source"
+        exit "$EXIT_EXPECTED_FAILURE"
+    fi
+
+    echo "$normalized_url"
+}
+
+#=============================================================================
+# TEMPORARY DIRECTORY MANAGEMENT
+#=============================================================================
+
+# Create temporary directory for git clone
+create_temp_dir() {
+    TEMP_DIR="$(mktemp -d -t skills-XXXXXX 2>/dev/null || mktemp -d)" || {
+        error "Cannot create temporary directory"
+        exit "$EXIT_ERROR"
+    }
+}
+
+#=============================================================================
+# TARGET DIRECTORY RESOLUTION
+#=============================================================================
+
+# Resolve target directory based on global mode flag
+resolve_target_dir() {
+    local target_dir
+
+    if [[ "$GLOBAL_MODE" == true ]]; then
+        target_dir="$HOME/.claude/skills/"
+    else
+        target_dir="$PWD/.claude/skills/"
+    fi
+
+    echo "$target_dir"
+}
+
+# Create target directory with permission checking
+create_target_dir() {
+    local target_dir="$1"
+
+    if [[ ! -d "$target_dir" ]]; then
+        if ! mkdir -p "$target_dir" 2>/dev/null; then
+            error "Cannot create directory: $target_dir"
+            exit "$EXIT_PERMISSION"
+        fi
+    fi
+
+    # Check write permissions
+    if [[ ! -w "$target_dir" ]]; then
+        error "Cannot write to directory: $target_dir"
+        exit "$EXIT_PERMISSION"
+    fi
+}
+
+#=============================================================================
+# GIT CLONE
+#=============================================================================
+
+# Clone repository to temporary directory with timeout
+clone_repository() {
+    local repo_url="$1"
+    local timeout="${SKILLS_CLONE_TIMEOUT:-300}"
+
+    echo "==> Cloning repository..."
+
+    # Use timeout command if available, otherwise clone directly
+    if command -v timeout &>/dev/null; then
+        if ! timeout "$timeout" git clone --depth 1 --quiet "$repo_url" "$TEMP_DIR" 2>/dev/null; then
+            error "Unable to clone repository '$repo_url'"
+            echo "  Please check:" >&2
+            echo "  - The repository exists and is public" >&2
+            echo "  - Your network connection" >&2
+            exit "$EXIT_NETWORK"
+        fi
+    else
+        if ! git clone --depth 1 --quiet "$repo_url" "$TEMP_DIR" 2>/dev/null; then
+            error "Unable to clone repository '$repo_url'"
+            echo "  Please check:" >&2
+            echo "  - The repository exists and is public" >&2
+            echo "  - Your network connection" >&2
+            exit "$EXIT_NETWORK"
+        fi
+    fi
+}
+
+#=============================================================================
+# SKILL DISCOVERY
+#=============================================================================
+
+# Discover all skills in a repository
+# Arguments:
+#   $1 - Path to the cloned repository
+# Output:
+#   Tab-separated values: name\tdescription\tpath\tis_internal
+discover_skills() {
+    local repo_path="$1"
+    local skill_files=()
+    local install_internal="${INSTALL_INTERNAL_SKILLS:-0}"
+
+    # Priority search in well-known directories
+    local priority_dirs=(
+        "."
+        "skills/"
+        "skills/.curated/"
+        "skills/.experimental/"
+        "skills/.system/"
+    )
+
+    # Search priority directories first (depth 1-2)
+    for dir in "${priority_dirs[@]}"; do
+        local search_path="$repo_path/$dir"
+        if [[ -d "$search_path" ]]; then
+            while IFS= read -r -d '' file; do
+                skill_files+=("$file")
+            done < <(find "$search_path" -maxdepth 2 -name "SKILL.md" -print0 2>/dev/null)
+        fi
+    done
+
+    # Fallback to recursive search if no skills found
+    if [[ ${#skill_files[@]} -eq 0 ]]; then
+        while IFS= read -r -d '' file; do
+            # Exclude common non-skill directories
+            if ! echo "$file" | grep -qE "(node_modules/|\.git/|dist/|build/|__pycache__|\.venv/|venv/)"; then
+                skill_files+=("$file")
+            fi
+        done < <(find "$repo_path" -maxdepth 5 -name "SKILL.md" -print0 2>/dev/null)
+    fi
+
+    # Parse each SKILL.md file
+    for skill_file in "${skill_files[@]}"; do
+        parse_skill_file "$skill_file" "$install_internal"
+    done
+}
+
+# Parse a single SKILL.md file
+# Arguments:
+#   $1 - Path to SKILL.md file
+#   $2 - Whether to include internal skills (0 or 1)
+# Output:
+#   Tab-separated values: name\tdescription\tpath\tis_internal
+parse_skill_file() {
+    local skill_file="$1"
+    local install_internal="$2"
+    local name description is_internal skill_dir
+
+    # Extract name - only take first line of output
+    name=$(yq '.name' "$skill_file" 2>/dev/null | head -1)
+
+    # Check for valid name
+    if [[ -z "$name" ]] || [[ "$name" == "null" ]] || [[ "$name" == *"null"* ]]; then
+        echo "Warning: Skipping invalid SKILL.md (missing name): $skill_file" >&2
+        return 1
+    fi
+
+    # Extract description - only take first line
+    description=$(yq '.description' "$skill_file" 2>/dev/null | head -1)
+
+    # Check for valid description
+    if [[ -z "$description" ]] || [[ "$description" == "null" ]] || [[ "$description" == *"null"* ]]; then
+        echo "Warning: Skipping invalid SKILL.md (missing description): $skill_file" >&2
+        return 1
+    fi
+
+    # Check if internal - only take first line, default to false
+    is_internal=$(yq '.metadata.internal // false' "$skill_file" 2>/dev/null | head -1)
+    # If yq failed or returned empty, default to false
+    if [[ -z "$is_internal" ]] || [[ "$is_internal" == "null" ]]; then
+        is_internal="false"
+    fi
+
+    # Filter internal skills unless INSTALL_INTERNAL_SKILLS is set
+    if [[ "$is_internal" == "true" ]] && [[ "$install_internal" != "1" ]]; then
+        return 0
+    fi
+
+    # Get skill directory (parent of SKILL.md)
+    skill_dir=$(dirname "$skill_file")
+
+    # Output tab-separated values
+    printf '%s\t%s\t%s\t%s\n' "$name" "$description" "$skill_dir" "$is_internal"
+}
+
+#=============================================================================
+# SKILL INSTALLATION
+#=============================================================================
+
+# Sanitize skill name for use as directory name
+# Arguments:
+#   $1 - Raw skill name
+# Output:
+#   Sanitized name (lowercase, hyphens only)
+sanitize_skill_name() {
+    local raw_name="$1"
+    local sanitized
+
+    # Convert to lowercase
+    sanitized="${raw_name,,}"
+
+    # Replace spaces and special chars with hyphens
+    # shellcheck disable=SC2001
+    sanitized=$(echo "$sanitized" | tr -c 'a-z0-9\n' '-')
+
+    # Collapse multiple hyphens
+    while [[ "$sanitized" == *"--"* ]]; do
+        sanitized="${sanitized//--/-}"
+    done
+
+    # Remove leading/trailing hyphens
+    sanitized="${sanitized#-}"
+    sanitized="${sanitized%-}"
+
+    echo "$sanitized"
+}
+
+# Check if a skill is already installed
+# Arguments:
+#   $1 - Skill name
+#   $2 - Target directory
+# Output:
+#   0 if not installed, 1 if installed
+is_skill_installed() {
+    local skill_name="$1"
+    local target_dir="$2"
+    local skill_path="$target_dir/$skill_name"
+
+    [[ -e "$skill_path" ]]
+}
+
+# Install skill using symlink method
+# Arguments:
+#   $1 - Source skill path
+#   $2 - Target directory
+#   $3 - Skill name
+# Returns:
+#   0 on success, 1 on failure
+install_symlink() {
+    local source_path="$1"
+    local target_dir="$2"
+    local skill_name="$3"
+    local canonical_dir="$HOME/.cache/skills"
+    local target_path="$target_dir/$skill_name"
+
+    # Create canonical directory
+    mkdir -p "$canonical_dir" 2>/dev/null || return 1
+
+    # Copy to canonical location
+    local canonical_path="$canonical_dir/$skill_name"
+    if [[ -d "$canonical_path" ]]; then
+        rm -rf "$canonical_path" 2>/dev/null || return 1
+    fi
+
+    if ! cp -r "$source_path" "$canonical_path" 2>/dev/null; then
+        return 1
+    fi
+
+    # Create symlink
+    if ln -s "$canonical_path" "$target_path" 2>/dev/null; then
+        return 0
+    fi
+
+    # Fallback: remove failed symlink and try copy mode
+    rm -f "$target_path" 2>/dev/null
+    return 1
+}
+
+# Install skill using copy mode
+# Arguments:
+#   $1 - Source skill path
+#   $2 - Target directory
+#   $3 - Skill name
+# Returns:
+#   0 on success, 1 on failure
+install_copy() {
+    local source_path="$1"
+    local target_dir="$2"
+    local skill_name="$3"
+    local target_path="$target_dir/$skill_name"
+
+    # Remove existing if present
+    if [[ -e "$target_path" ]]; then
+        rm -rf "$target_path" 2>/dev/null || return 1
+    fi
+
+    # Copy skill directory
+    cp -r "$source_path" "$target_path" 2>/dev/null
+}
+
+# Install a skill to the target directory
+# Arguments:
+#   $1 - Skill name
+#   $2 - Source skill path
+#   $3 - Target directory
+# Returns:
+#   0 on success, 1 on failure
+install_skill() {
+    local skill_name="$1"
+    local source_path="$2"
+    local target_dir="$3"
+    local sanitized_name
+    local target_path
+
+    # Sanitize skill name
+    sanitized_name=$(sanitize_skill_name "$skill_name")
+    target_path="$target_dir/$sanitized_name"
+
+    # Check if already installed
+    if is_skill_installed "$sanitized_name" "$target_dir"; then
+        if [[ "$YES_MODE" == true ]]; then
+            # Skip existing skills in non-interactive mode
+            echo "==> Skipping $sanitized_name (already installed)"
+            return 0
+        fi
+
+        # Prompt user
+        echo "==> Skill '$sanitized_name' is already installed"
+        echo "  [u] Update (reinstall)"
+        echo "  [s] Skip"
+        echo -n "  Choice: "
+        read -r choice < /dev/tty
+
+        case "$choice" in
+            u|U|update)
+                # Remove existing and reinstall
+                rm -rf "$target_path" 2>/dev/null || {
+                    error "Cannot remove existing skill: $sanitized_name"
+                    return 1
+                }
+                ;;
+            s|S|skip|"")
+                echo "==> Skipping $sanitized_name"
+                return 0
+                ;;
+            *)
+                echo "==> Skipping $sanitized_name"
+                return 0
+                ;;
+        esac
+    fi
+
+    echo "==> Installing $sanitized_name..."
+
+    # Install based on method
+    local install_result=1
+
+    if [[ "$INSTALL_METHOD" == "symlink" ]]; then
+        if install_symlink "$source_path" "$target_dir" "$sanitized_name"; then
+            install_result=0
+        else
+            # Fallback to copy on symlink failure
+            echo "    (symlink failed, using copy mode)"
+            if install_copy "$source_path" "$target_dir" "$sanitized_name"; then
+                install_result=0
+            fi
+        fi
+    else
+        if install_copy "$source_path" "$target_dir" "$sanitized_name"; then
+            install_result=0
+        fi
+    fi
+
+    if [[ $install_result -eq 0 ]]; then
+        echo "    Installed $sanitized_name"
+        return 0
+    else
+        error "Failed to install $sanitized_name"
+        if [[ "$YES_MODE" == true ]]; then
+            return 0  # Continue on error in non-interactive mode
+        fi
+        return 1
+    fi
+}
+
+# Set the yes mode flag
+set_yes_mode() {
+    YES_MODE="$1"
+}
+
+# Set the installation method
+set_install_method() {
+    INSTALL_METHOD="$1"
+}
+
+#=============================================================================
+# COMMAND-LINE ARGUMENT PARSING
+#=============================================================================
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --list|-l)
+                LIST_MODE=true
+                ;;
+            --skill|-s)
+                if [[ -z "${2:-}" ]] || [[ "${2:0:1}" == "-" ]]; then
+                    error "Option --skill requires an argument"
+                    exit "$EXIT_ERROR"
+                fi
+                # Handle '*' wildcard as equivalent to --all
+                if [[ "$2" == "*" ]]; then
+                    ALL_SKILLS=true
+                else
+                    SKILLS+=("$2")
+                fi
+                shift
+                ;;
+            --all|-a)
+                ALL_SKILLS=true
+                ;;
+            --global|-g)
+                GLOBAL_MODE=true
+                ;;
+            --yes|-y)
+                YES_MODE=true
+                ;;
+            --method|-m)
+                if [[ -z "${2:-}" ]] || [[ "${2:0:1}" == "-" ]]; then
+                    error "Option --method requires an argument"
+                    exit "$EXIT_ERROR"
+                fi
+                if [[ "$2" != "symlink" ]] && [[ "$2" != "copy" ]]; then
+                    error "Invalid method: $2 (must be 'symlink' or 'copy')"
+                    exit "$EXIT_ERROR"
+                fi
+                INSTALL_METHOD="$2"
+                shift
+                ;;
+            --help|-h)
+                show_usage
+                exit "$EXIT_SUCCESS"
+                ;;
+            -*)
+                error "Unknown option: $1"
+                show_usage
+                exit "$EXIT_ERROR"
+                ;;
+            *)
+                if [[ -n "$REPO_SOURCE" ]]; then
+                    error "Unexpected argument: $1"
+                    exit "$EXIT_ERROR"
+                fi
+                REPO_SOURCE="$1"
+                ;;
+        esac
+        shift
+    done
+
+    # Validate required arguments
+    if [[ -z "$REPO_SOURCE" ]]; then
+        error "Repository source is required"
+        show_usage
+        exit "$EXIT_ERROR"
+    fi
+
+    # Validate mutual exclusion
+    if [[ "$ALL_SKILLS" == true ]] && [[ ${#SKILLS[@]} -gt 0 ]]; then
+        error "Options --all and --skill are mutually exclusive"
+        exit "$EXIT_ERROR"
+    fi
+}
+
+#=============================================================================
+# USAGE
+#=============================================================================
+
+show_usage() {
+    cat <<'EOF'
+Usage: ai-files-cli-skills-add <REPO_SOURCE> [OPTIONS]
+
+Install Claude Code skills from git repositories.
+
+Arguments:
+  REPO_SOURCE          Repository source (URL, shorthand, or path)
+                       Examples: vercel-labs/agent-skills
+                                 https://github.com/vercel-labs/agent-skills
+
+Options:
+  -l, --list           List available skills without installing
+  -s, --skill <name>   Install specific skill(s) (repeatable)
+  -a, --all            Install all available skills
+  -g, --global         Install to global directory (~/.claude/skills/)
+  -y, --yes            Skip confirmation prompts (non-interactive mode)
+  -m, --method <mode>  Installation method: symlink|copy (default: symlink)
+  -h, --help           Show this help message
+
+Examples:
+  # List available skills
+  ai-files-cli-skills-add vercel-labs/agent-skills --list
+
+  # Install specific skill
+  ai-files-cli-skills-add vercel-labs/agent-skills --skill frontend-design
+
+  # Install multiple skills
+  ai-files-cli-skills-add vercel-labs/agent-skills --skill frontend-design --skill skill-creator
+
+  # Install all skills globally
+  ai-files-cli-skills-add vercel-labs/agent-skills --all --global
+
+  # Non-interactive installation (CI/CD)
+  ai-files-cli-skills-add vercel-labs/agent-skills --skill frontend-design --yes
+
+Environment Variables:
+  INSTALL_INTERNAL_SKILLS    Include skills marked as internal (default: 0)
+  SKILLS_CLONE_TIMEOUT       Git clone timeout in seconds (default: 300)
+
+For more information, see the project documentation.
+EOF
+}
+
+#=============================================================================
+# LIST MODE EXECUTION
+#=============================================================================
+
+execute_list_mode() {
+    local repo_url="$1"
+    local discovered_skills
+
+    # Clone repository
+    clone_repository "$repo_url"
+
+    # Discover skills
+    echo "==> Discovering skills..."
+    discovered_skills=$(discover_skills "$TEMP_DIR")
+
+    # Count skills
+    local skill_count
+    skill_count=$(echo "$discovered_skills" | grep -c '^[^[:space:]]' || true)
+
+    if [[ "$skill_count" -eq 0 ]]; then
+        echo "==> No skills found in repository"
+        exit "$EXIT_SUCCESS"
+    fi
+
+    echo "==> Found $skill_count skill(s)"
+    echo ""
+
+    # Display skills
+    echo "Available Skills from $(basename "$REPO_SOURCE"):"
+    echo ""
+
+    local prev_name=""
+    while IFS=$'\t' read -r name description path is_internal; do
+        if [[ "$name" != "$prev_name" ]]; then
+            echo "  $name"
+            echo "    $description"
+            echo ""
+            prev_name="$name"
+        fi
+    done <<< "$discovered_skills"
+
+    echo "Use --skill <name> to install specific skills"
+    echo "Use --all to install all skills"
+}
+
+#=============================================================================
+# INSTALL MODE EXECUTION
+#=============================================================================
+
+execute_install_mode() {
+    local repo_url="$1"
+    local discovered_skills
+    local target_dir
+    local selected_skills=()
+    local installed_count=0
+
+    # Clone repository
+    clone_repository "$repo_url"
+
+    # Discover skills
+    echo "==> Discovering skills..."
+    discovered_skills=$(discover_skills "$TEMP_DIR")
+
+    # Count skills
+    local total_skills
+    total_skills=$(echo "$discovered_skills" | grep -c '^[^[:space:]]' || true)
+
+    if [[ "$total_skills" -eq 0 ]]; then
+        error "No skills found in repository"
+        exit "$EXIT_INVALID_SKILL"
+    fi
+
+    echo "==> Found $total_skills skill(s)"
+
+    # Resolve target directory
+    target_dir="$(resolve_target_dir)"
+    create_target_dir "$target_dir"
+
+    # Select skills to install
+    if [[ "$ALL_SKILLS" == true ]]; then
+        # Install all skills
+        while IFS=$'\t' read -r name description path is_internal; do
+            selected_skills+=("$name")
+        done <<< "$discovered_skills"
+    elif [[ ${#SKILLS[@]} -gt 0 ]]; then
+        # Validate and select specific skills
+        for requested_skill in "${SKILLS[@]}"; do
+            local found=false
+            while IFS=$'\t' read -r name description path is_internal; do
+                if [[ "$name" == "$requested_skill" ]]; then
+                    selected_skills+=("$name")
+                    found=true
+                    break
+                fi
+            done <<< "$discovered_skills"
+
+            if [[ "$found" == false ]]; then
+                error "Skill '$requested_skill' not found"
+                echo "" >&2
+                echo "Available skills:" >&2
+                while IFS=$'\t' read -r name description path is_internal; do
+                    echo "  - $name" >&2
+                done <<< "$discovered_skills"
+                exit "$EXIT_INVALID_SKILL"
+            fi
+        done
+    else
+        error "No skills specified for installation"
+        echo "  Use --skill <name> or --all" >&2
+        exit "$EXIT_ERROR"
+    fi
+
+    # Install selected skills
+    echo ""
+
+    for skill_name in "${selected_skills[@]}"; do
+        # Find skill path
+        local skill_path=""
+        # shellcheck disable=SC2034
+        while IFS=$'\t' read -r name description path is_internal; do
+            if [[ "$name" == "$skill_name" ]]; then
+                skill_path="$path"
+                break
+            fi
+        done <<< "$discovered_skills"
+
+        if [[ -n "$skill_path" ]]; then
+            # Set yes mode and install method for install function
+            set_yes_mode "$YES_MODE"
+            set_install_method "$INSTALL_METHOD"
+            if install_skill "$skill_name" "$skill_path" "$target_dir"; then
+                ((installed_count++)) || true
+            fi
+        fi
+    done
+
+    echo ""
+    echo "==> Installed $installed_count skill(s) to $target_dir"
+}
+
+#=============================================================================
+# MAIN ENTRY POINT
+#=============================================================================
+
+main() {
+    # Parse command-line arguments
+    parse_arguments "$@"
+
+    # Check prerequisites
+    check_git
+    check_jq
+    check_yq
+
+    # Normalize URL
+    local repo_url
+    repo_url="$(normalize_url "$REPO_SOURCE")"
+
+    # Create temporary directory
+    create_temp_dir
+
+    # Execute based on mode
+    if [[ "$LIST_MODE" == true ]]; then
+        execute_list_mode "$repo_url"
+    else
+        execute_install_mode "$repo_url"
+    fi
+}
+
+# Run main function with all arguments
+main "$@"

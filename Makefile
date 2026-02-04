@@ -16,9 +16,14 @@ clean:
 	ln -sfn ../.ai-files/skills dist/.kilocode/skills
 	ln -sfn ../.ai-files/skills dist/.claude/skills
 	# ai-files repo uses own dist
-	ln -sfn ../.kilocode dist/.kilocode
-	ln -sfn ../.claude dist/.claude
-	ln -sfn ../.roo dist/.roo
+	ln -sfn dist/.kilocode .kilocode
+	ln -sfn dist/.claude   .claude
+	ln -sfn dist/.roo      .roo
+relink-from-dist:
+	# ai-files repo uses own dist
+	ln -sfn dist/.kilocode .kilocode
+	ln -sfn dist/.claude   .claude
+	ln -sfn dist/.roo      .roo
 
 
 prepare-dist: publish-spec-kit publish-memory-bank publish-prompts
