@@ -3,6 +3,7 @@
 
 # Read JSON input from stdin
 input=$(cat)
+cwd=$(echo "$input" | jq -r '.workspace.current_dir // empty')
 
 # Extract values using jq
 MODEL_DISPLAY=$(echo "$input" | jq -r '.model.display_name')
@@ -10,7 +11,7 @@ CURRENT_DIR=$(echo "$input" | jq -r '.workspace.current_dir')
 
 # Check for active session
 SESSION_INFO=""
-SESSION_FILE="./.ai-files/sessions/.current-session"
+SESSION_FILE="./.ai-files/sessions/.current-goal"
 if [ -f "$SESSION_FILE" ]; then
     SESSION_CONTENT=$(cat "$SESSION_FILE" 2>/dev/null | tr -d '\n')
     if [ -n "$SESSION_CONTENT" ]; then

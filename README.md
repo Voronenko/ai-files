@@ -259,6 +259,70 @@ The directory-based approach offers better organization than single `.roorules` 
   | CircleCI    | https://app.circleci.com → User Settings → Personal API Tokens         |
 
 
+## mcp-memory-server organization
+
+
+```
+project/
+├── .claude/
+│   ├── settings.json        ← MCP HERE (only here)
+│   └── settings.local.json  ← permissions/statusLine HERE
+├── .ai-files/
+│   └── memory.db
+```
+
+install mcp-memory-server to claude
+
+```sh
+claude mcp add repo-memory --scope project --env MCP_MEMORY_SQLITE_PATH=.ai-files/memory.db --env MCP_MEMORY_STORAGE_BACKEND=sqlite_vec --env PYTHONUNBUFFERED=1 -- memory server
+```
+
+which corresponds to `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "command": "memory",
+      "args": [
+        "server"
+      ],
+      "env": {
+        "MCP_MEMORY_SQLITE_PATH": ".ai-files/memory.db",
+        "MCP_MEMORY_STORAGE_BACKEND": "sqlite_vec",
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
+```
+
+to see dashboard, option also would be
+```
+{
+  "mcpServers": {
+    "repo-memory": {
+      "transport": "streamablehttp",
+      "url": "http://your-server:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer your-secure-api-key"
+      }
+    }
+  }
+}
+```
+
+```sh
+# Generate a secure API key
+export MCP_API_KEY=$(openssl rand -hex 32)
+
+# Configure HTTPS (recommended for production)
+export MCP_HTTPS_ENABLED=true
+export MCP_SSL_CERT_FILE=/path/to/cert.pem
+export MCP_SSL_KEY_FILE=/path/to/key.pem
+```
+
+https://github.com/doobidoo/mcp-memory-service/blob/main/docs/integration/multi-client.md
 
 ## 3rd party work and ideas used
 

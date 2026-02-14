@@ -9,6 +9,20 @@ When working with codebase, answering code questions, use instructions from .ai-
 use context7 mcp to check documentation on libraries, before searching internet.
 use lsp plugin for python and typescript, to work with the project more efficiently
 
+
+This file provides guidance to Claude Code (claude.ai/code) when working with this MCP Memory Service repository.
+
+> **📝 Personal Customizations**: You can create `CLAUDE.local.md` (gitignored) for personal notes, custom workflows, or environment-specific instructions. This file contains shared project conventions.
+
+> **Information Lookup**: Files first, memory second, user last. See [`.claude/directives/memory-first.md`](.claude/directives/memory-first.md) for strategy. Comprehensive project context stored in memory with tags `claude-code-reference`.
+
+## 🔴 Critical Directives
+
+**IMPORTANT**: Before working with this project, read:
+- **`.ai-files/directives/memory-tagging.md`** - MANDATORY: Always tag memories with `mcp-memory-service` as first tag
+- **`.ai-files/directives/README.md`** - Additional topic-specific directives
+
+
 ## Restricted files
 Files under .ai-files/restricted.md and list below contain sensitive data,
 they MUST NOT BE READ.

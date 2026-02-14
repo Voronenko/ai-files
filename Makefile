@@ -415,3 +415,6 @@ install-opencode-cli:
 install-gemini-cli:
 	npm install -g @google/gemini-cli
 
+install-mcp-memory-service:
+	pipx mcp-memory-service
+	pipx inject mcp-memory-service onnxruntime

@@ -13,6 +13,19 @@
     "deny": [],
     "ask": []
   },
+  "mcpServers": {
+    "memory": {
+      "command": "memory",
+        "args": [
+          "server"
+        ],
+        "env": {
+          "MCP_MEMORY_SQLITE_PATH": ".ai-files/memory.db",
+          "MCP_MEMORY_STORAGE_BACKEND": "sqlite_vec",
+          "PYTHONUNBUFFERED": "1"
+        }
+      }
+  },
   "statusLine": {
     "type": "command",
     "command": "~/ai-files/config/claude/statusline.sh",
