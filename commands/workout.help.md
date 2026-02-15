@@ -6,12 +6,12 @@ The session system helps document development work for future reference.
 
 ### Available Commands:
 
-- `/goal.start [name]` - Start a new session with optional name
-- `/goal.update [notes]` - Add notes to current session  
-- `/goal.end` - End session with comprehensive summary
-- `/goal.list` - List all session files
-- `/goal.current` - Show current session status
-- `/goal.help` - Show this help
+- `/workout.start [name]` - Start a new session with optional name
+- `/workout.update [notes]` - Add notes to current session  
+- `/workout.end` - End session with comprehensive summary
+- `/workout.list` - List all session files
+- `/workout.current` - Show current session status
+- `/workout.help` - Show this help
 
 ### How It Works:
 
@@ -30,8 +30,8 @@ The session system helps document development work for future reference.
 ### Example Workflow:
 
 ```
-/goal.start refactor-auth
-/goal.update Added Google OAuth restriction
-/goal.update Fixed Next.js 15 params Promise issue 
-/goal.end
+/workout.start refactor-auth
+/workout.update Added Google OAuth restriction
+/workout.update Fixed Next.js 15 params Promise issue 
+/workout.end
 ```

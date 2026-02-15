@@ -1,8 +1,8 @@
 End the current development session by:
 
-1. Check `.ai-files/sessions/.current-goal` for the active session
-2. If no active session, inform user there's nothing to end
-3. If session exists, append a comprehensive summary including:
+1. Check `.ai-files/sessions/.current-session` for the active session
+2. If no active session, use git branch name as SESSION_SUBJECT, creating a session file in `.ai-files/sessions/` with the format `YYYY-MM-DD-HHMM-SESSION_SUBJECT.md` (or just `YYYY-MM-DD-HHMM.md` if no name provided).
+3. Append a comprehensive summary including:
    - Session duration
    - Git summary:
      * Total files changed (added/modified/deleted)
@@ -24,7 +24,7 @@ End the current development session by:
    - What wasn't completed
    - Tips for future developers
 
-4. Empty the `.ai-files/sessions/.current-goal` file (don't remove it, just clear its contents)
+4. Empty the `.ai-files/sessions/.current-session` file (don't remove it, just clear its contents)
 5. Inform user the session has been documented
 
 The summary should be thorough enough that another developer (or AI) can understand everything that happened without reading the entire session.

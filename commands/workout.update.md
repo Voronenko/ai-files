@@ -1,7 +1,7 @@
 Update the current development session by:
 
 1. Check if `.ai-files/sessions/.current-session` exists to find the active session
-2. If no active session, inform user to start one with `/goal.start`
+2. If no active session, inform user to start one with `/workout.start`
 3. If session exists, append to the session file with:
    - Current timestamp
    - The update: $ARGUMENTS (or if no arguments, summarize recent activities)

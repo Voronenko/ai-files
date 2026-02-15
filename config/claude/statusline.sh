@@ -7,11 +7,44 @@ cwd=$(echo "$input" | jq -r '.workspace.current_dir // empty')
 
 # Extract values using jq
 MODEL_DISPLAY=$(echo "$input" | jq -r '.model.display_name')
-CURRENT_DIR=$(echo "$input" | jq -r '.workspace.current_dir')
+CURRENT_DIR=$(echo "$input" | jq -r '.workspace.current_dir')o
+
+# ── Check for repo-memory MCP and get memory count ──
+get_repo_memory_stats() {
+    local config_files=(
+        "$CURRENT_DIR/.claude/config.json"
+        "$CURRENT_DIR/.mcp.json"
+        "$CURRENT_DIR/mcp.json"
+    )
+    local memory_count=0
+    local memory_display=""
+
+    for config_file in "${config_files[@]}"; do
+        if [ -f "$config_file" ] && jq -e '.mcpServers["repo-memory"]' "$config_file" >/dev/null 2>&1; then
+            if command -v repo-memory >/dev/null 2>&1; then
+                memory_count=$(repo-memory count 2>/dev/null) || memory_count=0
+            else
+                local mem_path=$(jq -r '.mcpServers["repo-memory"].env.MCP_MEMORY_SQLITE_PATH // empty' "$config_file" 2>/dev/null)
+                if [ -n "$mem_path" ]; then
+                    [[ "$mem_path" != /* ]] && mem_path="$CURRENT_DIR/$mem_path"
+                    if [ -f "$mem_path" ]; then
+                        memory_count=$(sqlite3 "$mem_path" "SELECT COUNT(*) FROM memories" 2>/dev/null) || memory_count=0
+                    fi
+                fi
+            fi
+            [ "$memory_count" -gt 0 ] && memory_display=" | 🧠 $memory_count"
+            break
+        fi
+    done
+
+    echo "$memory_display"
+}
+
+MEMORY_STATS=$(get_repo_memory_stats)
 
 # Check for active session
 SESSION_INFO=""
-SESSION_FILE="./.ai-files/sessions/.current-goal"
+SESSION_FILE="./.ai-files/sessions/.current-session"
 if [ -f "$SESSION_FILE" ]; then
     SESSION_CONTENT=$(cat "$SESSION_FILE" 2>/dev/null | tr -d '\n')
     if [ -n "$SESSION_CONTENT" ]; then
@@ -37,4 +70,4 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
     fi
 fi
 
-echo "[$MODEL_DISPLAY] 📁 ${CURRENT_DIR##*/}$GIT_BRANCH$SESSION_INFO"
+echo "[$MODEL_DISPLAY] 📁 ${CURRENT_DIR##*/}$GIT_BRANCH$MEMORY_STATS$SESSION_INFO"

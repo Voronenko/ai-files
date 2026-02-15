@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Color definitions
+readonly COLOR_RESET='\033[0m'
+readonly COLOR_GREEN='\033[0;32m'
+readonly COLOR_BLUE='\033[0;34m'
+readonly COLOR_YELLOW='\033[0;33m'
+readonly COLOR_RED='\033[0;31m'
+readonly COLOR_CYAN='\033[0;36m'
+readonly COLOR_BOLD='\033[1m'
+
+# Get the directory where the command was called (not where the script is located)
+readonly CALL_DIR="$(pwd)"
+
+# Script directory for internal use
+readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Find MCP server configuration
+find_memory_mcp_config() {
+    local config_files=(
+        "$CALL_DIR/.claude/config.json"
+        "$CALL_DIR/.mcp.json"
+        "$CALL_DIR/mcp.json"
+    )
+
+    for config_file in "${config_files[@]}"; do
+        if [ -f "$config_file" ]; then
+            # Check for memory MCP server (could be named 'repo-memory' or 'memory')
+            if jq -e '.mcpServers["repo-memory"]' "$config_file" >/dev/null 2>&1; then
+                echo "$config_file|repo-memory"
+                return 0
+            elif jq -e '.mcpServers["memory"]' "$config_file" >/dev/null 2>&1; then
+                echo "$config_file|memory"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+# Extract environment variables from MCP config
+extract_env_vars() {
+    local config_file="$1"
+    local server_name="$2"
+
+    # Extract env vars from the MCP server config
+    jq -r ".mcpServers.\"$server_name\".env // {} | to_entries[] | \"\(.key)=\(.value)\"" "$config_file" 2>/dev/null || true
+}
+
+# Get memory count from SQLite database
+get_memory_count() {
+    local config_file="$1"
+    local server_name="$2"
+
+    local mem_path
+    mem_path=$(jq -r ".mcpServers.\"$server_name\".env.MCP_MEMORY_SQLITE_PATH // empty" "$config_file" 2>/dev/null)
+
+    if [ -n "$mem_path" ]; then
+        # Handle relative paths
+        [[ "$mem_path" != /* ]] && mem_path="$CALL_DIR/$mem_path"
+
+        if [ -f "$mem_path" ]; then
+            sqlite3 "$mem_path" "SELECT COUNT(*) FROM memories" 2>/dev/null || echo "0"
+        else
+            echo "0"
+        fi
+    else
+        echo "0"
+    fi
+}
+
+# Get database path
+get_db_path() {
+    local config_file="$1"
+    local server_name="$2"
+
+    local mem_path
+    mem_path=$(jq -r ".mcpServers.\"$server_name\".env.MCP_MEMORY_SQLITE_PATH // empty" "$config_file" 2>/dev/null)
+
+    if [ -n "$mem_path" ]; then
+        [[ "$mem_path" != /* ]] && mem_path="$CALL_DIR/$mem_path"
+        echo "$mem_path"
+    fi
+}
+
+# Check if memory command is available
+check_memory_command() {
+    command -v memory >/dev/null 2>&1
+}
+
+# Status command
+cmd_status() {
+    echo -e "${COLOR_BOLD}${COLOR_CYAN}Memory Service Status${COLOR_RESET}"
+    echo ""
+
+    local config_info
+    config_info=$(find_memory_mcp_config) || true
+    local exit_code=$?
+
+    if [ $exit_code -ne 0 ] || [ -z "$config_info" ]; then
+        echo -e "${COLOR_RED}✗ No memory MCP server configuration found${COLOR_RESET}"
+        echo ""
+        echo "Searched in:"
+        echo "  - $CALL_DIR/.claude/config.json"
+        echo "  - $CALL_DIR/.mcp.json"
+        echo "  - $CALL_DIR/mcp.json"
+        return 1
+    fi
+
+    local config_file="${config_info%|*}"
+    local server_name="${config_info#*|}"
+
+    # Print location with colors
+    echo -e "${COLOR_GREEN}✓${COLOR_RESET} Found memory MCP server configuration:"
+    echo -e "  ${COLOR_BLUE}Config file:${COLOR_RESET} $config_file"
+    echo -e "  ${COLOR_BLUE}Server name:${COLOR_RESET} $server_name"
+    echo ""
+
+    # Get memory count
+    local memory_count
+    memory_count=$(get_memory_count "$config_file" "$server_name")
+
+    echo -e "${COLOR_GREEN}✓${COLOR_RESET} Memory statistics:"
+    echo -e "  ${COLOR_BLUE}Total memories:${COLOR_RESET} $memory_count"
+    echo ""
+
+    # Get database path
+    local db_path
+    db_path=$(get_db_path "$config_file" "$server_name")
+
+    if [ -n "$db_path" ]; then
+        if [ -f "$db_path" ]; then
+            echo -e "${COLOR_GREEN}✓${COLOR_RESET} Database found:"
+            echo -e "  ${COLOR_BLUE}Path:${COLOR_RESET} $db_path"
+        else
+            echo -e "${COLOR_YELLOW}⚠${COLOR_RESET} Database path configured but file not found:"
+            echo -e "  ${COLOR_YELLOW}Path:${COLOR_RESET} $db_path"
+        fi
+        echo ""
+    fi
+
+    # Check if memory command is available
+    if check_memory_command; then
+        echo -e "${COLOR_GREEN}✓${COLOR_RESET} Memory CLI tool is available"
+        echo ""
+
+        # Export environment variables and run memory status
+        local env_vars
+        env_vars=$(extract_env_vars "$config_file" "$server_name")
+
+        if [ -n "$env_vars" ]; then
+            echo -e "${COLOR_BOLD}${COLOR_CYAN}Memory CLI Status:${COLOR_RESET}"
+            echo ""
+
+            # Export env vars and run memory status in the call directory
+            (
+                while IFS= read -r line; do
+                    export "$line"
+                done <<< "$env_vars"
+
+                cd "$CALL_DIR" && memory status 2>&1 || echo -e "${COLOR_YELLOW}Failed to run memory status${COLOR_RESET}"
+            )
+        else
+            echo -e "${COLOR_YELLOW}⚠${COLOR_RESET} No environment variables found in MCP config"
+        fi
+    else
+        echo -e "${COLOR_YELLOW}⚠${COLOR_RESET} Memory CLI tool not found in PATH"
+        echo "  Install the memory CLI tool to get detailed status"
+    fi
+}
+
+# UI command
+cmd_ui() {
+    echo -e "${COLOR_BOLD}${COLOR_CYAN}Starting Memory Service UI${COLOR_RESET}"
+    echo ""
+
+    local config_info
+    config_info=$(find_memory_mcp_config) || true
+    local exit_code=$?
+
+    if [ $exit_code -ne 0 ] || [ -z "$config_info" ]; then
+        echo -e "${COLOR_RED}✗ No memory MCP server configuration found${COLOR_RESET}"
+        echo ""
+        echo "Searched in:"
+        echo "  - $CALL_DIR/.claude/config.json"
+        echo "  - $CALL_DIR/.mcp.json"
+        echo "  - $CALL_DIR/mcp.json"
+        return 1
+    fi
+
+    local config_file="${config_info%|*}"
+    local server_name="${config_info#*|}"
+
+    echo -e "${COLOR_GREEN}✓${COLOR_RESET} Found memory MCP server configuration:"
+    echo -e "  ${COLOR_BLUE}Config file:${COLOR_RESET} $config_file"
+    echo -e "  ${COLOR_BLUE}Server name:${COLOR_RESET} $server_name"
+    echo ""
+
+    # Check if memory command is available
+    if ! check_memory_command; then
+        echo -e "${COLOR_RED}✗ Memory CLI tool not found in PATH${COLOR_RESET}"
+        echo "  Install the memory CLI tool to run the UI server"
+        return 1
+    fi
+
+    echo -e "${COLOR_GREEN}✓${COLOR_RESET} Memory CLI tool is available"
+    echo ""
+
+    # Extract and export environment variables
+    local env_vars
+    env_vars=$(extract_env_vars "$config_file" "$server_name")
+
+    if [ -z "$env_vars" ]; then
+        echo -e "${COLOR_YELLOW}⚠${COLOR_RESET} No environment variables found in MCP config"
+        echo "  Running with default configuration..."
+    else
+        echo -e "${COLOR_GREEN}✓${COLOR_RESET} Loaded environment variables from MCP config"
+        echo ""
+    fi
+
+    echo -e "${COLOR_BOLD}${COLOR_CYAN}Starting memory server with HTTP interface...${COLOR_RESET}"
+    echo ""
+
+    # Export env vars and run memory server --http in the call directory
+    (
+        while IFS= read -r line; do
+            export "$line"
+        done <<< "$env_vars"
+
+        cd "$CALL_DIR" && exec memory server --http
+    )
+}
+
+# Show help
+show_help() {
+    cat <<EOF
+Usage: ai-files-cli memory-service <command>
+
+Manage MCP Memory Service for the current project.
+
+Commands:
+  status    Show memory service status and statistics
+  ui        Start memory service with HTTP UI interface
+  help      Show this help message
+
+Examples:
+  ai-files-cli memory-service status
+  ai-files-cli memory-service ui
+
+The script searches for memory MCP server configuration in:
+  - .claude/config.json
+  - .mcp.json
+  - mcp.json
+
+All memory commands run in the directory from which you called this command,
+not in the script's location.
+EOF
+}
+
+# Main dispatch
+CMD="${1:-help}"
+shift || true
+
+case "$CMD" in
+    status)
+        cmd_status
+        ;;
+    ui)
+        cmd_ui
+        ;;
+    help|-h|--help)
+        show_help
+        ;;
+    *)
+        echo -e "${COLOR_RED}Unknown command: $CMD${COLOR_RESET}" >&2
+        echo ""
+        show_help
+        exit 1
+        ;;
+esac
