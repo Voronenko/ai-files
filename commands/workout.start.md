@@ -19,7 +19,7 @@ The session file should begin with:
 3. Workout goals section (ask user for goals if not clear). Do not include information, that was not directly provided by user.
 4. Empty progress section ready for updates
 
-After creating the file, create or update `.ai-files/sessions/.current-goal` to track the active session filename.
+After creating the file, create or update `.ai-files/sessions/.current-session` to track the active session filename.
 
 Confirm the session has started and remind the user they can:
 - Update it with `/workout.update`

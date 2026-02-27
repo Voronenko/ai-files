@@ -1,7 +1,7 @@
 List all development sessions by:
 
 1. Check if `.ai-files/sessions/` directory exists
-2. List all `.md` files (excluding hidden files and `.current-goal`)
+2. List all `.md` files (excluding hidden files and `.current-session`)
 3. For each session file:
    - Show the filename
    - Extract and show the session title
