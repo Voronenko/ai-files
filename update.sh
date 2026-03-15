@@ -1,26 +1,60 @@
 #!/bin/bash
 
-# update.sh - Copy contents from ai-files/dist/ to git repo's .ai-files/ directory
-# This script can be executed from any directory within a git repository
-# Rules:
-# - Copy recursive contents of all folders except .specify
-# - For .specify folder, only copy files that don't exist yet (preserve local modifications)
-# - Auto-detects git repository root and creates .ai-files/ there
+# ai-files-cli-update - Update .ai-files/, .claude/, .kilocode/, .roo/ directories from dist/
+# This script handles:
+# - Recursive copying of all files and folders
+# - Preserving relative symlinks
+# - Detecting locally modified files and asking for confirmation with diff
+# - Tracking and reporting copied, deleted, and skipped files
+#
+# Usage: ai-files-cli-update [options]
+# Options:
+#   -s, --source DIR    Source directory (default: ./dist)
+#   -y, --yes           Automatically overwrite all modified files
+#   -n, --no            Skip all modified files (no overwrite)
+#   --dry-run           Show what would be done without making changes
+#   -v, --verbose       Enable verbose output
+#   -h, --help          Show this help message
 
-set -euo pipefail  # Exit on errors, undefined variables, and pipe failures
-
-# Source directory - will be overridden by DIST_DIR environment variable if set
-SOURCE_DIR="${DIST_DIR:-$HOME/ai-files/dist}"
-TARGET_DIR="."
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Function to print colored messages
+# Resolve the real path of the script, even if invoked via symlink
+SCRIPT_PATH="$0"
+while [ -h "$SCRIPT_PATH" ]; do
+    DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$DIR/$SCRIPT_PATH"
+done
+SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# Default source directory (relative to script location)
+SOURCE_DIR="${SELF_DIR}/../dist"
+
+# Target directories to update
+TARGET_DIRS=(".ai-files" ".claude" ".kilocode" ".roo")
+
+# Tracking arrays
+declare -a COPIED_FILES=()
+declare -a DELETED_FILES=()
+declare -a SKIPPED_FILES=()
+declare -a CREATED_DIRS=()
+declare -a PRESERVED_SYMLINKS=()
+
+# Options
+AUTO_YES=false
+AUTO_NO=false
+DRY_RUN=false
+VERBOSE=false
+
+# Functions for colored output
 print_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
 }
@@ -37,50 +71,36 @@ print_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
-# Function to detect git repository root
-detect_git_root() {
-    local current_dir="$(pwd)"
-
-    # Traverse up to find git repository root
-    while [[ "$current_dir" != "/" ]]; do
-        if [[ -d "$current_dir/.git" ]]; then
-            echo "$current_dir"
-            return 0
-        fi
-        current_dir="$(dirname "$current_dir")"
-    done
-
-    return 1
+print_diff() {
+    echo -e "${CYAN}📋 Diff:${NC}"
+    diff -u "$1" "$2" || true
 }
 
-# Function to show usage
+# Show usage
 show_usage() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Update .ai-files/ directory in current git repository from ai-files distribution.
+Update .ai-files/, .claude/, .kilocode/, .roo/ directories from dist/
 
 Options:
-    -h, --help          Show this help message
-    -s, --source DIR    Specify source directory (default: \$HOME/ai-files/dist)
+    -s, --source DIR    Source directory (default: ./dist)
+    -y, --yes           Automatically overwrite all modified files
+    -n, --no            Skip all modified files (no overwrite)
+    --dry-run           Show what would be done without making changes
     -v, --verbose       Enable verbose output
-    --dry-run          Show what would be copied without actually copying
-
-Environment Variables:
-    DIST_DIR           Source directory override (same as --source)
+    -h, --help          Show this help message
 
 Examples:
-    $(basename "$0")                    # Use default source directory
-    $(basename "$0") -s /path/to/dist   # Use custom source directory
-    $(basename "$0") --dry-run          # Preview changes only
+    $(basename "$0")                    # Interactive update
+    $(basename "$0") -y                  # Auto-overwrite all changes
+    $(basename "$0") -n                  # Skip all local changes
+    $(basename "$0") --dry-run           # Preview changes only
 
 EOF
 }
 
 # Parse command line arguments
-VERBOSE=false
-DRY_RUN=false
-
 while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help)
@@ -91,12 +111,20 @@ while [[ $# -gt 0 ]]; do
             SOURCE_DIR="$2"
             shift 2
             ;;
-        -v|--verbose)
-            VERBOSE=true
+        -y|--yes)
+            AUTO_YES=true
+            shift
+            ;;
+        -n|--no)
+            AUTO_NO=true
             shift
             ;;
         --dry-run)
             DRY_RUN=true
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE=true
             shift
             ;;
         *)
@@ -107,205 +135,431 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo "🔄 Updating .ai-files/ in git repository from $SOURCE_DIR..."
+# Resolve absolute path for source directory
+SOURCE_DIR="$(cd "$SOURCE_DIR" && pwd)"
 
-# Detect git repository root
+# Get git repository root
+detect_git_root() {
+    local current_dir="$(pwd)"
+    while [[ "$current_dir" != "/" ]]; do
+        if [[ -d "$current_dir/.git" ]]; then
+            echo "$current_dir"
+            return 0
+        fi
+        current_dir="$(dirname "$current_dir")"
+    done
+    return 1
+}
+
 GIT_ROOT=$(detect_git_root)
 if [[ $? -ne 0 ]]; then
-    print_error "Not in a git repository! This script must be run within a git repository."
+    print_error "Not in a git repository!"
     exit 1
 fi
 
-print_info "Git repository root detected: $GIT_ROOT"
-cd "$GIT_ROOT"
+print_info "Git repository root: $GIT_ROOT"
+print_info "Source directory: $SOURCE_DIR"
 
 # Check if source directory exists
 if [[ ! -d "$SOURCE_DIR" ]]; then
     print_error "Source directory $SOURCE_DIR does not exist!"
-    print_info "Please ensure ai-files distribution is available or specify custom source with --source"
+    print_info "Run 'make build' first to create the distribution."
     exit 1
 fi
 
-# Create target directory if it doesn't exist
-TARGET_FULL_PATH="$GIT_ROOT/$TARGET_DIR"
-if [[ "$DRY_RUN" == "false" ]]; then
-    mkdir -p "$TARGET_FULL_PATH"
-fi
+# Check if target directories exist in source
+for dir in "${TARGET_DIRS[@]}"; do
+    if [[ ! -d "$SOURCE_DIR/$dir" ]]; then
+        print_warning "Source directory $dir not found in dist/ - skipping"
+    fi
+done
 
-# Function to copy directory recursively
-copy_recursive() {
+# Function to copy file with symlink handling
+copy_file_or_symlink() {
     local src="$1"
     local dest="$2"
+    local rel_path="$3"
 
-    if [[ ! -d "$src" ]]; then
-        return 0
-    fi
+    # Check if source is a symlink
+    if [[ -L "$src" ]]; then
+        # It's a symlink - preserve it
+        local link_target
+        link_target="$(readlink "$src")"
 
-    local dir_name=$(basename "$src")
-    print_info "Processing directory: $dir_name"
-
-    if [[ "$VERBOSE" == "true" ]]; then
-        print_info "  Source: $src"
-        print_info "  Destination: $dest"
-    fi
-
-    # Create destination directory if needed
-    if [[ "$DRY_RUN" == "false" ]]; then
-        mkdir -p "$dest"
-    fi
-
-    # Copy all files and subdirectories
-    file_count=0
-    find "$src" -type f | while read -r src_file; do
-        rel_path="${src_file#$src/}"
-        dest_file="$dest/$rel_path"
-
-        # Create destination subdirectory if needed
         if [[ "$DRY_RUN" == "false" ]]; then
-            mkdir -p "$(dirname "$dest_file")"
-        fi
-
-        if [[ "$DRY_RUN" == "true" ]]; then
-            echo "  📄 Would copy: $rel_path"
-        else
+            ln -sf "$link_target" "$dest"
+            PRESERVED_SYMLINKS+=("$rel_path -> $link_target")
             if [[ "$VERBOSE" == "true" ]]; then
-                echo "  📄 Copying: $rel_path"
+                echo "  🔗 Preserved symlink: $rel_path -> $link_target"
             fi
-            cp "$src_file" "$dest_file"
+        else
+            echo "  🔗 Would preserve symlink: $rel_path -> $link_target"
         fi
-        file_count=$((file_count + 1))
-    done
-
-    if [[ "$DRY_RUN" == "false" && "$VERBOSE" == "true" ]]; then
-        print_success "  Copied directory: $dir_name"
-    elif [[ "$DRY_RUN" == "true" ]]; then
-        print_warning "  Would copy directory: $dir_name"
-    fi
-}
-
-# Function to copy only non-existing files (for .specify directory)
-copy_non_existing() {
-    local src="$1"
-    local dest="$2"
-
-    if [[ ! -d "$src" ]]; then
         return 0
     fi
 
-    local dir_name=$(basename "$src")
-    print_info "Processing .specify directory: $dir_name"
+    # It's a regular file - check if destination exists and is different
+    if [[ -f "$dest" ]]; then
+        # Check if files are different
+        if ! cmp -s "$src" "$dest"; then
+            # Files are different - ask user what to do
+            print_warning "Modified file detected: $rel_path"
 
-    if [[ "$VERBOSE" == "true" ]]; then
-        print_info "  Source: $src"
-        print_info "  Destination: $dest"
-    fi
-
-    # Create destination directory if needed
-    if [[ "$DRY_RUN" == "false" ]]; then
-        mkdir -p "$dest"
-    fi
-
-    copied_count=0
-    skipped_count=0
-
-    # Find all files in source and copy only if they don't exist in destination
-    find "$src" -type f | while read -r src_file; do
-        rel_path="${src_file#$src/}"
-        dest_file="$dest/$rel_path"
-
-        # Create destination subdirectory if needed
-        if [[ "$DRY_RUN" == "false" ]]; then
-            mkdir -p "$(dirname "$dest_file")"
-        fi
-
-        # Copy only if destination file doesn't exist
-        if [[ ! -f "$dest_file" ]]; then
-            if [[ "$DRY_RUN" == "true" ]]; then
-                echo "  ✅ Would add new file: $rel_path"
-            else
-                if [[ "$VERBOSE" == "true" ]]; then
-                    echo "  ✅ Adding new file: $rel_path"
+            if [[ "$AUTO_YES" == "true" ]]; then
+                print_info "Auto-overwriting (yes flag set)"
+                if [[ "$DRY_RUN" == "false" ]]; then
+                    cp "$src" "$dest"
+                    COPIED_FILES+=("$rel_path (overwritten)")
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        echo "  📝 Overwritten: $rel_path"
+                    fi
+                else
+                    echo "  📝 Would overwrite: $rel_path"
                 fi
-                cp "$src_file" "$dest_file"
-            fi
-            copied_count=$((copied_count + 1))
-        else
-            if [[ "$VERBOSE" == "true" ]]; then
-                echo "  ⏭️  Skipping existing file: $rel_path"
-            fi
-            skipped_count=$((skipped_count + 1))
-        fi
-    done
+            elif [[ "$AUTO_NO" == "true" ]]; then
+                print_info "Skipping (no flag set)"
+                SKIPPED_FILES+=("$rel_path (modified locally)")
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  ⏭️  Skipped: $rel_path"
+                fi
+            else
+                # Interactive mode - show diff and ask
+                print_diff "$dest" "$src"
+                echo -n "Overwrite $rel_path? [y/N/a/q] (y=yes, N=no, a=yes to all, q=quit): "
+                read -r response
 
-    if [[ "$DRY_RUN" == "false" ]]; then
-        print_success "  .specify directory processed (preserving existing local files)"
+                case "$response" in
+                    [Yy]*)
+                        if [[ "$DRY_RUN" == "false" ]]; then
+                            cp "$src" "$dest"
+                            COPIED_FILES+=("$rel_path (overwritten)")
+                            if [[ "$VERBOSE" == "true" ]]; then
+                                echo "  📝 Overwritten: $rel_path"
+                            fi
+                        else
+                            echo "  📝 Would overwrite: $rel_path"
+                        fi
+                        ;;
+                    [Aa]*)
+                        AUTO_YES=true
+                        if [[ "$DRY_RUN" == "false" ]]; then
+                            cp "$src" "$dest"
+                            COPIED_FILES+=("$rel_path (overwritten)")
+                            if [[ "$VERBOSE" == "true" ]]; then
+                                echo "  📝 Overwritten: $rel_path"
+                            fi
+                        else
+                            echo "  📝 Would overwrite: $rel_path"
+                        fi
+                        ;;
+                    [Qq]*)
+                        print_info "Quitting update process"
+                        exit 0
+                        ;;
+                    *)
+                        SKIPPED_FILES+=("$rel_path (modified locally)")
+                        if [[ "$VERBOSE" == "true" ]]; then
+                            echo "  ⏭️  Skipped: $rel_path"
+                        fi
+                        ;;
+                esac
+            fi
+        else
+            # Files are identical - skip
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "  ✓ Unchanged: $rel_path"
+            fi
+        fi
+    else
+        # File doesn't exist - copy it
+        if [[ "$DRY_RUN" == "false" ]]; then
+            cp "$src" "$dest"
+            COPIED_FILES+=("$rel_path")
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "  📄 Copied: $rel_path"
+            fi
+        else
+            echo "  📄 Would copy: $rel_path"
+        fi
     fi
 }
 
-# Statistics
-TOTAL_DIRS=0
-PROCESSED_DIRS=0
-SKIPPED_DIRS=0
+# Function to process directory using rsync
+process_directory() {
+    local src_dir="$1"
+    local dest_dir="$2"
+    local base_path="$3"
 
-# Process each directory in dist (including hidden directories)
-# Use a simple for loop with proper quoting to handle all directories
+    # Create destination directory if needed
+    if [[ ! -d "$dest_dir" ]]; then
+        if [[ "$DRY_RUN" == "false" ]]; then
+            mkdir -p "$dest_dir"
+            CREATED_DIRS+=("$base_path")
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "  📁 Created directory: $base_path"
+            fi
+        else
+            echo "  📁 Would create directory: $base_path"
+        fi
+    fi
 
-# Change to source directory to make path handling easier
-cd "$SOURCE_DIR"
+    # Use rsync to copy files and detect changes
+    # --archive: preserve permissions, times, symbolic links
+    # --itemize-changes: show what changed
+    # --delete: delete files in dest that aren't in src
+    # --dry-run: don't actually make changes
+    # --verbose: show detailed information
+    local rsync_opts="--archive --itemize-changes"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        rsync_opts="$rsync_opts --dry-run"
+    fi
+    if [[ "$VERBOSE" == "true" ]]; then
+        rsync_opts="$rsync_opts --verbose"
+    fi
 
-# Process all directories except . and ..
-for dir_path in * .*; do
-    # Skip . and .. and any non-directory
-    if [[ "$dir_path" == "." || "$dir_path" == ".." || ! -d "$dir_path" ]]; then
+    # Run rsync and capture output
+    local rsync_output
+    rsync_output=$(rsync $rsync_opts "$src_dir/" "$dest_dir/" 2>&1 || true)
+
+    # Parse rsync output to track changes
+    local modified_files=()
+    local deleted_files=()
+    local new_files=()
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+
+        # Parse rsync itemize format
+        # Format: <YXcstpoguax> <file>
+        # We care about files that are modified, deleted, or new
+        local flags="${line:0:11}"
+        local filepath="${line:12}"
+
+        # Skip directories and symlinks for now
+        [[ "$filepath" == */ ]] && continue
+
+        # Check if file was deleted
+        if [[ "$flags" == *deleting* ]]; then
+            deleted_files+=("$base_path/$filepath")
+            DELETED_FILES+=("$base_path/$filepath")
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "  🗑️  Deleted: $base_path/$filepath"
+            fi
+            continue
+        fi
+
+        # Check if file was modified (flags indicate change)
+        # f = file, * = changed, > = file is newer
+        if [[ "$flags" == *f* ]] && [[ "$flags" =~ [\*\<\>] ]]; then
+            modified_files+=("$base_path/$filepath")
+            continue
+        fi
+
+        # Check if file is new
+        if [[ "$flags" == *f* && "$flags" =~ c ]]; then
+            new_files+=("$base_path/$filepath")
+            COPIED_FILES+=("$base_path/$filepath")
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "  📄 New: $base_path/$filepath"
+            fi
+        fi
+    done <<< "$rsync_output"
+
+    # Copy new files
+    if [[ ${#new_files[@]} -gt 0 && "$DRY_RUN" == "false" ]]; then
+        for filepath in "${new_files[@]}"; do
+            local src_file="$src_dir/${filepath#$base_path/}"
+            local dest_file="$dest_dir/${filepath#$base_path/}"
+            if [[ -f "$src_file" ]]; then
+                cp "$src_file" "$dest_file"
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  📄 Copied: $filepath"
+                fi
+            fi
+        done
+    fi
+
+    # Handle modified files - verify actual content differences
+    if [[ ${#modified_files[@]} -gt 0 && "$DRY_RUN" == "false" ]]; then
+        local actually_modified=()
+        for filepath in "${modified_files[@]}"; do
+            local src_file="$src_dir/${filepath#$base_path/}"
+            local dest_file="$dest_dir/${filepath#$base_path/}"
+
+            if [[ -f "$src_file" && -f "$dest_file" ]]; then
+                # Verify actual content difference using cmp
+                if ! cmp -s "$src_file" "$dest_file"; then
+                    actually_modified+=("$filepath")
+                else
+                    # Files are identical - just update metadata
+                    cp -p "$src_file" "$dest_file"
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        echo "  ✓ Updated metadata: $filepath"
+                    fi
+                fi
+            fi
+        done
+
+        # Handle actually modified files interactively if not in auto mode
+        if [[ ${#actually_modified[@]} -gt 0 && "$AUTO_YES" == "false" && "$AUTO_NO" == "false" ]]; then
+            for filepath in "${actually_modified[@]}"; do
+                local src_file="$src_dir/${filepath#$base_path/}"
+                local dest_file="$dest_dir/${filepath#$base_path/}"
+
+                if [[ -f "$src_file" && -f "$dest_file" ]]; then
+                    print_warning "Modified file detected: $filepath"
+                    print_diff "$dest_file" "$src_file"
+                    echo -n "Overwrite $filepath? [y/N/a/q] (y=yes, N=no, a=yes to all, q=quit): "
+                    read -r response
+
+                    case "$response" in
+                        [Yy]*)
+                            cp "$src_file" "$dest_file"
+                            COPIED_FILES+=("$filepath (overwritten)")
+                            if [[ "$VERBOSE" == "true" ]]; then
+                                echo "  📝 Overwritten: $filepath"
+                            fi
+                            ;;
+                        [Aa]*)
+                            AUTO_YES=true
+                            cp "$src_file" "$dest_file"
+                            COPIED_FILES+=("$filepath (overwritten)")
+                            if [[ "$VERBOSE" == "true" ]]; then
+                                echo "  📝 Overwritten: $filepath"
+                            fi
+                            ;;
+                        [Qq]*)
+                            print_info "Quitting update process"
+                            exit 0
+                            ;;
+                        *)
+                            SKIPPED_FILES+=("$filepath (modified locally)")
+                            if [[ "$VERBOSE" == "true" ]]; then
+                                echo "  ⏭️  Skipped: $filepath"
+                            fi
+                            ;;
+                    esac
+                fi
+            done
+        elif [[ ${#actually_modified[@]} -gt 0 && "$AUTO_YES" == "true" ]]; then
+            # Auto-overwrite all modified files
+            for filepath in "${actually_modified[@]}"; do
+                local src_file="$src_dir/${filepath#$base_path/}"
+                local dest_file="$dest_dir/${filepath#$base_path/}"
+                if [[ -f "$src_file" && -f "$dest_file" ]]; then
+                    cp "$src_file" "$dest_file"
+                    COPIED_FILES+=("$filepath (overwritten)")
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        echo "  📝 Overwritten: $filepath"
+                    fi
+                fi
+            done
+        elif [[ ${#actually_modified[@]} -gt 0 && "$AUTO_NO" == "true" ]]; then
+            # Skip all modified files
+            for filepath in "${actually_modified[@]}"; do
+                SKIPPED_FILES+=("$filepath (modified locally)")
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  ⏭️  Skipped: $filepath"
+                fi
+            done
+        fi
+    fi
+}
+
+# Main update process
+echo ""
+echo "🔄 Starting update process..."
+echo ""
+
+for target_dir in "${TARGET_DIRS[@]}"; do
+    src_path="$SOURCE_DIR/$target_dir"
+    dest_path="$GIT_ROOT/$target_dir"
+
+    if [[ ! -d "$src_path" ]]; then
+        print_warning "Skipping $target_dir (not found in source)"
         continue
     fi
 
-    dir_name="$dir_path"
-    TOTAL_DIRS=$((TOTAL_DIRS + 1))
-
-    case "$dir_name" in
-        ".specify")
-            # Special handling for .specify - only copy non-existing files
-            copy_non_existing "$SOURCE_DIR/$dir_name" "$TARGET_FULL_PATH/.specify"
-            PROCESSED_DIRS=$((PROCESSED_DIRS + 1))
-            ;;
-        *)
-            # Copy all other directories recursively
-            copy_recursive "$SOURCE_DIR/$dir_name" "$TARGET_FULL_PATH/$dir_name"
-            PROCESSED_DIRS=$((PROCESSED_DIRS + 1))
-            ;;
-    esac
+    print_info "Processing $target_dir..."
+    process_directory "$src_path" "$dest_path" "$target_dir"
+    echo ""
 done
-
-# Change back to git root
-cd "$GIT_ROOT"
 
 # Final summary
 echo ""
 if [[ "$DRY_RUN" == "true" ]]; then
-    print_warning "DRY RUN COMPLETED - No files were actually copied"
+    print_warning "DRY RUN COMPLETED - No files were actually modified"
 else
     print_success "Update completed successfully!"
 fi
 
-echo "📂 Source: $SOURCE_DIR"
-echo "📂 Target: $TARGET_FULL_PATH"
 echo ""
 echo "📋 Summary:"
-echo "   • Total directories found: $TOTAL_DIRS"
-echo "   • Directories processed: $PROCESSED_DIRS"
-echo "   • Directories skipped: $SKIPPED_DIRS"
 echo ""
-echo "📝 Rules applied:"
-echo "   • All directories (except .specify and .ai-files) copied recursively"
-echo "   • .specify files copied only if they don't already exist (preserving local modifications)"
-echo "   • .ai-files directory skipped to avoid circular copying"
 
-if [[ "$DRY_RUN" == "false" ]]; then
-    print_info "You can now use the updated .ai-files/ in your git repository"
-else
-    print_info "Run without --dry-run to actually copy the files"
+# Show statistics
+total_copied=${#COPIED_FILES[@]}
+total_deleted=${#DELETED_FILES[@]}
+total_skipped=${#SKIPPED_FILES[@]}
+total_created=${#CREATED_DIRS[@]}
+total_symlinks=${#PRESERVED_SYMLINKS[@]}
+
+if [[ $total_copied -gt 0 ]]; then
+    echo "📄 Files copied/updated ($total_copied):"
+    for file in "${COPIED_FILES[@]}"; do
+        echo "   • $file"
+    done
+    echo ""
 fi
 
-# Exit successfully
+if [[ $total_deleted -gt 0 ]]; then
+    echo "🗑️  Files deleted ($total_deleted):"
+    for file in "${DELETED_FILES[@]}"; do
+        echo "   • $file"
+    done
+    echo ""
+fi
+
+if [[ $total_skipped -gt 0 ]]; then
+    echo "⏭️  Files skipped (modified locally) ($total_skipped):"
+    for file in "${SKIPPED_FILES[@]}"; do
+        echo "   • $file"
+    done
+    echo ""
+fi
+
+if [[ $total_created -gt 0 ]]; then
+    echo "📁 Directories created ($total_created):"
+    for dir in "${CREATED_DIRS[@]}"; do
+        echo "   • $dir"
+    done
+    echo ""
+fi
+
+if [[ $total_symlinks -gt 0 ]]; then
+    echo "🔗 Symlinks preserved ($total_symlinks):"
+    for link in "${PRESERVED_SYMLINKS[@]}"; do
+        echo "   • $link"
+    done
+    echo ""
+fi
+
+if [[ $total_copied -eq 0 && $total_deleted -eq 0 && $total_skipped -eq 0 && $total_created -eq 0 ]]; then
+    echo "✨ No changes needed - all files are up to date"
+    echo ""
+elif [[ $total_copied -eq 0 && $total_deleted -eq 0 && $total_skipped -eq 0 && $total_created -gt 0 ]]; then
+    echo "✨ Directories created - ready for use"
+    echo ""
+fi
+
+echo "📂 Source: $SOURCE_DIR"
+echo "📂 Target: $GIT_ROOT"
+echo ""
+
+if [[ "$DRY_RUN" == "false" ]]; then
+    print_info "Update complete! You may want to review the changes with git."
+else
+    print_info "Run without --dry-run to apply these changes."
+fi
+
 exit 0
