@@ -1,7 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Resolve the real path of the script, even if invoked via symlink
+SCRIPT_PATH="$0"
+while [ -h "$SCRIPT_PATH" ]; do
+    DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$DIR/$SCRIPT_PATH"
+done
+SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+get_version() {
+    local git_dir="${SELF_DIR}/../.git"
+    if [ ! -d "$git_dir" ]; then
+        echo "unknown"
+        return
+    fi
+
+    # Check if we're on a tag
+    local tag
+    tag=$(git -C "${SELF_DIR}/.." describe --tags --exact-match 2>/dev/null || true)
+    if [ -n "$tag" ]; then
+        echo "$tag"
+        return
+    fi
+
+    # If not on a tag, show branch name and commit hash
+    local branch
+    local commit_hash
+    branch=$(git -C "${SELF_DIR}/.." rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+    commit_hash=$(git -C "${SELF_DIR}/.." rev-parse --short=7 HEAD 2>/dev/null || echo "unknown")
+
+    if [ "$branch" = "HEAD" ]; then
+        # Detached HEAD state
+        echo "detached-${commit_hash}"
+    else
+        echo "${branch}-${commit_hash}"
+    fi
+}
 
 dispatch_to_external() {
     local cmd="$1"
@@ -20,13 +56,30 @@ Usage: ai-files-cli <command> [options]
 Commands:
   mcp          Configure and manage MCP servers
   update       Update ai-files utilities (if ai-files-cli-update exists)
+  version      Show version information
 
 Any command can be overridden by placing a file:
   ai-files-cli-<command>
 
+EOF
+
+    # Discover and list extension commands
+    local extensions
+    extensions=$(find "$SELF_DIR" -maxdepth 1 -type f -name "ai-files-cli-*" -executable -printf "%f\n" 2>/dev/null | sed 's/^ai-files-cli-//' | sort)
+
+    if [ -n "$extensions" ]; then
+        echo "Extension Commands:"
+        echo "$extensions" | while read -r tool; do
+            echo "  ai-files-cli $tool"
+        done
+        echo ""
+    fi
+
+    cat <<EOF
 Examples:
   ai-files-cli mcp list
   ai-files-cli update
+  ai-files-cli version
 EOF
 }
 
@@ -47,6 +100,9 @@ case "$CMD" in
     update)
         echo "No builtin update command. Provide ai-files-cli-update." >&2
         exit 1
+        ;;
+    version)
+        get_version
         ;;
     *)
         echo "Unknown command: $CMD" >&2

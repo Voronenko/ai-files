@@ -1,6 +1,7 @@
 .roomodes
 .kilocode
 .claude
+.roo
 dist/*
 .env
 .specify

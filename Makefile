@@ -418,3 +418,22 @@ install-gemini-cli:
 install-mcp-memory-service:
 	pipx mcp-memory-service
 	pipx inject mcp-memory-service onnxruntime
+
+install-cli-to-local-bin:
+	@set -e; \
+	SRC="$(PWD)/bin/ai-files-cli"; \
+	DST="$(HOME)/.local/bin/ai-files-cli"; \
+	if [ ! -f "$$SRC" ]; then \
+		echo "Error: Source file not found: $$SRC"; \
+		exit 1; \
+	fi; \
+	mkdir -p "$(HOME)/.local/bin"; \
+	if [ -L "$$DST" ]; then \
+		echo "Removing existing symlink: $$DST"; \
+		rm "$$DST"; \
+	elif [ -e "$$DST" ]; then \
+		echo "Error: $$DST exists and is not a symlink"; \
+		exit 1; \
+	fi; \
+	ln -s "$$SRC" "$$DST"; \
+	echo "✅ Created symlink: $$DST -> $$SRC"

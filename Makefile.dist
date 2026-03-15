@@ -1,0 +1,6 @@
+# implementation by https://github.com/doobidoo/mcp-memory-service
+install-memory-service:
+	pipx-install mcp-memory-service
+	pipx inject mcp-memory-service onnxruntime
+upgrade-memory-service:
+	pipx upgrade mcp-memory-service
