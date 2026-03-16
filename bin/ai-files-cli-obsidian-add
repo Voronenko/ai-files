@@ -1,0 +1,133 @@
+#!/bin/sh
+
+set -eu
+
+readonly EX_USAGE=64
+readonly EX_NOINPUT=66
+
+# Get git repository name from current directory
+get_git_repo_name() {
+    git remote -v 2>/dev/null | head -1 | sed -E 's|.*[:/]([^/]+)\.git.*|\1|' || echo ""
+}
+
+usage() {
+    cat <<EOF
+usage: $(basename "$0") [-v <vault>] [-p <path>] [-t <tags>] <markdown-file>
+
+Add a new entry to Obsidian from an existing markdown file with AI Files defaults.
+
+Environment variables (defaults):
+  AI_FILES_VAULT            Default vault name
+  AI_FILES_VAULT_DEFAULT_PATH  Default folder path within vault
+
+Auto-added tags:
+  #session                  Added to every note
+  #repo-<repo_name>         Current git repository name
+
+Arguments:
+  <markdown-file>    Path to existing markdown file to read content from
+
+Options:
+  -v <vault>         Target vault name (default: \$AI_FILES_VAULT)
+  -p <path>          Folder path within vault
+                     (default: \$AI_FILES_VAULT_DEFAULT_PATH or git repo name)
+  -t <tags>          Additional comma-separated tags (e.g. "work,ideas")
+  -n <name>          Note name (defaults to source filename)
+  -o                 Open note after creating in Obsidian
+  -h, --help         Show this help
+
+Examples:
+  # Use env defaults
+  $(basename "$0") ./note.md
+
+  # Override vault
+  $(basename "$0") -v KB ./note.md
+
+  # Override path
+  $(basename "$0") -p "custom/path" ./note.md
+
+  # With extra tags
+  $(basename "$0") -t "work,ideas" ./note.md -o
+EOF
+}
+
+vault="${AI_FILES_VAULT:-}"
+folder_path="${AI_FILES_VAULT_DEFAULT_PATH:-}"
+tags=""
+note_name=""
+open_flag=""
+markdown_file=""
+
+while getopts "v:p:t:n:oh" opt; do
+    case $opt in
+        v) vault="$OPTARG" ;;
+        p) folder_path="$OPTARG" ;;
+        t) tags="$OPTARG" ;;
+        n) note_name="$OPTARG" ;;
+        o) open_flag="open" ;;
+        h) usage; exit 0 ;;
+        *) usage; exit $EX_USAGE ;;
+    esac
+done
+
+shift $((OPTIND - 1))
+
+if [ $# -ne 1 ]; then
+    usage
+    exit $EX_USAGE
+fi
+
+if [ -z "${vault:-}" ]; then
+    echo "error: vault is required (set \$AI_FILES_VAULT or use -v option)" >&2
+    usage
+    exit $EX_USAGE
+fi
+
+markdown_file="$1"
+
+if [ ! -f "$markdown_file" ]; then
+    echo "$(basename "$0"): $markdown_file: No such file" >&2
+    exit $EX_NOINPUT
+fi
+
+# Resolve default path if not set
+if [ -z "$folder_path" ]; then
+    repo_name=$(get_git_repo_name)
+    if [ -n "$repo_name" ]; then
+        folder_path="$repo_name"
+    fi
+fi
+
+# Build auto tags
+auto_tags="session"
+repo_name=$(get_git_repo_name)
+if [ -n "$repo_name" ]; then
+    auto_tags="$auto_tags,repo-$repo_name"
+fi
+
+# Combine with user-provided tags
+if [ -n "$tags" ]; then
+    tags="$auto_tags,$tags"
+else
+    tags="$auto_tags"
+fi
+
+# Build obsidian-add command
+cmd="obsidian-add -v \"$vault\" -t \"$tags\""
+
+if [ -n "$folder_path" ]; then
+    cmd="$cmd -p \"$folder_path\""
+fi
+
+if [ -n "$note_name" ]; then
+    cmd="$cmd -n \"$note_name\""
+fi
+
+if [ -n "$open_flag" ]; then
+    cmd="$cmd -o"
+fi
+
+cmd="$cmd \"$markdown_file\""
+
+# Execute obsidian-add
+eval "$cmd"
