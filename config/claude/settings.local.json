@@ -13,6 +13,30 @@
     "deny": [],
     "ask": []
   },
+  "hooks": {
+    "WorktreeCreate": [
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/handle_worktree.sh",
+                    "timeout": 30
+                }
+            ]
+        }
+    ],
+    "WorktreeRemove": [
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "bash \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/handle_worktree.sh",
+                    "timeout": 15
+                }
+            ]
+        }
+    ]
+  }
   "mcpServers": {
     "memory": {
       "command": "memory",
