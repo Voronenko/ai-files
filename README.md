@@ -1,5 +1,49 @@
 # AI Files
 
+## Dist
+
+The `dist/` folder contains distribution files that will be copied to your code repository. This directory serves as a centralized source for AI Files project configuration, commands, skills, rules, prompts, and plugins that are distributed across different AI development tools.
+
+### Directory Structure
+
+The `dist/` directory organizes files into logical subdirectories aligned with target platforms:
+
+- **`.ai-files/`** - Main AI Files distribution directory
+  - `commands/` - Custom commands for session management and memory operations
+  - `prompts/` - Prompts and instruction templates
+  - `rules/` - Rules for different modes (architect, code, debug)
+  - `skills/` - Claude Code skills and templates
+  - `plugins/` - Plugin files for various tools
+
+- **Root level files** - `AGENTS.md` and `CLAUDE.md` for agent configuration
+
+### Target Platforms
+
+The distribution is designed to work with multiple AI development platforms:
+
+- **`.kilocode/`** - Kilocode configuration and workflows
+  - `workflows/` - Kilocode workflow definitions
+  - `skills/` - Kilocode skills (shared with Claude)
+- **`.claude/`** - Claude Code configuration
+  - `commands/` - Claude Code commands (linked from `.ai-files/commands/`)
+- **`.roo/`** - Roo Code configuration
+  - `commands/` - Roo Code commands (linked from `.ai-files/commands/`)
+
+### Symlink Strategy
+
+The build process uses symlinks to maintain flexibility and avoid duplication:
+
+- **Shared resources**: The `skills/` directory is symlinked to both `.kilocode/skills/` and `.claude/skills/` to ensure skills are available to both platforms
+- **Platform-specific configs**: Each platform (`.kilocode/`, `.claude/`, `.roo/`) gets its own symlink to the `dist/` directory
+- **Single source of truth**: The AI Files repository maintains its own `dist/` directory, which is then symlinked by each platform to their respective configuration directories
+
+### Build Process
+
+The Makefile orchestrates distribution build through several targets:
+
+- **`make build`** - Prepares the `dist/` directory by creating necessary subdirectories and copying source files
+
+
 ## ai-files-cli
 
 The `ai-files-cli` is a command-line interface that provides various utilities for managing AI Files project configuration, MCP servers, memory services, and more. It serves as a dispatcher that routes commands to specialized subcommands.
@@ -710,5 +754,70 @@ https://github.com/doobidoo/mcp-memory-service/blob/main/docs/integration/multi-
 ### claude sessions
   - https://github.com/iannuttall/claude-sessions/
   - see video https://www.youtube.com/watch?v=higAxJk_zig
+
+## Dist
+
+The `dist/` folder contains the distribution files that will be copied to your code repository. This directory serves as a centralized source for AI Files project configuration, commands, skills, rules, prompts, and plugins that are distributed across different AI development tools.
+
+### Directory Structure
+
+The `dist/` directory organizes files into logical subdirectories aligned with the target platforms:
+
+- **`.ai-files/`** - Main AI Files distribution directory
+  - `commands/` - Custom commands for session management and memory operations
+  - `prompts/` - Prompts and instruction templates
+  - `rules/` - Rules for different modes (architect, code, debug)
+  - `skills/` - Claude Code skills and templates
+  - `plugins/` - Plugin files for various tools
+- **Root level files** - `AGENTS.md` and `CLAUDE.md` for agent configuration
+
+### Target Platforms
+
+The distribution is designed to work with multiple AI development platforms:
+
+- **`.kilocode/`** - Kilocode configuration and workflows
+  - `workflows/` - Kilocode workflow definitions
+  - `skills/` - Kilocode skills (shared with Claude)
+- **`.claude/`** - Claude Code configuration
+  - `commands/` - Claude Code commands (linked from .ai-files/commands/)
+- **`.roo/`** - Roo Code configuration
+  - `commands/` - Roo Code commands (linked from .ai-files/commands/)
+
+### Symlink Strategy
+
+The build process uses symlinks to maintain flexibility and avoid duplication:
+
+- **Shared resources**: The `skills/` directory is symlinked to both `.kilocode/skills/` and `.claude/skills/` to ensure skills are available to both platforms
+- **Platform-specific configs**: Each platform (`.kilocode/`, `.claude/`, `.roo/`) gets its own symlink to the `dist/` directory
+- **Single source of truth**: The AI Files repository maintains its own `dist/` directory, which is then symlinked by each platform to their respective configuration directories
+
+### Build Process
+
+The Makefile orchestrates the distribution build through several targets:
+
+- **`make build`** - Prepares the `dist/` directory by creating necessary subdirectories and copying source files
+- **`make prepare-dist`** - Copies and organizes all source files into the `dist/` directory structure
+- **`make relink-from-dist`** - Creates symlinks from `dist/` to platform-specific directories (`.kilocode/`, `.claude/`, `.roo/`)
+- **`make prepare-claude`** - Sets up Claude Code specific commands by linking from `.ai-files/commands/`
+- **`make publish-spec-kit`** - Downloads and integrates Spec Kit templates for all platforms
+- **`make publish-memory-bank`** - Publishes memory bank instructions to all agent directories
+
+### Installation
+
+To install the AI Files distribution to your code repository:
+
+```bash
+# Build the distribution
+make build
+
+# Link to your platform (choose one)
+make relink-from-dist  # For Kilocode
+# OR
+make link-roo          # For Roo Code
+# OR
+make link-claude        # For Claude Code
+```
+
+This setup ensures that each AI development tool has access to the appropriate configuration files, commands, and resources while maintaining a clean separation between the AI Files repository and the platform-specific configurations.
 
 
