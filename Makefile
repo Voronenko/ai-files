@@ -1,6 +1,9 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -euo pipefail -c
 
+magic: clean build dist
+	echo magic done
+
 clean:
 	# Remove old build
 	rm -rf ./dist/
@@ -81,8 +84,8 @@ adr-graph:
 	dot -Tsvg ./docs/architecture/decisions/graph.dot -o ./docs/architecture/decisions/graph.svg
 
 publish-spec-kit-kilo:
-	@echo "Fetching latest spec-kit release..."
-	@LATEST_RELEASE=$$(curl -s https://api.github.com/repos/github/spec-kit/releases/latest | grep '"tag_name"' | cut -d'"' -f4); \
+	@echo "Using pinned spec-kit release..."
+	@LATEST_RELEASE="v0.4.4"; \
 	if [ -z "$$LATEST_RELEASE" ]; then \
 		echo "Error: Could not fetch latest release version"; \
 		exit 1; \
@@ -117,8 +120,8 @@ publish-spec-kit-kilo:
 	echo "✅ Successfully extracted .kilocode/ contents to ./dist/.kilocode/"
 
 publish-spec-kit-roo:
-	@echo "Fetching latest spec-kit release..."
-	@LATEST_RELEASE=$$(curl -s https://api.github.com/repos/github/spec-kit/releases/latest | grep '"tag_name"' | cut -d'"' -f4); \
+	@echo "Using pinned spec-kit release..."
+	@LATEST_RELEASE="v0.4.4"; \
 	if [ -z "$$LATEST_RELEASE" ]; then \
 		echo "Error: Could not fetch latest release version"; \
 		exit 1; \
@@ -153,8 +156,8 @@ publish-spec-kit-roo:
 	echo "✅ Successfully extracted .roo/ contents to ./dist/.roo/"
 
 publish-spec-kit-claude:
-	@echo "Fetching latest spec-kit release..."
-	@LATEST_RELEASE=$$(curl -s https://api.github.com/repos/github/spec-kit/releases/latest | grep '"tag_name"' | cut -d'"' -f4); \
+	@echo "Using pinned spec-kit release..."
+	@LATEST_RELEASE="v0.4.4"; \
 	if [ -z "$$LATEST_RELEASE" ]; then \
 		echo "Error: Could not fetch latest release version"; \
 		exit 1; \
@@ -203,8 +206,8 @@ publish-spec-kit: publish-spec-kit-kilo publish-spec-kit-roo publish-spec-kit-cl
 	@echo "✨ All four spec-kit templates are now ready for use!"
 
 publish-spec-kit-templates:
-	@echo "Fetching latest spec-kit release..."
-	@LATEST_RELEASE=$$(curl -s https://api.github.com/repos/github/spec-kit/releases/latest | grep '"tag_name"' | cut -d'"' -f4); \
+	@echo "Using pinned spec-kit release..."
+	@LATEST_RELEASE="v0.4.4"; \
 	if [ -z "$$LATEST_RELEASE" ]; then \
 		echo "Error: Could not fetch latest release version"; \
 		exit 1; \

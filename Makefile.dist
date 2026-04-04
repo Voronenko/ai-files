@@ -4,3 +4,9 @@ install-memory-service:
 	pipx inject mcp-memory-service onnxruntime
 upgrade-memory-service:
 	pipx upgrade mcp-memory-service
+
+
+# skills
+
+skill-mattpocock-improve-codebase-architecture:
+	ai-files-cli skill-add mattpocock/skills/improve-codebase-architecture

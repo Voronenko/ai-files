@@ -52,7 +52,7 @@ EOF
 }
 
 vault="${AI_FILES_VAULT:-}"
-folder_path="${AI_FILES_VAULT_DEFAULT_PATH:-}"
+folder_path="${AI_FILES_VAULT_DEFAULT_PATH:}"
 tags=""
 note_name=""
 open_flag=""
@@ -94,7 +94,7 @@ fi
 if [ -z "$folder_path" ]; then
     repo_name=$(get_git_repo_name)
     if [ -n "$repo_name" ]; then
-        folder_path="$repo_name"
+        folder_path="pages/repo-$repo_name"
     fi
 fi
 

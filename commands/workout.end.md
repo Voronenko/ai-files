@@ -28,3 +28,5 @@ End the current development session by:
 5. Inform user the session has been documented
 
 The summary should be thorough enough that another developer (or AI) can understand everything that happened without reading the entire session.
+
+6.  Add to repo-memory information about this session with path to session file, tag it additionally with session tag, consider also tags to refer primary subsystems or main filenames touched in the session tags, if you find that useful.
