@@ -1,0 +1,6 @@
+.gitignore.local
+.claude/
+.kilocode/
+.specify/
+AGENTS.md
+CLAUDE.md

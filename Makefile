@@ -57,11 +57,7 @@ prepare-claude:
 			ln -sfr "$$f" "./dist/.claude/commands/$$(basename "$$f")"; \
 		done \
 	' sh {} +
-	@find ./dist/.ai-files/commands/claude-speckit/ -type f -name '*.md' -exec sh -c '\
-		for f do \
-			ln -sfr "$$f" "./dist/.claude/commands/$$(basename "$$f")"; \
-		done \
-	' sh {} +
+	@echo "✅ Created symlinks to ./dist/.claude/commands/"
 
 build: prepare-dist prepare-claude
 	echo build completed
@@ -84,155 +80,104 @@ adr-graph:
 	dot -Tsvg ./docs/architecture/decisions/graph.dot -o ./docs/architecture/decisions/graph.svg
 
 publish-spec-kit-kilo:
-	@echo "Using pinned spec-kit release..."
-	@LATEST_RELEASE="v0.4.4"; \
-	if [ -z "$$LATEST_RELEASE" ]; then \
-		echo "Error: Could not fetch latest release version"; \
-		exit 1; \
-	fi; \
-	echo "Latest release: $$LATEST_RELEASE"; \
-	DOWNLOAD_URL="https://github.com/github/spec-kit/releases/download/$$LATEST_RELEASE/spec-kit-template-kilocode-sh-$$LATEST_RELEASE.zip"; \
-	CACHE_DIR="./.cache"; \
-	CACHE_FILE="$$CACHE_DIR/spec-kit-kilo-$$LATEST_RELEASE.zip"; \
-	mkdir -p "$$CACHE_DIR"; \
-	\
-	# Check if cached version exists \
-	if [ -f "$$CACHE_FILE" ]; then \
-		echo "Using cached version from $$CACHE_FILE"; \
-		cp "$$CACHE_FILE" "./dist/spec-kit-kilo.zip"; \
-	else \
-		echo "Downloading from: $$DOWNLOAD_URL"; \
-		curl -L -o "./dist/spec-kit-kilo.zip" "$$DOWNLOAD_URL"; \
-		if [ $$? -ne 0 ]; then \
-			echo "Error: Failed to download spec-kit template"; \
-			exit 1; \
-		fi; \
-		# Cache the downloaded file \
-		cp "./dist/spec-kit-kilo.zip" "$$CACHE_FILE"; \
-	fi; \
-	\
-	echo "Extracting .kilocode/ contents..."; \
-	cd ./dist && unzip -q -o spec-kit-kilo.zip ".kilocode/*" && rm spec-kit-kilo.zip; \
-	if [ $$? -ne 0 ]; then \
-		echo "Error: Failed to extract spec-kit template"; \
-		exit 1; \
-	fi; \
-	echo "✅ Successfully extracted .kilocode/ contents to ./dist/.kilocode/"
+	@echo "Creating symlinks for kilocode workflows..."
+	@mkdir -p ./dist/.kilocode/workflows; \
+	find ./dist/.ai-files/commands/speckit -type f -name '*.md' -exec sh -c '\
+		for f do \
+			ln -sfr "$$f" "./dist/.kilocode/workflows/$$(basename "$$f")"; \
+		done \
+	' sh {} +; \
+	echo "✅ Successfully created symlinks to ./dist/.kilocode/workflows/"
 
 publish-spec-kit-roo:
-	@echo "Using pinned spec-kit release..."
-	@LATEST_RELEASE="v0.4.4"; \
-	if [ -z "$$LATEST_RELEASE" ]; then \
-		echo "Error: Could not fetch latest release version"; \
-		exit 1; \
-	fi; \
-	echo "Latest release: $$LATEST_RELEASE"; \
-	DOWNLOAD_URL="https://github.com/github/spec-kit/releases/download/$$LATEST_RELEASE/spec-kit-template-roo-sh-$$LATEST_RELEASE.zip"; \
-	CACHE_DIR="./.cache"; \
-	CACHE_FILE="$$CACHE_DIR/spec-kit-roo-$$LATEST_RELEASE.zip"; \
-	mkdir -p "$$CACHE_DIR"; \
-	\
-	# Check if cached version exists \
-	if [ -f "$$CACHE_FILE" ]; then \
-		echo "Using cached version from $$CACHE_FILE"; \
-		cp "$$CACHE_FILE" "./dist/spec-kit-roo.zip"; \
-	else \
-		echo "Downloading from: $$DOWNLOAD_URL"; \
-		curl -L -o "./dist/spec-kit-roo.zip" "$$DOWNLOAD_URL"; \
-		if [ $$? -ne 0 ]; then \
-			echo "Error: Failed to download spec-kit roo template"; \
-			exit 1; \
-		fi; \
-		# Cache the downloaded file \
-		cp "./dist/spec-kit-roo.zip" "$$CACHE_FILE"; \
-	fi; \
-	\
-	echo "Extracting .roo/ contents..."; \
-	cd ./dist && unzip -q -o spec-kit-roo.zip ".roo/*" && rm spec-kit-roo.zip; \
-	if [ $$? -ne 0 ]; then \
-		echo "Error: Failed to extract spec-kit roo template"; \
-		exit 1; \
-	fi; \
-	echo "✅ Successfully extracted .roo/ contents to ./dist/.roo/"
+	@echo "Creating symlinks for roo commands..."
+	@mkdir -p ./dist/.roo/commands; \
+	find ./dist/.ai-files/commands/speckit -type f -name '*.md' -exec sh -c '\
+		for f do \
+			ln -sfr "$$f" "./dist/.roo/commands/$$(basename "$$f")"; \
+		done \
+	' sh {} +; \
+	echo "✅ Successfully created symlinks to ./dist/.roo/commands/"
 
 publish-spec-kit-claude:
-	@echo "Using pinned spec-kit release..."
-	@LATEST_RELEASE="v0.4.4"; \
-	if [ -z "$$LATEST_RELEASE" ]; then \
-		echo "Error: Could not fetch latest release version"; \
-		exit 1; \
-	fi; \
-	echo "Latest release: $$LATEST_RELEASE"; \
-	DOWNLOAD_URL="https://github.com/github/spec-kit/releases/download/$$LATEST_RELEASE/spec-kit-template-claude-sh-$$LATEST_RELEASE.zip"; \
-	CACHE_DIR="./.cache"; \
-	CACHE_FILE="$$CACHE_DIR/spec-kit-claude-$$LATEST_RELEASE.zip"; \
-	mkdir -p "$$CACHE_DIR"; \
-	\
-	# Check if cached version exists \
-	if [ -f "$$CACHE_FILE" ]; then \
-		echo "Using cached version from $$CACHE_FILE"; \
-		cp "$$CACHE_FILE" "./dist/spec-kit-claude.zip"; \
-	else \
-		echo "Downloading from: $$DOWNLOAD_URL"; \
-		curl -L -o "./dist/spec-kit-claude.zip" "$$DOWNLOAD_URL"; \
-		if [ $$? -ne 0 ]; then \
-			echo "Error: Failed to download spec-kit claude template"; \
-			exit 1; \
-		fi; \
-		# Cache the downloaded file \
-		cp "./dist/spec-kit-claude.zip" "$$CACHE_FILE"; \
-	fi; \
-	\
-	echo "Extracting .claude/commands/ contents..."
-	rm -rf ./dist/.ai-files/commands/claude-speckit/
-	mkdir -p ./dist/.ai-files/commands/claude-speckit/
-	cd ./dist && unzip -q -o spec-kit-claude.zip ".claude/commands/*" -d .ai-files/commands/claude-speckit/ && rm spec-kit-claude.zip; \
-	mv .ai-files/commands/claude-speckit/.claude/commands/* .ai-files/commands/claude-speckit/ && rm -rf .ai-files/commands/claude-speckit/.claude/; \
+	@echo "Initializing claude skills using specify CLI..."
+	@TEMP_DIR=$$(mktemp -d); \
+	echo "Created temporary directory: $$TEMP_DIR"; \
+	cd "$$TEMP_DIR" && \
+	specify init . --ai claude --script sh; \
 	if [ $$? -ne 0 ]; then \
-		echo "Error: Failed to extract spec-kit claude template"; \
+		echo "Error: Failed to run specify init"; \
+		rm -rf "$$TEMP_DIR"; \
 		exit 1; \
 	fi; \
-	echo "✅ Successfully extracted .claude/commands/ contents to ./dist/.ai-files/commands/claude-speckit/"
+	cd - >/dev/null; \
+	echo "Preparing destination..."; \
+	mkdir -p ./dist/.claude; \
+	if [ -L ./dist/.claude/skills ]; then \
+		echo "Removing existing skills symlink..."; \
+		rm ./dist/.claude/skills; \
+	fi; \
+	if [ -d ./dist/.claude/skills ]; then \
+		echo "Removing existing skills directory..."; \
+		rm -rf ./dist/.claude/skills; \
+	fi; \
+	echo "Copying .claude/skills/ to ./dist/.claude/skills/..."; \
+	cp -r "$$TEMP_DIR/.claude/skills" ./dist/.claude/skills; \
+	if [ $$? -ne 0 ]; then \
+		echo "Error: Failed to copy skills directory"; \
+		rm -rf "$$TEMP_DIR"; \
+		exit 1; \
+	fi; \
+	rm -rf "$$TEMP_DIR"; \
+	echo "✅ Successfully initialized .claude/skills/ templates to ./dist/.claude/skills/"
 
-publish-spec-kit: publish-spec-kit-kilo publish-spec-kit-roo publish-spec-kit-claude publish-spec-kit-templates
+publish-spec-kit: publish-spec-kit-templates publish-spec-kit-roo publish-spec-kit-kilo  publish-spec-kit-claude
 	@echo ""
 	@echo "🎉 All spec-kit templates have been successfully processed!"
 	@echo "📦 Summary:"
-	@echo "   • .kilocode/ workflows extracted to ./dist/.kilocode/"
-	@echo "   • .roo/ commands extracted to ./dist/.roo/"
-	@echo "   • .claude/ commands extracted to ./dist/.claude/"
-	@echo "   • .specify/ templates extracted to ./dist/.specify/"
+	@echo "   • .kilocode/ workflows linked to ./dist/.kilocode/"
+	@echo "   • .roo/ commands linked to ./dist/.roo/"
+	@echo "   • .claude/ skills initialized to ./dist/.claude/"
+	@echo "   • .specify/ templates initialized to ./dist/.specify/"
 	@echo ""
 	@echo "✨ All four spec-kit templates are now ready for use!"
 
+upgrade-spec-kit-cli:
+	pipx upgrade specify-cli
+
 publish-spec-kit-templates:
-	@echo "Using pinned spec-kit release..."
-	@LATEST_RELEASE="v0.4.4"; \
-	if [ -z "$$LATEST_RELEASE" ]; then \
-		echo "Error: Could not fetch latest release version"; \
+	@echo "Initializing spec-kit templates using specify CLI..."
+	@TEMP_DIR=$$(mktemp -d); \
+	echo "Created temporary directory: $$TEMP_DIR"; \
+	cd "$$TEMP_DIR" && \
+	specify init . --ai generic --ai-commands-dir=.ai-files/commands --script sh; \
+	if [ $$? -ne 0 ]; then \
+		echo "Error: Failed to run specify init"; \
+		rm -rf "$$TEMP_DIR"; \
 		exit 1; \
 	fi; \
-	echo "Latest release: $$LATEST_RELEASE"; \
-	DOWNLOAD_URL="https://github.com/github/spec-kit/releases/download/$$LATEST_RELEASE/spec-kit-template-kilocode-sh-$$LATEST_RELEASE.zip"; \
-	echo "Downloading from: $$DOWNLOAD_URL"; \
+	cd - >/dev/null; \
+	echo "Preparing destination..."; \
 	mkdir -p ./dist; \
-	curl -L -o "./dist/spec-kit-templates.zip" "$$DOWNLOAD_URL"; \
-	if [ $$? -ne 0 ]; then \
-		echo "Error: Failed to download spec-kit templates"; \
-		exit 1; \
-	fi; \
-	echo "Extracting .specify/ contents..."; \
-	cd ./dist && \
-	if [ -L .specify ]; then \
+	if [ -L ./dist/.specify ]; then \
 		echo "Removing existing .specify symlink..."; \
-		rm .specify; \
+		rm ./dist/.specify; \
 	fi; \
-	unzip -q -o spec-kit-templates.zip ".specify/*" && rm spec-kit-templates.zip; \
+	if [ -d ./dist/.specify ]; then \
+		echo "Removing existing .specify directory..."; \
+		rm -rf ./dist/.specify; \
+	fi; \
+	echo "Copying .specify/ to ./dist/.specify/..."; \
+	cp -r "$$TEMP_DIR/.specify" ./dist/.specify; \
 	if [ $$? -ne 0 ]; then \
-		echo "Error: Failed to extract spec-kit templates"; \
+		echo "Error: Failed to copy .specify directory"; \
+		rm -rf "$$TEMP_DIR"; \
 		exit 1; \
 	fi; \
-	echo "✅ Successfully extracted .specify/ contents to ./dist/.specify/"
+	mkdir -p ./dist/.ai-files/commands/speckit; \
+	cp -r $$TEMP_DIR/.ai-files/commands/* ./dist/.ai-files/commands/speckit/; \
+	rm -rf "$$TEMP_DIR"; \
+	echo "✅ Successfully initialized .specify/ templates to ./dist/.specify/"
 
 update-memory-bank:
 	@echo "Downloading memory bank from kilo.ai..."
