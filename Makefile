@@ -263,10 +263,6 @@ install-cli-claude-code:
 	"$$BIN" install $(TARGET); \
 	echo "✅ Claude installed at $$BIN"
 
-install-cli-anthropic-claude-code:
-	npm install -g @anthropic-ai/claude-code
-	echo "Use cli command claude"
-	echo "Refer: obsidian://open?vault=KB&file=pages%2FDEVELOPMENT%2FAI-WORKPLACE%2Fai-workplace-claudecode"
 install-cli-aider:
 	pipx install aider-chat[all] --python $(shell which python)
 	pipx inject aider-chat google-generativeai
