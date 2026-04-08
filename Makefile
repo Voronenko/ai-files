@@ -281,7 +281,7 @@ install-antigravity-apt:
 	sudo apt update
 	sudo apt install antigravity
 
-install-ai-goose:
+install-ai-goose-cli:
 	@set -e; \
         LATEST_TAG="$$(curl -fsSL https://api.github.com/repos/block/goose/releases/latest \
                 | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p')"; \
