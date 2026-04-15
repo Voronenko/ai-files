@@ -5,58 +5,83 @@ set -eu
 readonly EX_USAGE=64
 readonly EX_NOINPUT=66
 
-# Get git repository name from current directory
 get_git_repo_name() {
     git remote -v 2>/dev/null | head -1 | sed -E 's|.*[:/]([^/]+)\.git.*|\1|' || echo ""
 }
 
+is_session_file() {
+    _isf_path=$(realpath "$1" 2>/dev/null || echo "")
+    _isf_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    if [ -z "$_isf_path" ] || [ -z "$_isf_root" ]; then
+        return 1
+    fi
+    _isf_sessions="$_isf_root/.ai-files/sessions"
+    if [ -d "$1" ]; then
+        [ "$_isf_path" = "$_isf_sessions" ] || [ "${_isf_path#"$_isf_sessions"/}" != "$_isf_path" ]
+    else
+        [ "${_isf_path#"$_isf_sessions"/}" != "$_isf_path" ]
+    fi
+}
+
+obsidian_file_exists() {
+    _vault="$1"
+    _opath="$2"
+    _result=$(obsidian file vault="$_vault" path="$_opath" </dev/null 2>&1 || true)
+    case "$_result" in
+        *"not found"*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
 usage() {
     cat <<EOF
-usage: $(basename "$0") [-v <vault>] [-p <path>] [-t <tags>] <markdown-file>
+usage: $(basename "$0") [-v <vault>] [-p <path>] [-t <tags>] <markdown-file|directory>
 
-Add a new entry to Obsidian from an existing markdown file with AI Files defaults.
+Add entries to Obsidian from markdown files with AI Files defaults.
+Pass a directory to batch-add all .md files within it.
 
-Environment variables (defaults):
-  AI_FILES_VAULT            Default vault name
-  AI_FILES_VAULT_DEFAULT_PATH  Default folder path within vault
+Resolution order for vault (-v):
+  1. CLI flag -v
+  2. Environment variable AI_FILES_VAULT
+  3. Git config aifiles.vault
+
+Resolution order for path (-p):
+  1. CLI flag -p
+  2. Environment variable AI_FILES_VAULT_DEFAULT_PATH
+  3. Git config aifiles.vault-session-default-path (if file/dir is under .ai-files/sessions/)
+  4. Git config aifiles.vault-default-path
+  5. Auto-discover from git repo name (pages/repo-<name>)
 
 Auto-added tags:
   #session                  Added to every note
   #repo-<repo_name>         Current git repository name
 
 Arguments:
-  <markdown-file>    Path to existing markdown file to read content from
+  <markdown-file|directory>  File or directory of .md files to add
 
 Options:
-  -v <vault>         Target vault name (default: \$AI_FILES_VAULT)
+  -v <vault>         Target vault name
   -p <path>          Folder path within vault
-                     (default: \$AI_FILES_VAULT_DEFAULT_PATH or git repo name)
   -t <tags>          Additional comma-separated tags (e.g. "work,ideas")
   -n <name>          Note name (defaults to source filename)
   -o                 Open note after creating in Obsidian
   -h, --help         Show this help
 
 Examples:
-  # Use env defaults
   $(basename "$0") ./note.md
-
-  # Override vault
   $(basename "$0") -v KB ./note.md
-
-  # Override path
   $(basename "$0") -p "custom/path" ./note.md
-
-  # With extra tags
   $(basename "$0") -t "work,ideas" ./note.md -o
+  $(basename "$0") .ai-files/sessions/
 EOF
 }
 
-vault="${AI_FILES_VAULT:-}"
-folder_path="${AI_FILES_VAULT_DEFAULT_PATH:}"
+vault=""
+folder_path=""
 tags=""
 note_name=""
 open_flag=""
-markdown_file=""
+input_path=""
 
 while getopts "v:p:t:n:oh" opt; do
     case $opt in
@@ -77,32 +102,50 @@ if [ $# -ne 1 ]; then
     exit $EX_USAGE
 fi
 
-if [ -z "${vault:-}" ]; then
-    echo "error: vault is required (set \$AI_FILES_VAULT or use -v option)" >&2
+input_path="$1"
+
+if [ ! -e "$input_path" ]; then
+    echo "$(basename "$0"): $input_path: No such file or directory" >&2
+    exit $EX_NOINPUT
+fi
+
+# Resolve vault: CLI flag → env var → git config
+if [ -z "$vault" ]; then
+    vault="${AI_FILES_VAULT:-}"
+fi
+if [ -z "$vault" ]; then
+    vault=$(git config aifiles.vault 2>/dev/null || true)
+fi
+if [ -z "$vault" ]; then
+    echo "error: vault is required (set via -v flag, \$AI_FILES_VAULT, or git config aifiles.vault)" >&2
     usage
     exit $EX_USAGE
 fi
 
-markdown_file="$1"
-
-if [ ! -f "$markdown_file" ]; then
-    echo "$(basename "$0"): $markdown_file: No such file" >&2
-    exit $EX_NOINPUT
-fi
-
-# Resolve default path if not set
+# Resolve folder path: CLI flag → env var → git config (session/default) → auto-discover
 if [ -z "$folder_path" ]; then
-    repo_name=$(get_git_repo_name)
-    if [ -n "$repo_name" ]; then
-        folder_path="pages/repo-$repo_name"
+    folder_path="${AI_FILES_VAULT_DEFAULT_PATH:-}"
+fi
+if [ -z "$folder_path" ]; then
+    if is_session_file "$input_path"; then
+        folder_path=$(git config aifiles.vault-session-default-path 2>/dev/null || true)
+    fi
+fi
+if [ -z "$folder_path" ]; then
+    folder_path=$(git config aifiles.vault-default-path 2>/dev/null || true)
+fi
+if [ -z "$folder_path" ]; then
+    _repo_name=$(get_git_repo_name)
+    if [ -n "$_repo_name" ]; then
+        folder_path="pages/repo-$_repo_name"
     fi
 fi
 
 # Build auto tags
 auto_tags="session"
-repo_name=$(get_git_repo_name)
-if [ -n "$repo_name" ]; then
-    auto_tags="$auto_tags,repo-$repo_name"
+_repo_name=$(get_git_repo_name)
+if [ -n "$_repo_name" ]; then
+    auto_tags="$auto_tags,repo-$_repo_name"
 fi
 
 # Combine with user-provided tags
@@ -112,22 +155,126 @@ else
     tags="$auto_tags"
 fi
 
-# Build obsidian-add command
-cmd="obsidian-add -v \"$vault\" -t \"$tags\""
+build_base_cmd() {
+    _cmd="obsidian-add -v \"$vault\" -t \"$tags\""
+    if [ -n "$folder_path" ]; then
+        _cmd="$_cmd -p \"$folder_path\""
+    fi
+    if [ -n "$note_name" ]; then
+        _cmd="$_cmd -n \"$note_name\""
+    fi
+    if [ -n "$open_flag" ]; then
+        _cmd="$_cmd -o"
+    fi
+    echo "$_cmd"
+}
 
-if [ -n "$folder_path" ]; then
-    cmd="$cmd -p \"$folder_path\""
+add_single_file() {
+    _file="$1"
+    _force="$2"
+    _base_cmd=$(build_base_cmd)
+
+    if [ -n "$note_name" ]; then
+        _dest_name="$note_name"
+    else
+        _dest_name=$(basename "$_file" .md)
+    fi
+
+    if [ -n "$folder_path" ]; then
+        _dest_path="$folder_path/$_dest_name.md"
+    else
+        _dest_path="$_dest_name.md"
+    fi
+
+    if obsidian_file_exists "$vault" "$_dest_path"; then
+        echo "  EXISTS: $_dest_path"
+        if [ "$_force" = "yes" ]; then
+            echo "  Overwriting (All mode)..."
+        else
+            printf "  Overwrite in Obsidian? [y/N]: "
+            _ow_response=""
+            read -r _ow_response </dev/tty || true
+            case "$_ow_response" in
+                [Yy]*) ;;
+                *) echo "  Skipping $_file"; return 0 ;;
+            esac
+        fi
+    fi
+
+    eval "$_base_cmd \"$_file\""
+    echo "  Added: $_file → $_dest_path"
+}
+
+# ── Single file mode ──
+if [ -f "$input_path" ]; then
+    add_single_file "$input_path" "no"
+    exit 0
 fi
 
-if [ -n "$note_name" ]; then
-    cmd="$cmd -n \"$note_name\""
+# ── Directory mode ──
+if [ -d "$input_path" ]; then
+    _md_list_file=""
+    _count=0
+    for _f in "$input_path"/*.md; do
+        if [ -f "$_f" ]; then
+            if [ -z "$_md_list_file" ]; then
+                _md_list_file=$(mktemp)
+            fi
+            echo "$_f" >> "$_md_list_file"
+            _count=$((_count + 1))
+        fi
+    done
+
+    if [ "$_count" -eq 0 ]; then
+        echo "$(basename "$0"): no .md files found in $input_path" >&2
+        [ -n "$_md_list_file" ] && rm -f "$_md_list_file"
+        exit $EX_NOINPUT
+    fi
+
+    echo "Directory detected: $input_path"
+    echo "Found $_count markdown file(s):"
+    while IFS= read -r _f <&3; do
+        printf "  - %s\n" "$(basename "$_f")"
+    done 3< "$_md_list_file"
+    echo ""
+
+    printf "Add all files? [Y/n/A]: "
+    _dir_response=""
+    read -r _dir_response </dev/tty || true
+    _dir_response="${_dir_response:-Y}"
+
+    case "$_dir_response" in
+        [Aa])
+            echo ""
+            echo "Adding all files..."
+            while IFS= read -r _f <&3; do
+                add_single_file "$_f" "yes"
+            done 3< "$_md_list_file"
+            ;;
+        [Yy]|[Yy][Ee][Ss]|"")
+            echo ""
+            echo "Adding files with confirmation..."
+            while IFS= read -r _f <&3; do
+                _fname=$(basename "$_f")
+                printf "Add %s? [Y/n]: " "$_fname"
+                _f_response=""
+                read -r _f_response </dev/tty || true
+                _f_response="${_f_response:-Y}"
+                case "$_f_response" in
+                    [Nn]|[Nn][Oo]) echo "  Skipping $_fname" ;;
+                    *) add_single_file "$_f" "no" ;;
+                esac
+            done 3< "$_md_list_file"
+            ;;
+        *)
+            echo "Cancelled."
+            rm -f "$_md_list_file"
+            exit 0
+            ;;
+    esac
+    rm -f "$_md_list_file"
+    exit 0
 fi
 
-if [ -n "$open_flag" ]; then
-    cmd="$cmd -o"
-fi
-
-cmd="$cmd \"$markdown_file\""
-
-# Execute obsidian-add
-eval "$cmd"
+echo "$(basename "$0"): $input_path: Not a file or directory" >&2
+exit $EX_NOINPUT

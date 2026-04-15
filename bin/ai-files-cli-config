@@ -1,0 +1,314 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONFIG_SECTION="aifiles"
+
+KNOWN_KEYS=(
+    "vault"
+    "project-slug"
+    "vault-default-path"
+    "vault-session-default-path"
+)
+
+is_known_key() {
+    local key="$1"
+    for k in "${KNOWN_KEYS[@]}"; do
+        [ "$k" = "$key" ] && return 0
+    done
+    return 1
+}
+
+full_key() {
+    echo "${CONFIG_SECTION}.$1"
+}
+
+cmd_list() {
+    local entries
+    entries=$(git config --local --get-regexp "^${CONFIG_SECTION}\\." 2>/dev/null || true)
+    if [ -z "$entries" ]; then
+        echo "No ${CONFIG_SECTION}.* config values set in this repository."
+        return 0
+    fi
+    echo "${CONFIG_SECTION} config (local):"
+    echo ""
+    while IFS= read -r line; do
+        local key="${line%% *}"
+        local val="${line#* }"
+        key="${key#${CONFIG_SECTION}.}"
+        printf "  %-30s %s\n" "$key" "$val"
+    done <<< "$entries"
+}
+
+cmd_get() {
+    local key="$1"
+    local val
+    val=$(git config --local "$(full_key "$key")" 2>/dev/null || true)
+    if [ -z "$val" ]; then
+        echo ""
+        return 1
+    fi
+    echo "$val"
+}
+
+cmd_set() {
+    local key="$1"
+    local val="$2"
+    if ! is_known_key "$key"; then
+        echo "error: unknown key '$key'" >&2
+        echo "known keys: ${KNOWN_KEYS[*]}" >&2
+        exit 1
+    fi
+    git config --local "$(full_key "$key")" "$val"
+    echo "set $(full_key "$key") = $val"
+}
+
+cmd_unset() {
+    local key="$1"
+    if ! is_known_key "$key"; then
+        echo "error: unknown key '$key'" >&2
+        echo "known keys: ${KNOWN_KEYS[*]}" >&2
+        exit 1
+    fi
+    if git config --local --unset "$(full_key "$key")" 2>/dev/null; then
+        echo "unset $(full_key "$key")"
+    else
+        echo "key $(full_key "$key") not set"
+    fi
+}
+
+get_git_repo_name() {
+    git remote -v 2>/dev/null | head -1 | sed -E 's|.*[:/]([^/]+)\.git.*|\1|' || echo ""
+}
+
+confirm() {
+    local prompt="$1"
+    local default="${2:-n}"
+    local response
+
+    while true; do
+        if [ "$default" = "y" ]; then
+            read -p "$prompt [Y/n]: " response || response=""
+        else
+            read -p "$prompt [y/N]: " response || response=""
+        fi
+
+        case "$response" in
+            [Yy][Ee][Ss]|[Yy]) return 0 ;;
+            [Nn][Oo]|[Nn]) return 1 ;;
+            "")
+                [ "$default" = "y" ] && return 0
+                [ "$default" = "n" ] && return 1
+                ;;
+        esac
+        echo "Please answer yes or no."
+    done
+}
+
+confirm_or_override() {
+    local prompt="$1"
+    local proposed="$2"
+    local response
+
+    read -p "$prompt '$proposed'? [Y/n/<value>]: " response || response=""
+    response="${response% }"
+    response="${response# }"
+
+    case "$response" in
+        [Yy][Ee][Ss]|[Yy]) echo "$proposed"; return 0 ;;
+        [Nn][Oo]|[Nn]) echo ""; return 1 ;;
+        "") echo "$proposed"; return 0 ;;
+        *) echo "$response"; return 0 ;;
+    esac
+}
+
+cmd_setup() {
+    echo "=== ai-files config setup ==="
+    echo ""
+
+    local current_vault current_slug current_default_path current_session_path
+    current_vault=$(git config --local "$(full_key "vault")" 2>/dev/null || echo "")
+    current_slug=$(git config --local "$(full_key "project-slug")" 2>/dev/null || echo "")
+    current_default_path=$(git config --local "$(full_key "vault-default-path")" 2>/dev/null || echo "")
+    current_session_path=$(git config --local "$(full_key "vault-session-default-path")" 2>/dev/null || echo "")
+
+    if [ -n "$current_vault" ] || [ -n "$current_slug" ] || [ -n "$current_default_path" ] || [ -n "$current_session_path" ]; then
+        echo "Current configuration:"
+        echo "  vault:                      ${current_vault:-<not set>}"
+        echo "  project-slug:               ${current_slug:-<not set>}"
+        echo "  vault-default-path:         ${current_default_path:-<not set>}"
+        echo "  vault-session-default-path: ${current_session_path:-<not set>}"
+        echo ""
+
+        if ! confirm "Modify current configuration?"; then
+            echo "Setup cancelled."
+            return 0
+        fi
+        echo ""
+    fi
+
+    local repo_name
+    repo_name=$(get_git_repo_name)
+    echo "Git repository name: ${repo_name:-<not a git repo>}"
+    echo ""
+
+    local vaults vaults_array=()
+    if ! vaults=$(obsidian vaults verbose 2>/dev/null); then
+        echo "error: 'obsidian vaults verbose' command failed" >&2
+        echo "Make sure obsidian CLI is installed and configured." >&2
+        return 1
+    fi
+
+    if [ -z "$vaults" ]; then
+        echo "error: no vaults found" >&2
+        return 1
+    fi
+
+    local i=1
+    echo "Available vaults:"
+    while IFS=$'\t' read -r vault_name vault_path; do
+        vaults_array+=("$vault_name")
+        printf "  [%d] %-20s %s\n" "$i" "$vault_name" "$vault_path"
+        ((i++))
+    done <<< "$vaults"
+    echo ""
+
+    local selection
+    while true; do
+        read -p "Select vault [1-${#vaults_array[@]}]: " selection || true
+        selection="${selection// /}"
+        if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 1 ] && [ "$selection" -le "${#vaults_array[@]}" ]; then
+            break
+        fi
+        echo "Invalid selection. Please enter a number between 1 and ${#vaults_array[@]}."
+    done
+
+    local selected_vault="${vaults_array[$((selection-1))]}"
+    echo "Selected vault: $selected_vault"
+    cmd_set "vault" "$selected_vault"
+    echo ""
+
+    local proposed_slug="${current_slug:-}"
+    if [ -z "$proposed_slug" ]; then
+        read -p "Project slug (e.g. myproject, myorg/myapp): " proposed_slug || proposed_slug=""
+        proposed_slug="${proposed_slug# }"
+        proposed_slug="${proposed_slug% }"
+    else
+        local new_slug
+        new_slug=$(confirm_or_override "Keep project-slug" "$proposed_slug")
+        if [ -n "$new_slug" ]; then
+            proposed_slug="$new_slug"
+        fi
+    fi
+
+    if [ -n "$proposed_slug" ]; then
+        cmd_set "project-slug" "$proposed_slug"
+    else
+        echo "Skipping project-slug configuration."
+    fi
+    echo ""
+
+    local stored_slug
+    stored_slug=$(git config --local "$(full_key "project-slug")" 2>/dev/null || echo "")
+
+    local proposed_default_path
+    if [ -n "$stored_slug" ] && [ -n "$repo_name" ]; then
+        proposed_default_path="pages/$stored_slug/repo-$repo_name"
+    elif [ -n "$repo_name" ]; then
+        proposed_default_path="pages/repo-$repo_name"
+    else
+        proposed_default_path="pages/repo-<name>"
+    fi
+
+    local chosen_path
+    chosen_path=$(confirm_or_override "Set vault-default-path to" "$proposed_default_path")
+    if [ -n "$chosen_path" ]; then
+        cmd_set "vault-default-path" "$chosen_path"
+    else
+        echo "Skipping vault-default-path configuration."
+    fi
+    echo ""
+
+    local actual_default_path
+    actual_default_path=$(git config --local "$(full_key "vault-default-path")" 2>/dev/null || echo "")
+    if [ -z "$actual_default_path" ]; then
+        actual_default_path="$proposed_default_path"
+    fi
+
+    local proposed_session_path="${actual_default_path}/sessions"
+    local chosen_session_path
+    chosen_session_path=$(confirm_or_override "Set vault-session-default-path to" "$proposed_session_path")
+    if [ -n "$chosen_session_path" ]; then
+        cmd_set "vault-session-default-path" "$chosen_session_path"
+    else
+        echo "Skipping vault-session-default-path configuration."
+    fi
+    echo ""
+
+    echo "=== Setup complete ==="
+    echo ""
+    cmd_list
+}
+
+show_help() {
+    cat <<EOF
+Usage: ai-files-cli config <command> [args]
+
+Manage ai-files configuration stored in local git config under ${CONFIG_SECTION}.* section.
+
+Commands:
+  setup                      Interactive setup wizard
+  list                       Show all ${CONFIG_SECTION}.* config values (default)
+  get <key>                  Get a specific value
+  set <key> <value>          Set a value (local git config)
+  unset <key>                Remove a key
+  help                       Show this help
+
+Known keys:
+  vault                      Default Obsidian vault name
+  project-slug               Project slug for path construction
+  vault-default-path         Default folder path within vault
+  vault-session-default-path Default session folder path within vault
+
+Examples:
+  ai-files-cli config setup
+  ai-files-cli config set vault my-vault
+  ai-files-cli config set project-slug myorg/myapp
+  ai-files-cli config set vault-default-path "pages/repo-mine"
+  ai-files-cli config set vault-session-default-path "sessions"
+  ai-files-cli config list
+  ai-files-cli config get vault
+  ai-files-cli config unset vault-default-path
+EOF
+}
+
+SUB="${1:-list}"
+shift || true
+
+case "$SUB" in
+    setup)
+        cmd_setup
+        ;;
+    list|ls)
+        cmd_list
+        ;;
+    get)
+        [ $# -lt 1 ] && { echo "usage: ai-files-cli config get <key>" >&2; exit 1; }
+        cmd_get "$1"
+        ;;
+    set)
+        [ $# -lt 2 ] && { echo "usage: ai-files-cli config set <key> <value>" >&2; exit 1; }
+        cmd_set "$1" "$2"
+        ;;
+    unset|rm|remove)
+        [ $# -lt 1 ] && { echo "usage: ai-files-cli config unset <key>" >&2; exit 1; }
+        cmd_unset "$1"
+        ;;
+    help|-h|--help)
+        show_help
+        ;;
+    *)
+        echo "error: unknown command '$SUB'" >&2
+        show_help
+        exit 1
+        ;;
+esac
