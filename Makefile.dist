@@ -10,3 +10,6 @@ upgrade-memory-service:
 
 skill-mattpocock-improve-codebase-architecture:
 	ai-files-cli skill-add mattpocock/skills/improve-codebase-architecture
+
+skill-juliusbrussee-caveman:
+	ai-files-cli skills-add JuliusBrussee/caveman --all
