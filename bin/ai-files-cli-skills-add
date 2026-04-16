@@ -246,6 +246,16 @@ discover_skills() {
     done
 }
 
+# Extract YAML front matter from a Markdown file
+# Arguments:
+#   $1 - Path to file with YAML front matter
+# Output:
+#   YAML content (without --- delimiters) sent to stdout
+extract_front_matter() {
+    local file="$1"
+    awk '/^---$/{n++; next} n==1' "$file"
+}
+
 # Parse a single SKILL.md file
 # Arguments:
 #   $1 - Path to SKILL.md file
@@ -255,10 +265,12 @@ discover_skills() {
 parse_skill_file() {
     local skill_file="$1"
     local install_internal="$2"
-    local name description is_internal skill_dir
+    local name description is_internal skill_dir front_matter
+
+    front_matter=$(extract_front_matter "$skill_file")
 
     # Extract name - only take first line of output
-    name=$(yq '.name' "$skill_file" 2>/dev/null | head -1)
+    name=$(echo "$front_matter" | yq '.name' 2>/dev/null | head -1)
 
     # Check for valid name
     if [[ -z "$name" ]] || [[ "$name" == "null" ]] || [[ "$name" == *"null"* ]]; then
@@ -267,7 +279,7 @@ parse_skill_file() {
     fi
 
     # Extract description - only take first line
-    description=$(yq '.description' "$skill_file" 2>/dev/null | head -1)
+    description=$(echo "$front_matter" | yq '.description' 2>/dev/null | head -1)
 
     # Check for valid description
     if [[ -z "$description" ]] || [[ "$description" == "null" ]] || [[ "$description" == *"null"* ]]; then
@@ -276,7 +288,7 @@ parse_skill_file() {
     fi
 
     # Check if internal - only take first line, default to false
-    is_internal=$(yq '.metadata.internal // false' "$skill_file" 2>/dev/null | head -1)
+    is_internal=$(echo "$front_matter" | yq '.metadata.internal // false' 2>/dev/null | head -1)
     # If yq failed or returned empty, default to false
     if [[ -z "$is_internal" ]] || [[ "$is_internal" == "null" ]]; then
         is_internal="false"
@@ -621,6 +633,32 @@ EOF
 }
 
 #=============================================================================
+# SKILLS TABLE DISPLAY
+#=============================================================================
+
+print_skills_table() {
+    local skills_data="$1"
+    local desc_max="${2:-50}"
+    local name_col=20
+
+    local header_desc="DESCRIPTION"
+    local sep_name sep_desc
+    sep_name=$(printf '%*s' "$name_col" '' | tr ' ' '-')
+    sep_desc=$(printf '%*s' "${#header_desc}" '' | tr ' ' '-')
+    printf "  %-*s  %s\n" "$name_col" "SKILL" "$header_desc"
+    printf "  %-*s  %s\n" "$name_col" "$sep_name" "$sep_desc"
+
+    while IFS=$'\t' read -r name description _; do
+        local short_desc
+        short_desc="${description:0:$desc_max}"
+        if [[ ${#description} -gt $desc_max ]]; then
+            short_desc="${short_desc}…"
+        fi
+        printf "  %-*s  %s\n" "$name_col" "$name" "$short_desc"
+    done <<< "$skills_data"
+}
+
+#=============================================================================
 # LIST MODE EXECUTION
 #=============================================================================
 
@@ -647,20 +685,10 @@ execute_list_mode() {
     echo "==> Found $skill_count skill(s)"
     echo ""
 
-    # Display skills
-    echo "Available Skills from $(basename "$REPO_SOURCE"):"
     echo ""
+    print_skills_table "$discovered_skills" 100
 
-    local prev_name=""
-    while IFS=$'\t' read -r name description path is_internal; do
-        if [[ "$name" != "$prev_name" ]]; then
-            echo "  $name"
-            echo "    $description"
-            echo ""
-            prev_name="$name"
-        fi
-    done <<< "$discovered_skills"
-
+    echo ""
     echo "Use --skill <name> to install specific skills"
     echo "Use --all to install all skills"
 }
@@ -719,14 +747,13 @@ execute_install_mode() {
             if [[ "$found" == false ]]; then
                 error "Skill '$requested_skill' not found"
                 echo "" >&2
-                echo "Available skills:" >&2
-                while IFS=$'\t' read -r name description path is_internal; do
-                    echo "  - $name" >&2
-                done <<< "$discovered_skills"
+                print_skills_table "$discovered_skills" 100 >&2
                 exit "$EXIT_INVALID_SKILL"
             fi
         done
     else
+        print_skills_table "$discovered_skills" 100
+        echo ""
         error "No skills specified for installation"
         echo "  Use --skill <name> or --all" >&2
         exit "$EXIT_ERROR"

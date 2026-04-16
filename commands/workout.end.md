@@ -24,9 +24,19 @@ End the current development session by:
    - What wasn't completed
    - Tips for future developers
 
-4. Empty the `.ai-files/sessions/.current-session` file (don't remove it, just clear its contents)
-5. Inform user the session has been documented
+4. Basing on summary select three tags unique specifically for this session, and add it as #tag1 #tag2 #tag3 to the summary
+
+5. Empty the `.ai-files/sessions/.current-session` file (don't remove it, just clear its contents)
+
+6. Inform user the session has been documented
 
 The summary should be thorough enough that another developer (or AI) can understand everything that happened without reading the entire session.
 
-6.  Add to repo-memory information about this session with path to session file, tag it additionally with session tag, consider also tags to refer primary subsystems or main filenames touched in the session tags, if you find that useful.
+7.  Add with repo-memory information mcp summary about this session with path to session file, tag it additionally with session tag, consider also tags to refer primary subsystems or main filenames touched in the session tags, plus three tags you consider useful.
+
+8. Ask if user wants to add this session into obsidian, if yes run command
+
+ai-files-cli obsidian-add <path to session markdown file> -t tag1,tag2,tag3
+
+where tag1 tag2 and tag3 are tags from summary
+
