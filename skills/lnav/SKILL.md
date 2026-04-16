@@ -1,6 +1,6 @@
 ---
 name:   lnav
-description: exploring logs with lnav tool
+description: assisting human exploring logs with lnav tool
 ---
 
 ## Table of Contents
