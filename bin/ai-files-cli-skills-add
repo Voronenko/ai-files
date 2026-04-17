@@ -32,6 +32,7 @@ YES_MODE=false
 INSTALL_METHOD="symlink"
 declare -a SKILLS=()
 REPO_SOURCE=""
+INTERACTIVE_SKILL_SELECT=false
 
 # Temporary directory (created later)
 TEMP_DIR=""
@@ -91,6 +92,11 @@ check_yq() {
         echo "  Install: https://github.com/mikefarah/yq#install" >&2
         exit "$EXIT_ERROR"
     fi
+}
+
+# Check if fzf utility is available (optional)
+check_fzf() {
+    command -v fzf &>/dev/null
 }
 
 #=============================================================================
@@ -307,6 +313,37 @@ parse_skill_file() {
 }
 
 #=============================================================================
+# FZF INTERACTIVE SELECTION
+#=============================================================================
+
+# Select skill using fzf interactive interface
+# Arguments:
+#   $1 - Skills data (tab-separated: name\tdescription\tpath\tis_internal)
+# Output:
+#   Selected skill name (empty if cancelled)
+select_skill_with_fzf() {
+    local skills_data="$1"
+    local name_col=20
+    local desc_max=250
+
+    # Run fzf to select skill, formatting on-the-fly
+    local selected
+    selected=$(while IFS=$'\t' read -r name description _; do
+        local short_desc
+        short_desc="${description:0:$desc_max}"
+        if [[ ${#description} -gt $desc_max ]]; then
+            short_desc="${short_desc}…"
+        fi
+        printf "%-*s  %s\n" "$name_col" "$name" "$short_desc"
+    done <<< "$skills_data" | fzf --prompt="Select skill: " --height=50% --layout=reverse --delimiter=' ' --nth=1 2>/dev/null)
+
+    # Extract skill name from selection
+    if [[ -n "$selected" ]]; then
+        echo "${selected%% *}"
+    fi
+}
+
+#=============================================================================
 # SKILL INSTALLATION
 #=============================================================================
 
@@ -518,16 +555,22 @@ parse_arguments() {
                 ;;
             --skill|-s)
                 if [[ -z "${2:-}" ]] || [[ "${2:0:1}" == "-" ]]; then
-                    error "Option --skill requires an argument"
-                    exit "$EXIT_ERROR"
-                fi
-                # Handle '*' wildcard as equivalent to --all
-                if [[ "$2" == "*" ]]; then
-                    ALL_SKILLS=true
+                    # Check if we can use fzf for interactive selection
+                    if check_fzf && [[ -t 0 ]]; then
+                        INTERACTIVE_SKILL_SELECT=true
+                    else
+                        error "Option --skill requires an argument"
+                        exit "$EXIT_ERROR"
+                    fi
                 else
-                    SKILLS+=("$2")
+                    # Handle '*' wildcard as equivalent to --all
+                    if [[ "$2" == "*" ]]; then
+                        ALL_SKILLS=true
+                    else
+                        SKILLS+=("$2")
+                    fi
+                    shift
                 fi
-                shift
                 ;;
             --all|-a)
                 ALL_SKILLS=true
@@ -601,7 +644,9 @@ Arguments:
 
 Options:
   -l, --list           List available skills without installing
-  -s, --skill <name>   Install specific skill(s) (repeatable)
+  -s, --skill [<name>] Install specific skill(s) (repeatable)
+                        If name is omitted and fzf is available,
+                        shows interactive selection
   -a, --all            Install all available skills
   -g, --global         Install to global directory (~/.claude/skills/)
   -y, --yes            Skip confirmation prompts (non-interactive mode)
@@ -620,6 +665,9 @@ Examples:
 
   # Install all skills globally
   ai-files-cli-skills-add vercel-labs/agent-skills --all --global
+
+  # Interactive skill selection (requires fzf)
+  ai-files-cli-skills-add voronenko/ai-files --skill
 
   # Non-interactive installation (CI/CD)
   ai-files-cli-skills-add vercel-labs/agent-skills --skill frontend-design --yes
@@ -699,17 +747,24 @@ execute_list_mode() {
 
 execute_install_mode() {
     local repo_url="$1"
+    local pre_discovered_skills="${2:-}"
     local discovered_skills
     local target_dir
     local selected_skills=()
     local installed_count=0
 
-    # Clone repository
-    clone_repository "$repo_url"
+    # Clone repository (only if not already cloned)
+    if [[ -z "$pre_discovered_skills" ]]; then
+        clone_repository "$repo_url"
+    fi
 
-    # Discover skills
+    # Discover skills (use pre-discovered if available)
     echo "==> Discovering skills..."
-    discovered_skills=$(discover_skills "$TEMP_DIR")
+    if [[ -n "$pre_discovered_skills" ]]; then
+        discovered_skills="$pre_discovered_skills"
+    else
+        discovered_skills=$(discover_skills "$TEMP_DIR")
+    fi
 
     # Count skills
     local total_skills
@@ -799,6 +854,7 @@ main() {
     check_git
     check_jq
     check_yq
+    check_fzf  # Optional, doesn't fail if missing
 
     # Normalize URL
     local repo_url
@@ -807,11 +863,44 @@ main() {
     # Create temporary directory
     create_temp_dir
 
-    # Execute based on mode
-    if [[ "$LIST_MODE" == true ]]; then
-        execute_list_mode "$repo_url"
+    # If interactive skill selection needed, clone and discover first
+    if [[ "$INTERACTIVE_SKILL_SELECT" == true ]]; then
+        clone_repository "$repo_url"
+        local discovered_skills
+        discovered_skills=$(discover_skills "$TEMP_DIR")
+
+        local skill_count
+        skill_count=$(echo "$discovered_skills" | grep -c '^[^[:space:]]' || true)
+
+        if [[ "$skill_count" -eq 0 ]]; then
+            error "No skills found in repository"
+            exit "$EXIT_INVALID_SKILL"
+        fi
+
+        echo "==> Found $skill_count skill(s)"
+        echo ""
+
+        # Run fzf selection
+        local selected_skill
+        selected_skill=$(select_skill_with_fzf "$discovered_skills")
+
+        if [[ -z "$selected_skill" ]]; then
+            echo "Cancelled" >&2
+            exit "$EXIT_SUCCESS"
+        fi
+
+        SKILLS+=("$selected_skill")
+        echo ""
+
+        # Execute install mode with pre-discovered skills (skip clone)
+        execute_install_mode "$repo_url" "$discovered_skills"
     else
-        execute_install_mode "$repo_url"
+        # Execute based on mode
+        if [[ "$LIST_MODE" == true ]]; then
+            execute_list_mode "$repo_url"
+        else
+            execute_install_mode "$repo_url"
+        fi
     fi
 }
 
