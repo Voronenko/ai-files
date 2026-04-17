@@ -8,6 +8,7 @@ KNOWN_KEYS=(
     "project-slug"
     "vault-default-path"
     "vault-session-default-path"
+    "vault-memory-default-path"
 )
 
 is_known_key() {
@@ -23,20 +24,40 @@ full_key() {
 }
 
 cmd_list() {
-    local entries
-    entries=$(git config --local --get-regexp "^${CONFIG_SECTION}\\." 2>/dev/null || true)
-    if [ -z "$entries" ]; then
-        echo "No ${CONFIG_SECTION}.* config values set in this repository."
-        return 0
-    fi
+    local default_path session_path memory_path
+
     echo "${CONFIG_SECTION} config (local):"
     echo ""
+
+    local entries
+    entries=$(git config --local --get-regexp "^${CONFIG_SECTION}\\." 2>/dev/null || true)
+
     while IFS= read -r line; do
         local key="${line%% *}"
         local val="${line#* }"
         key="${key#${CONFIG_SECTION}.}"
         printf "  %-30s %s\n" "$key" "$val"
     done <<< "$entries"
+
+    default_path=$(git config --local "$(full_key "vault-default-path")" 2>/dev/null || true)
+
+    session_path=$(git config --local "$(full_key "vault-session-default-path")" 2>/dev/null || true)
+    if [ -z "$session_path" ]; then
+        if [ -n "$default_path" ]; then
+            printf "  %-30s NOT SET (default: %s/sessions)\n" "vault-session-default-path" "$default_path"
+        else
+            printf "  %-30s NOT SET\n" "vault-session-default-path"
+        fi
+    fi
+
+    memory_path=$(git config --local "$(full_key "vault-memory-default-path")" 2>/dev/null || true)
+    if [ -z "$memory_path" ]; then
+        if [ -n "$default_path" ]; then
+            printf "  %-30s NOT SET (default: %s/memory)\n" "vault-memory-default-path" "$default_path"
+        else
+            printf "  %-30s NOT SET\n" "vault-memory-default-path"
+        fi
+    fi
 }
 
 cmd_get() {
@@ -125,18 +146,20 @@ cmd_setup() {
     echo "=== ai-files config setup ==="
     echo ""
 
-    local current_vault current_slug current_default_path current_session_path
+    local current_vault current_slug current_default_path current_session_path current_memory_path
     current_vault=$(git config --local "$(full_key "vault")" 2>/dev/null || echo "")
     current_slug=$(git config --local "$(full_key "project-slug")" 2>/dev/null || echo "")
     current_default_path=$(git config --local "$(full_key "vault-default-path")" 2>/dev/null || echo "")
     current_session_path=$(git config --local "$(full_key "vault-session-default-path")" 2>/dev/null || echo "")
+    current_memory_path=$(git config --local "$(full_key "vault-memory-default-path")" 2>/dev/null || echo "")
 
-    if [ -n "$current_vault" ] || [ -n "$current_slug" ] || [ -n "$current_default_path" ] || [ -n "$current_session_path" ]; then
+    if [ -n "$current_vault" ] || [ -n "$current_slug" ] || [ -n "$current_default_path" ] || [ -n "$current_session_path" ] || [ -n "$current_memory_path" ]; then
         echo "Current configuration:"
         echo "  vault:                      ${current_vault:-<not set>}"
         echo "  project-slug:               ${current_slug:-<not set>}"
         echo "  vault-default-path:         ${current_default_path:-<not set>}"
         echo "  vault-session-default-path: ${current_session_path:-<not set>}"
+        echo "  vault-memory-default-path:  ${current_memory_path:-<not set>}"
         echo ""
 
         if ! confirm "Modify current configuration?"; then
@@ -244,6 +267,16 @@ cmd_setup() {
     fi
     echo ""
 
+    local proposed_memory_path="${current_memory_path:-${actual_default_path}/memory}"
+    local chosen_memory_path
+    chosen_memory_path=$(confirm_or_override "Set vault-memory-default-path to" "$proposed_memory_path")
+    if [ -n "$chosen_memory_path" ]; then
+        cmd_set "vault-memory-default-path" "$chosen_memory_path"
+    else
+        echo "Skipping vault-memory-default-path configuration."
+    fi
+    echo ""
+
     echo "=== Setup complete ==="
     echo ""
     cmd_list
@@ -268,8 +301,7 @@ Known keys:
   project-slug               Project slug for path construction
   vault-default-path         Default folder path within vault
   vault-session-default-path Default session folder path within vault
-
-Examples:
+  vault-memory-default-path  Default memory folder path within vault
   ai-files-cli config setup
   ai-files-cli config set vault my-vault
   ai-files-cli config set project-slug myorg/myapp
