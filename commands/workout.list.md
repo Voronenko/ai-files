@@ -1,3 +1,7 @@
+---
+description: list workout sessions
+---
+
 List all development sessions by:
 
 1. Check if `.ai-files/sessions/` directory exists

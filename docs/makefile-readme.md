@@ -59,12 +59,16 @@ sequenceDiagram
     Source->>Dist: mkdir -p .ai-files/
     Source->>Dist: mkdir -p .ai-files/skills/
     Source->>Dist: mkdir -p .ai-files/commands/
-    Source->>Dist: mkdir -p .roo/commands
-    Source->>Dist: mkdir -p .kilocode/workflows
-    Source->>Dist: mkdir -p .claude/commands
-    Source->>Dist: ln -s ../.ai-files/skills .kilocode/skills
-    Source->>Dist: ln -s ../.ai-files/skills .claude/skills
-    Source->>Symlinks: ln -sfn dist/.kilocode .kilocode
+    Source->>Dist: mkdir -p .ai-files/dotroo/commands
+    Source->>Dist: mkdir -p .ai-files/dotkilo/commands
+    Source->>Dist: mkdir -p .ai-files/dotclaude/commands
+    Source->>Dist: ln -s ../skills .ai-files/dotkilo/skills
+    Source->>Dist: ln -s ../skills .ai-files/dotclaude/skills
+    Source->>Dist: ln -s .ai-files/dotkilo .kilo (within dist/)
+    Source->>Dist: ln -s .ai-files/dotclaude .claude (within dist/)
+    Source->>Dist: ln -s .ai-files/dotroo .roo (within dist/)
+    Source->>Dist: ln -s .ai-files/dotspecify .specify (within dist/)
+    Source->>Symlinks: ln -sfn dist/.kilo .kilo
     Source->>Symlinks: ln -sfn dist/.claude .claude
     Source->>Symlinks: ln -sfn dist/.roo .roo
 
@@ -78,11 +82,12 @@ sequenceDiagram
     Source->>Dist: cp -r commands/
     Source->>Dist: cp -r skills/
     Source->>Dist: publish-spec-kit (external)
+    Source->>Dist: publish-commands (external)
     Source->>Dist: publish-memory-bank
     Source->>Dist: publish-prompts
 
     Note over Source: Phase 3: prepare-claude
-    Source->>Dist: find commands/*.md -exec ln -sfr to .claude/commands/
+    Source->>Dist: find commands/*.md -exec ln -sfr to .ai-files/dotclaude/commands/
 ```
 
 ## Final Directory Structure
@@ -92,17 +97,17 @@ graph TD
     Root["ai-files/"]
 
     Root --> Dist["dist/"]
-    Root --> KiloLink[".kilocode -> dist/.kilocode"]
+    Root --> KiloLink[".kilo -> dist/.kilo"]
     Root --> ClaudeLink[".claude -> dist/.claude"]
     Root --> RooLink[".roo -> dist/.roo"]
 
     Dist --> AGENTS["AGENTS.md"]
     Dist --> CLAUDE["CLAUDE.md"]
     Dist --> AIFiles[".ai-files/"]
-    Dist --> ClaudeDist[".claude/"]
-    Dist --> KiloDist[".kilocode/"]
-    Dist --> RooDist[".roo/"]
-    Dist --> Specify[".specify/"]
+    Dist --> ClaudeLinkDist[".claude -> .ai-files/dotclaude"]
+    Dist --> KiloLinkDist[".kilo -> .ai-files/dotkilo"]
+    Dist --> RooLinkDist[".roo -> .ai-files/dotroo"]
+    Dist --> SpecifyLinkDist[".specify -> .ai-files/dotspecify"]
 
     AIFiles --> Plugins["plugins/"]
     AIFiles --> Skills["skills/"]
@@ -111,6 +116,10 @@ graph TD
     AIFiles --> CommonTasks["COMMON_CODE_TASKS.md"]
     AIFiles --> UpdateSh["update.sh"]
     AIFiles --> Prompts["prompts/"]
+    AIFiles --> ClaudeDist["dotclaude/"]
+    AIFiles --> KiloDist["dotkilo/"]
+    AIFiles --> RooDist["dotroo/"]
+    AIFiles --> Specify["dotspecify/"]
     AIFiles --> SpeckitCmds["commands/speckit/"]
 
     ClaudeDist --> ClaudeCmds["commands/"]
@@ -119,24 +128,29 @@ graph TD
     ClaudeDist --> ClaudeSettings["settings.local.json"]
     ClaudeDist --> ClaudeSkills["skills/"]
 
-    KiloDist --> KiloWorkflows["workflows/"]
+    KiloDist --> KiloCmds["commands/"]
     KiloDist --> KiloRules["rules/"]
-    KiloDist --> KiloSkillsLink["skills -> ../.ai-files/skills"]
+    KiloDist --> KiloSkillsLink["skills -> ../skills"]
 
     RooDist --> RooCmds["commands/"]
     RooDist --> RooRules["rules/"]
 
     %% Symlink relationships shown with dashed lines
     ClaudeCmds -.->|"symlinks"| Commands
-    KiloWorkflows -.->|"symlinks"| SpeckitCmds
+    KiloCmds -.->|"symlinks"| SpeckitCmds
     RooCmds -.->|"symlinks"| SpeckitCmds
+    ClaudeLinkDist -.->|"symlink"| ClaudeDist
+    KiloLinkDist -.->|"symlink"| KiloDist
+    RooLinkDist -.->|"symlink"| RooDist
+    SpecifyLinkDist -.->|"symlink"| Specify
+    KiloSkillsLink -.->|"symlink"| Skills
 
     classDef symlink fill:#ffe1e1,stroke:#ff6b6b
     classDef directory fill:#e1f0ff,stroke:#4a90d9
     classDef file fill:#f0e1ff,stroke:#9b59b6
 
-    class KiloLink,ClaudeLink,RooLink,KiloSkillsLink symlink
-    class Dist,AIFiles,ClaudeDist,KiloDist,RooDist,Plugins,Skills,Commands,Rules,Prompts,SpeckitCmds,ClaudeCmds,ClaudeConfig,ClaudeHooks,ClaudeSettings,ClaudeSkills,KiloWorkflows,KiloRules,RooCmds,RooRules,Specify directory
+    class KiloLink,ClaudeLink,RooLink,KiloSkillsLink,ClaudeLinkDist,KiloLinkDist,RooLinkDist,SpecifyLinkDist symlink
+    class Dist,AIFiles,ClaudeDist,KiloDist,RooDist,Plugins,Skills,Commands,Rules,Prompts,SpeckitCmds,ClaudeCmds,ClaudeConfig,ClaudeHooks,ClaudeSettings,ClaudeSkills,KiloCmds,KiloRules,RooCmds,RooRules,Specify directory
     class AGENTS,CLAUDE,CommonTasks,UpdateSh file
 ```
 
@@ -152,16 +166,22 @@ graph TD
    - `./dist/.ai-files/`
    - `./dist/.ai-files/skills/`
    - `./dist/.ai-files/commands/`
-   - `./dist/.roo/commands`
-   - `./dist/.kilocode/workflows`
-   - `./dist/.claude/commands`
+   - `./dist/.ai-files/dotroo/commands`
+   - `./dist/.ai-files/dotkilo/commands`
+   - `./dist/.ai-files/dotclaude/commands`
 
-3. Creates shared skills symlinks within dist:
-   - `dist/.kilocode/skills` → `../.ai-files/skills`
-   - `dist/.claude/skills` → `../.ai-files/skills`
+3. Creates shared skills symlinks within .ai-files:
+   - `dist/.ai-files/dotkilo/skills` → `../skills`
+   - `dist/.ai-files/dotclaude/skills` → `../skills`
 
-4. Creates root-level symlinks to dist directories:
-   - `.kilocode` → `dist/.kilocode`
+4. Creates symlinks from hidden names to visible directories (relative symlinks):
+   - `dist/.kilo` → `.ai-files/dotkilo`
+   - `dist/.claude` → `.ai-files/dotclaude`
+   - `dist/.roo` → `.ai-files/dotroo`
+   - `dist/.specify` → `.ai-files/dotspecify`
+
+5. Creates root-level symlinks to dist directories:
+   - `.kilo` → `dist/.kilo`
    - `.claude` → `dist/.claude`
    - `.roo` → `dist/.roo`
 
@@ -182,11 +202,11 @@ graph TD
    - `AGENTS.md` → `./dist/AGENTS.md`
    - `CLAUDE.md` → `./dist/CLAUDE.md`
    - `COMMON_CODE_TASKS.md` → `./dist/.ai-files/COMMON_CODE_TASKS.md`
-   - `config/claude/*` → `./dist/.claude/`
+   - `config/claude/*` → `./dist/.ai-files/dotclaude/`
    - `rules/` → `./dist/.ai-files/rules/`
    - `commands/` → `./dist/.ai-files/commands/`
    - `skills/` → `./dist/.ai-files/skills/`
-3. Makes bash scripts executable: `chmod +x ./dist/.specify/scripts/bash/*.sh`
+3. Makes bash scripts executable: `chmod +x ./dist/.ai-files/dotspecify/scripts/bash/*.sh`
 
 ### `prepare-claude` Target (Lines 53-60)
 
@@ -194,7 +214,7 @@ graph TD
 
 **Actions**:
 1. Finds all `*.md` files in `./dist/.ai-files/commands/`
-2. Creates relative symlinks in `./dist/.claude/commands/`
+2. Creates relative symlinks in `./dist/.ai-files/dotclaude/commands/`
 3. Each symlink points to the corresponding file in `./dist/.ai-files/commands/`
 
 ### `build` Target (Lines 62-63)
@@ -211,9 +231,18 @@ graph TD
 
 **Dependencies** (executed in order):
 1. `publish-spec-kit-templates` - Generic templates using specify CLI
-2. `publish-spec-kit-roo` - Roo-specific command symlinks
-3. `publish-spec-kit-kilo` - Kilocode-specific workflow symlinks
+2. `publish-spec-kit-roo` - Roo-specific command symlinks from speckit
+3. `publish-spec-kit-kilo` - Kilo-specific command symlinks from speckit
 4. `publish-spec-kit-claude` - Claude-specific skills using specify CLI
+
+### `publish-commands` Target
+
+**Purpose**: Link non-speckit commands to all agents.
+
+**Dependencies** (executed in order):
+1. `publish-commands-source` - Copy commands to dist/.ai-files/commands/
+2. `publish-commands-roo` - Roo-specific command symlinks from non-speckit commands
+3. `publish-commands-kilo` - Kilo-specific command symlinks from non-speckit commands
 
 ### `publish-spec-kit-templates` Target (Lines 148-180)
 
@@ -236,12 +265,12 @@ graph TD
 
 ### `publish-spec-kit-kilo` Target (Lines 82-90)
 
-**Purpose**: Create symlinks for Kilocode workflows from speckit.
+**Purpose**: Create symlinks for Kilo commands from speckit.
 
 **Actions**:
-1. Creates `./dist/.kilocode/workflows/` directory
+1. Creates `./dist/.ai-files/dotkilo/commands/` directory
 2. Finds all `*.md` files in `./dist/.ai-files/commands/speckit/`
-3. Creates symlinks in `./dist/.kilocode/workflows/`
+3. Creates symlinks in `./dist/.ai-files/dotkilo/commands/`
 
 ### `publish-spec-kit-claude` Target (Lines 102-132)
 
@@ -250,7 +279,7 @@ graph TD
 **Actions**:
 1. Creates a temporary directory
 2. Runs `specify init . --ai claude --script sh`
-3. Copies `.claude/skills/` to `./dist/.claude/skills/`
+3. Copies `.claude/skills/` to `./dist/.ai-files/dotclaude/skills/`
 4. Note: This replaces the skills symlink created by `clean` with actual copied files
 
 ### `publish-memory-bank` Target (Lines 195-209)
@@ -260,7 +289,7 @@ graph TD
 **Prerequisites**: `prompts/memory-bank-instructions.md` must exist (use `update-memory-bank` first)
 
 **Actions**:
-1. Creates `./dist/.roo/rules/memory-bank/` and `./dist/.kilocode/rules/memory-bank/`
+1. Creates `./dist/.ai-files/dotroo/rules/memory-bank/` and `./dist/.ai-files/dotkilo/rules/memory-bank/`
 2. Copies `prompts/memory-bank-instructions.md` to both directories
 
 ### `publish-prompts` Target (Lines 65-67)
@@ -280,44 +309,58 @@ graph TD
 | `skills/` | `./dist/.ai-files/skills/` | cp -r |
 | `rules/` | `./dist/.ai-files/rules/` | cp -r |
 | `prompts/` | `./dist/.ai-files/prompts/` | cp -r |
-| `config/claude/*` | `./dist/.claude/` | cp -r |
+| `config/claude/*` | `./dist/.ai-files/dotclaude/` | cp -r |
 | `update.sh` | `./dist/.ai-files/update.sh` | cp |
 | `AGENTS.md` | `./dist/AGENTS.md` | cp |
 | `CLAUDE.md` | `./dist/CLAUDE.md` | cp |
 | `COMMON_CODE_TASKS.md` | `./dist/.ai-files/COMMON_CODE_TASKS.md` | cp |
 | (spec-kit temp) | `./dist/.ai-files/commands/speckit/` | cp -r |
-| (spec-kit temp) | `./dist/.specify/` | cp -r |
-| (spec-kit temp) | `./dist/.claude/skills/` | cp -r |
+| (spec-kit temp) | `./dist/.ai-files/dotspecify/` | cp -r |
+| (spec-kit temp) | `./dist/.ai-files/dotclaude/skills/` | cp -r |
 
 ## Symlink Summary
 
 ### Created by `clean` target (within dist):
-- `dist/.kilocode/skills` → `../.ai-files/skills`
-- `dist/.claude/skills` → `../.ai-files/skills`
+- `dist/.ai-files/dotkilo/skills` → `../skills`
+- `dist/.ai-files/dotclaude/skills` → `../skills`
+- `dist/.kilo` → `.ai-files/dotkilo`
+- `dist/.claude` → `.ai-files/dotclaude`
+- `dist/.roo` → `.ai-files/dotroo`
+- `dist/.specify` → `.ai-files/dotspecify`
 
 ### Created by `clean` target (at project root):
-- `.kilocode` → `dist/.kilocode`
+- `.kilo` → `dist/.kilo`
 - `.claude` → `dist/.claude`
 - `.roo` → `dist/.roo`
 
 ### Created by `prepare-claude`:
-- `./dist/.claude/commands/*.md` → `./dist/.ai-files/commands/*.md` (relative symlinks)
+- `./dist/.ai-files/dotclaude/commands/*.md` → `./dist/.ai-files/commands/*.md` (relative symlinks)
 
 ### Created by `publish-spec-kit-roo`:
-- `./dist/.roo/commands/*.md` → `./dist/.ai-files/commands/speckit/*.md` (relative symlinks)
+- `./dist/.ai-files/dotroo/commands/*.md` → `./dist/.ai-files/commands/speckit/*.md` (relative symlinks)
 
 ### Created by `publish-spec-kit-kilo`:
-- `./dist/.kilocode/workflows/*.md` → `./dist/.ai-files/commands/speckit/*.md` (relative symlinks)
+- `./dist/.ai-files/dotkilo/commands/*.md` → `./dist/.ai-files/commands/speckit/*.md` (relative symlinks)
+
+### Created by `publish-commands-roo`:
+- `./dist/.ai-files/dotroo/commands/*.md` → `./dist/.ai-files/commands/*.md` (non-speckit, relative symlinks)
+
+### Created by `publish-commands-kilo`:
+- `./dist/.ai-files/dotkilo/commands/*.md` → `./dist/.ai-files/commands/*.md` (non-speckit, relative symlinks)
 
 ## Important Notes
 
-1. **Shared Skills Directory**: The `skills/` directory is shared between Claude Code and Kilocode via symlinks pointing to `./dist/.ai-files/skills/`.
+1. **Directory Visibility**: The `dotclaude/`, `dotkilocode/`, `dotroo/`, and `dotspecify/` directories under `dist/.ai-files/` are visible (not hidden) to avoid gitignore conflicts and make them easier to work with.
 
-2. **Spec-kit Override**: The `publish-spec-kit-claude` target replaces the Claude skills symlink with actual files copied from the specify CLI output, while Kilocode continues to use the symlink.
+2. **Backward Compatibility**: Symlinks at `dist/.claude`, `dist/.kilocode`, etc. point to the visible directories, ensuring all existing references continue to work.
 
-3. **Symlink Semantics**: The `ln -sfn` command forces the creation of symlinks, removing existing ones if they exist.
+3. **Shared Skills Directory**: The `skills/` directory is shared between Claude Code and Kilocode via symlinks pointing to `../skills` (which is `dist/.ai-files/skills/`).
 
-4. **External Dependencies**: The `publish-spec-kit-*` targets depend on the `specify` CLI tool being installed (`pipx install specify-cli`).
+4. **Spec-kit Override**: The `publish-spec-kit-claude` target replaces the Claude skills symlink with actual files copied from the specify CLI output, while Kilocode continues to use the symlink.
+
+5. **Symlink Semantics**: The `ln -sfn` command forces the creation of symlinks, removing existing ones if they exist.
+
+6. **External Dependencies**: The `publish-spec-kit-*` targets depend on the `specify` CLI tool being installed (`pipx install specify-cli`).
 
 ---
 

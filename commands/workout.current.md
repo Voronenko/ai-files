@@ -1,3 +1,7 @@
+---
+description: Show the current session
+---
+
 Show the current session status by:
 
 1. Check if `.ai-files/sessions/.current-session` exists

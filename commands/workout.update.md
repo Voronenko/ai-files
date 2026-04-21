@@ -1,3 +1,7 @@
+---
+description: Update the current development session
+---
+
 Update the current development session by:
 
 1. Check if `.ai-files/sessions/.current-session` exists to find the active session

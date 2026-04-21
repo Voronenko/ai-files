@@ -1,3 +1,7 @@
+---
+description: Ends the workout
+---
+
 End the current development session by:
 
 1. Check `.ai-files/sessions/.current-session` for the active session
