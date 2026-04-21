@@ -74,7 +74,6 @@ sequenceDiagram
 
     Note over Source: Phase 2: prepare-dist
     Source->>Dist: cp -r plugins/
-    Source->>Dist: cp update.sh
     Source->>Dist: cp AGENTS.md, CLAUDE.md
     Source->>Dist: cp COMMON_CODE_TASKS.md
     Source->>Dist: cp -r config/claude/*
@@ -114,7 +113,6 @@ graph TD
     AIFiles --> Commands["commands/"]
     AIFiles --> Rules["rules/"]
     AIFiles --> CommonTasks["COMMON_CODE_TASKS.md"]
-    AIFiles --> UpdateSh["update.sh"]
     AIFiles --> Prompts["prompts/"]
     AIFiles --> ClaudeDist["dotclaude/"]
     AIFiles --> KiloDist["dotkilo/"]
@@ -151,7 +149,7 @@ graph TD
 
     class KiloLink,ClaudeLink,RooLink,KiloSkillsLink,ClaudeLinkDist,KiloLinkDist,RooLinkDist,SpecifyLinkDist symlink
     class Dist,AIFiles,ClaudeDist,KiloDist,RooDist,Plugins,Skills,Commands,Rules,Prompts,SpeckitCmds,ClaudeCmds,ClaudeConfig,ClaudeHooks,ClaudeSettings,ClaudeSkills,KiloCmds,KiloRules,RooCmds,RooRules,Specify directory
-    class AGENTS,CLAUDE,CommonTasks,UpdateSh file
+    class AGENTS,CLAUDE,CommonTasks file
 ```
 
 ## Target Details
@@ -198,7 +196,6 @@ graph TD
 1. Ensures `./dist/.ai-files` exists
 2. Copies source files to `./dist/.ai-files/`:
    - `plugins/` → `./dist/.ai-files/plugins/`
-   - `update.sh` → `./dist/.ai-files/update.sh`
    - `AGENTS.md` → `./dist/AGENTS.md`
    - `CLAUDE.md` → `./dist/CLAUDE.md`
    - `COMMON_CODE_TASKS.md` → `./dist/.ai-files/COMMON_CODE_TASKS.md`
@@ -310,7 +307,6 @@ graph TD
 | `rules/` | `./dist/.ai-files/rules/` | cp -r |
 | `prompts/` | `./dist/.ai-files/prompts/` | cp -r |
 | `config/claude/*` | `./dist/.ai-files/dotclaude/` | cp -r |
-| `update.sh` | `./dist/.ai-files/update.sh` | cp |
 | `AGENTS.md` | `./dist/AGENTS.md` | cp |
 | `CLAUDE.md` | `./dist/CLAUDE.md` | cp |
 | `COMMON_CODE_TASKS.md` | `./dist/.ai-files/COMMON_CODE_TASKS.md` | cp |

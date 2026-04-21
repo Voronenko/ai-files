@@ -122,6 +122,7 @@ setup_worktree() {
 
     # Copy roaming files from .ai-files/roaming-files.txt
     local roaming_files_list="$main_repo_root/.ai-files/roaming-files.txt"
+    local override_all=false
     if [[ -f "$roaming_files_list" ]]; then
         print_info "Processing roaming files from .ai-files/roaming-files.txt..."
         while IFS= read -r file || [[ -n "$file" ]]; do
@@ -139,16 +140,32 @@ setup_worktree() {
 
             # Check if destination already exists
             if [[ -e "$dst_file" ]]; then
-                # Ask if user wants to override
-                echo -en "${YELLOW}Override existing file '$file' in worktree? [y/N]: ${NC}"
-                read -r response
-                if [[ "$response" =~ ^[Yy]$ ]]; then
-                    # Create destination directory if needed
+                if [[ "$override_all" == true ]]; then
+                    # Auto-override all
                     mkdir -p "$(dirname "$dst_file")"
                     cp "$src_file" "$dst_file"
                     print_success "Overridden: $file"
                 else
-                    print_info "Skipped: $file"
+                    # Ask if user wants to override (read from terminal)
+                    local response=""
+                    echo -en "${YELLOW}Override existing file '$file' in worktree? [Y/n/A]: ${NC}"
+                    read -r response < /dev/tty
+                    case "$response" in
+                        [Yy]*|"")
+                            mkdir -p "$(dirname "$dst_file")"
+                            cp "$src_file" "$dst_file"
+                            print_success "Overridden: $file"
+                            ;;
+                        [Aa]*)
+                            override_all=true
+                            mkdir -p "$(dirname "$dst_file")"
+                            cp "$src_file" "$dst_file"
+                            print_success "Overridden: $file (will override all remaining)"
+                            ;;
+                        [Nn]*)
+                            print_info "Skipped: $file"
+                            ;;
+                    esac
                 fi
             else
                 # Create destination directory if needed
@@ -167,10 +184,12 @@ setup_worktree() {
     if [[ -f "$roaming_files_list" ]]; then
         (cd "$main_repo_root" && git ls-files --others --ignored --exclude-standard \
             | grep -E '(\.env($|\.)|\.key$|\.pem$|\.local$)' \
+            | grep -v '\.venv' \
             | grep -v -F -f .ai-files/roaming-files.txt 2>/dev/null || true)
     else
         (cd "$main_repo_root" && git ls-files --others --ignored --exclude-standard \
-            | grep -E '(\.env($|\.)|\.key$|\.pem$|\.local$)' 2>/dev/null || true)
+            | grep -E '(\.env($|\.)|\.key$|\.pem$|\.local$)' \
+            | grep -v '\.venv' 2>/dev/null || true)
     fi
 
     echo ""

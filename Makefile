@@ -43,8 +43,6 @@ prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prom
 	mkdir -p ./dist/.ai-files
 	cp -r plugins ./dist/.ai-files/
 	@echo "Copying and linking plugin files..."
-        # updating utility
-	cp update.sh ./dist/.ai-files/
         # unified stub for AGENTS.md
 	cp AGENTS.md ./dist/
 	# redirector for claude code to use AGENTS.md
