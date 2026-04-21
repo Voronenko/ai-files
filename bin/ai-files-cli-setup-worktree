@@ -1,0 +1,186 @@
+#!/bin/bash
+
+# ai-files-cli-setup-worktree - Set up ai-files symlinks in git worktrees
+# This script sets up symlinks from the current git worktree to the main
+# ai-files repository, enabling AI coding tools to work across worktrees.
+#
+# Usage: ai-files-cli-setup-worktree
+#
+# The script must be run from within a git worktree.
+
+set -euo pipefail
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Functions for colored output
+print_info() {
+    echo -e "${BLUE}ℹ️  $1${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✅ $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠️  $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}❌ $1${NC}"
+}
+
+# Check if running in a git worktree
+check_if_worktree() {
+    if git rev-parse --git-dir 2>/dev/null | grep -q "/worktrees/"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Main setup function
+setup_worktree() {
+    # Check if we're in a git repository at all
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+        print_error "Not in a git repository!"
+        print_info "This command must be run from within a git worktree."
+        echo ""
+        echo "Usage:"
+        echo "  1. Create a worktree: git worktree add <path> -b <branch>"
+        echo "  2. cd <path>"
+        echo "  3. ai-files-cli-setup-worktree"
+        exit 1
+    fi
+
+    # Check if in worktree
+    if ! check_if_worktree; then
+        print_warning "Not running from within a git worktree."
+        print_info "This command sets up ai-files symlinks in git worktrees."
+        echo ""
+        echo "You are currently in the main repository."
+        exit 1
+    fi
+
+    local worktree_root
+    worktree_root="$(git rev-parse --show-toplevel)"
+
+    print_success "Running within git worktree: $worktree_root"
+
+    # Find main git root
+    print_info "Finding main ai-files repository..."
+    local git_common_dir
+    git_common_dir="$(git rev-parse --git-common-dir)"
+
+    local main_repo_root
+    main_repo_root="$(dirname "$git_common_dir")"
+
+    if [[ ! -d "$main_repo_root/.ai-files" ]]; then
+        print_error "Could not find .ai-files in main repository!"
+        print_info "Main repository: $main_repo_root"
+        exit 1
+    fi
+
+    print_success "Found main repository: $main_repo_root"
+
+    # Create .ai-files symlink in worktree
+    local ai_files_link="$worktree_root/.ai-files"
+    if [[ -e "$ai_files_link" ]]; then
+        if [[ -L "$ai_files_link" ]]; then
+            print_warning ".ai-files symlink already exists"
+            print_info "Removing old symlink..."
+            rm "$ai_files_link"
+        else
+            print_error ".ai-files already exists and is not a symlink!"
+            exit 1
+        fi
+    fi
+
+    print_info "Creating .ai-files symlink..."
+    ln -s "$main_repo_root/.ai-files" "$ai_files_link"
+    print_success ".ai-files linked -> $main_repo_root/.ai-files"
+
+    # Copy symlinks for .claude, .kilo, .roo, .specify
+    local symlinks=(".claude" ".kilo" ".roo" ".specify")
+    for symlink in "${symlinks[@]}"; do
+        if [[ -L "$main_repo_root/$symlink" ]]; then
+            if [[ -e "$worktree_root/$symlink" ]]; then
+                print_warning "$symlink already exists, skipping"
+            else
+                local target
+                target="$(readlink "$main_repo_root/$symlink")"
+                ln -s "$target" "$worktree_root/$symlink"
+                print_success "$symlink linked -> $target"
+            fi
+        fi
+    done
+
+    # Copy roaming files from .ai-files/roaming-files.txt
+    local roaming_files_list="$main_repo_root/.ai-files/roaming-files.txt"
+    if [[ -f "$roaming_files_list" ]]; then
+        print_info "Processing roaming files from .ai-files/roaming-files.txt..."
+        while IFS= read -r file || [[ -n "$file" ]]; do
+            # Skip empty lines and comments
+            [[ -z "$file" || "$file" =~ ^[[:space:]]*# ]] && continue
+
+            local src_file="$main_repo_root/$file"
+            local dst_file="$worktree_root/$file"
+
+            # Check if source file exists in main repository
+            if [[ ! -e "$src_file" ]]; then
+                print_warning "Source file not found in main repository: $file (skipping)"
+                continue
+            fi
+
+            # Check if destination already exists
+            if [[ -e "$dst_file" ]]; then
+                # Ask if user wants to override
+                echo -en "${YELLOW}Override existing file '$file' in worktree? [y/N]: ${NC}"
+                read -r response
+                if [[ "$response" =~ ^[Yy]$ ]]; then
+                    # Create destination directory if needed
+                    mkdir -p "$(dirname "$dst_file")"
+                    cp "$src_file" "$dst_file"
+                    print_success "Overridden: $file"
+                else
+                    print_info "Skipped: $file"
+                fi
+            else
+                # Create destination directory if needed
+                mkdir -p "$(dirname "$dst_file")"
+                cp "$src_file" "$dst_file"
+                print_success "Copied: $file"
+            fi
+        done < "$roaming_files_list"
+    else
+        print_info "No .ai-files/roaming-files.txt found in main repository (skipping roaming files)"
+    fi
+
+    # Show candidates for roaming-files.txt
+    echo ""
+    print_info "Candidates to add to .ai-files/roaming-files.txt:"
+    if [[ -f "$roaming_files_list" ]]; then
+        (cd "$main_repo_root" && git ls-files --others --ignored --exclude-standard \
+            | grep -E '(\.env($|\.)|\.key$|\.pem$|\.local$)' \
+            | grep -v -F -f .ai-files/roaming-files.txt 2>/dev/null || true)
+    else
+        (cd "$main_repo_root" && git ls-files --others --ignored --exclude-standard \
+            | grep -E '(\.env($|\.)|\.key$|\.pem$|\.local$)' 2>/dev/null || true)
+    fi
+
+    echo ""
+    print_success "Worktree setup complete!"
+    echo ""
+    echo "📋 Summary:"
+    echo "   • .ai-files linked to $main_repo_root/.ai-files"
+    echo "   • Agent symlinks copied from main repository"
+    [[ -f "$main_repo_root/.mcp.json" ]] && echo "   • .mcp.json copied"
+}
+
+# Run main function
+setup_worktree

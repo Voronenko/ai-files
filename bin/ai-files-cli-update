@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# ai-files-cli-update - Update .ai-files/, .claude/, .kilocode/, .roo/ directories from dist/
+# ai-files-cli-update - Update .ai-files/, .claude/, .kilo/, .roo/ directories from dist/
 # This script handles:
 # - Recursive copying of all files and folders
 # - Preserving relative symlinks
@@ -39,7 +39,7 @@ SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 SOURCE_DIR="${SELF_DIR}/../dist"
 
 # Target directories to update
-TARGET_DIRS=(".ai-files" ".claude" ".kilocode" ".roo")
+TARGET_DIRS=(".ai-files" ".claude" ".kilo" ".roo")
 
 # Tracking arrays
 declare -a COPIED_FILES=()
@@ -81,7 +81,7 @@ show_usage() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Update .ai-files/, .claude/, .kilocode/, .roo/ directories from dist/
+Update .ai-files/, .claude/, .kilo/, .roo/ directories from dist/
 
 Options:
     -s, --source DIR    Source directory (default: ./dist)

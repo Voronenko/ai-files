@@ -270,6 +270,63 @@ Install using copy method instead of symlink:
 ai-files-cli skills-add vercel-labs/agent-skills --skill frontend-design --method copy
 ```
 
+### ai-files-cli setup-worktree
+
+Set up ai-files symlinks in git worktrees. This utility automatically configures AI coding agent symlinks and configuration files when working with git worktrees, ensuring each worktree has access to the main repository's AI files configuration.
+
+**Usage:**
+```bash
+ai-files-cli setup-worktree
+```
+
+**Prerequisites:**
+- Must be run from within a git worktree (not the main repository)
+- The main repository must have `.ai-files/` directory
+
+**What it does:**
+1. **Detects worktree environment** - Verifies the command is running from within a git worktree
+2. **Finds main repository** - Locates the main ai-files repository using `git rev-parse --git-common-dir`
+3. **Creates `.ai-files` symlink** - Links worktree's `.ai-files` → main repository's `.ai-files`
+4. **Copies agent symlinks** - Replicates symlinks for `.claude`, `.kilo`, `.roo`, `.specify` if they exist in the main repository root
+5. **Copies `.mcp.json`** - Copies MCP configuration from main repository if it exists
+
+**Examples:**
+
+Create a worktree and set it up:
+```bash
+# Create a new worktree
+git worktree add ../my-project-feature -b feature/new-feature
+
+# Navigate to the worktree
+cd ../my-project-feature
+
+# Run the setup script
+ai-files-cli setup-worktree
+```
+
+**Output example:**
+```
+✅ Running within git worktree: /path/to/worktree
+ℹ️  Finding main ai-files repository...
+✅ Found main repository: /path/to/main/repo
+ℹ️  Creating .ai-files symlink...
+✅ .ai-files linked -> /path/to/main/repo/.ai-files
+✅ .claude linked -> .ai-files/dotclaude
+✅ .kilo linked -> .ai-files/dotkilo
+✅ .mcp.json copied
+
+📋 Summary:
+   • .ai-files linked to /path/to/main/repo/.ai-files
+   • Agent symlinks copied from main repository
+   • .mcp.json copied
+```
+
+**Notes:**
+- If symlinks or files already exist, the script skips them with a warning
+- Existing `.ai-files` symlink will be replaced if found
+- The script exits with an error if `.ai-files` exists but is not a symlink
+- Run this script once per worktree after creating it
+
 ### ai-files-cli update
 
 Update `.ai-files/`, `.claude/`, `.kilocode/`, `.roo/` directories from `dist/`. This utility handles recursive copying of files and folders, preserves relative symlinks, detects locally modified files, and provides interactive confirmation with diff view.

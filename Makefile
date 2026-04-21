@@ -56,6 +56,15 @@ prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prom
 	cp -r rules ./dist/.ai-files/
 	# unified skills
 	cp -r skills ./dist/.ai-files/
+	# Makefile for dist operations
+	cp Makefile.dist ./dist/Makefile
+	# gitignore for dist
+	cp dotignore.local.dist ./dist/dotignore.local
+	# roaming files list for worktree setup
+	@echo "Creating roaming-files.txt..."
+	@echo ".mcp.json" > ./dist/.ai-files/roaming-files.txt
+	@echo "AGENTS.md" >> ./dist/.ai-files/roaming-files.txt
+	@echo "CLAUDE.md" >> ./dist/.ai-files/roaming-files.txt
 
 prepare-claude:
 	@mkdir -p ./dist/.ai-files/dotclaude/commands
@@ -66,8 +75,19 @@ prepare-claude:
 	' sh {} +
 	@echo "✅ Created symlinks to ./dist/.ai-files/dotclaude/commands/"
 
-build: prepare-dist prepare-claude
+build: prepare-dist prepare-claude create-symlinks
 	echo build completed
+
+create-symlinks:
+	@echo "Creating symlinks..."
+	@ln -sfn .ai-files/dotkilo dist/.kilo
+	@ln -sfn .ai-files/dotclaude dist/.claude
+	@ln -sfn .ai-files/dotroo dist/.roo
+	@ln -sfn .ai-files/dotspecify dist/.specify
+	@ln -sfn dist/.kilo .kilo
+	@ln -sfn dist/.claude .claude
+	@ln -sfn dist/.roo .roo
+	@echo "✅ Symlinks created"
 
 publish-prompts:
 	mkdir -p ./dist/.ai-files/prompts

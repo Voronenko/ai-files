@@ -1,9 +1,8 @@
 .gitignore.local
-# Symlinks at dist/ level (for backward compatibility)
+.ai-files/
 .claude/
 .kilo/
 .roo/
 .specify/
-# Actual directories under .ai-files/
 AGENTS.md
 CLAUDE.md
