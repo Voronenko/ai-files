@@ -348,7 +348,7 @@ graph TD
 
 1. **Directory Visibility**: The `dotclaude/`, `dotkilocode/`, `dotroo/`, and `dotspecify/` directories under `dist/.ai-files/` are visible (not hidden) to avoid gitignore conflicts and make them easier to work with.
 
-2. **Backward Compatibility**: Symlinks at `dist/.claude`, `dist/.kilocode`, etc. point to the visible directories, ensuring all existing references continue to work.
+2. **Backward Compatibility**: Symlinks at `dist/.claude`, `dist/.kilo`, etc. point to the visible directories, ensuring all existing references continue to work.
 
 3. **Shared Skills Directory**: The `skills/` directory is shared between Claude Code and Kilocode via symlinks pointing to `../skills` (which is `dist/.ai-files/skills/`).
 

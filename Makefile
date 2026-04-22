@@ -250,7 +250,7 @@ update-memory-bank:
 		exit 1; \
 	fi
 	@echo "Processing memory bank file..."
-	@sed -i 's/\.kilocode\/rules\//\.ai-files\//g' "prompts/memory-bank-instructions.md"
+	@sed -i 's/\.kilo\/rules\//\.ai-files\//g' "prompts/memory-bank-instructions.md"
 	@sed -i 's/Kilo Code/AI FILES/g' "prompts/memory-bank-instructions.md"
 	@echo "✅ Memory bank successfully downloaded and updated to prompts/memory-bank-instructions.md"
 

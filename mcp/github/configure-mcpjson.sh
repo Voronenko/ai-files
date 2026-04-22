@@ -7,7 +7,7 @@ ARG1="stdio"
 if [ "$1" = "user" ]; then
     CONFIG_FILE="${USER_CONFIG_FILE:-$HOME/.config/VSCodium/User/globalStorage/kilocode.kilo-code/settings/mcp_settings.json}"
 elif [ "$1" = "local" ]; then
-    CONFIG_FILE="${LOCAL_CONFIG_FILE:-.kilocode/mcp.json}"
+    CONFIG_FILE="${LOCAL_CONFIG_FILE:-.kilo/mcp.json}"
 else
     echo "Usage: $0 [user|local]"
     exit 1

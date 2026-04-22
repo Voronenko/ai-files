@@ -43,10 +43,10 @@ Skills are loaded from multiple locations, allowing both personal skills and pro
 
 ### Global Skills (User-Level)
 
-Located in `~/.kilocode/skills/`:
+Located in `~/.kilo/skills/`:
 
 ```txt
-    ~/.kilocode/
+    ~/.kilo/
     ├── skills/                    # Generic skills (all modes)│
     ├── my-skill/│
     │   └── SKILL.md│
@@ -62,11 +62,11 @@ Located in `~/.kilocode/skills/`:
 
 ### Project Skills (Workspace-Level)
 
-Located in `.kilocode/skills/` within your project:
+Located in `.kilo/skills/` within your project:
 
 ```txt
     your-project/
-    └── .kilocode/
+    └── .kilo/
        ├── skills/               # Generic skills for this project 
        │   └── project-conventions/
        │       └── SKILL.md
@@ -191,7 +191,7 @@ Skills directories are monitored for changes to `SKILL.md` files. However, the m
 
 1.  Create the skill directory:
     
-        mkdir -p ~/.kilocode/skills/api-design
+        mkdir -p ~/.kilo/skills/api-design
     
 2.  Create `SKILL.md`:
     
@@ -239,10 +239,10 @@ To create a skill that only appears in a specific mode:
 
 ```sh
 # For Code mode only
-mkdir -p ~/.kilocode/skills-code/typescript-patterns
+mkdir -p ~/.kilo/skills-code/typescript-patterns
 
 # For Architect mode only
-mkdir -p ~/.kilocode/skills-architect/microservices
+mkdir -p ~/.kilo/skills-architect/microservices
 ```
 
 The directory naming pattern is `skills-{mode-slug}` where `{mode-slug}` matches the mode's identifier (e.g., `code`, `architect`, `ask`, `debug`).
@@ -253,10 +253,10 @@ You can symlink skills directories to share skills across machines or from a cen
 
 ```sh
 # Symlink entire skills directory
-ln -s /path/to/shared/skills ~/.kilocode/skills
+ln -s /path/to/shared/skills ~/.kilo/skills
 
 # Or symlink individual skills
-ln -s /path/to/shared/api-design ~/.kilocode/skills/api-design
+ln -s /path/to/shared/api-design ~/.kilo/skills/api-design
 ```
 
 When using symlinks, the skill's `name` field must match the **symlink name**, not the target directory name.

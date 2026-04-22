@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG="${HOME}/.kilocode/mcp.json"
+CONFIG="${HOME}/.kilo/mcp.json"
 mkdir -p "$(dirname "$CONFIG")"
 
 ensure_config_exists() {
@@ -156,7 +156,7 @@ mcp_add() {
             local envjson
             if (( ${#envvars[@]} > 0 )); then
                 envjson=$(printf '%s\n' "${!envvars[@]}" | jq -Rn '
-                    [inputs | {key: ., val: env.vars[.] }] | 
+                    [inputs | {key: ., val: env.vars[.] }] |
                     map({( .key ): .val})
                 ' vars="$(declare -p envvars)")
             else

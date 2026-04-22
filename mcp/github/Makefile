@@ -10,5 +10,5 @@ kilocode-user:
 	./configure-mcpjson.sh user
 
 kilocode-local:
-	mkdir -p ~/.kilocode
+	mkdir -p ~/.kilo
 	./configure-mcpjson.sh local

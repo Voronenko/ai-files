@@ -13,7 +13,7 @@ Below debugging routine is for persistent errors or incomplete fixes. So use thi
 <DIAGNOSE>
 - Gather all error messages, logs, and behavioral symptoms
 - Add relevant context from files
-- Retrieve relevant project architecture, plan and current working task as specified in `.kilocode/rules/memory-bank` folder.
+- Retrieve relevant project architecture, plan and current working task as specified in `.kilo/rules/memory-bank` folder.
 </DIAGNOSE>
 
 - Whenever you fail with any test result, always add more context using <DIAGNOSE> and debug the issue effectively first, then when you have complete information move towards a fix. 
@@ -21,7 +21,7 @@ Below debugging routine is for persistent errors or incomplete fixes. So use thi
 - If you aren't sure, first get more OBSERVATIONS by adding more <DIAGNOSE> context to the issue so you exactly and specifically know what's wrong. Additionally you can seek <CLARIFICATION> if required.
 - Understand architecture using <ANALYZE CODE> (defined in [implement.md](.ai-files/rules-code/implement.md) ) relevant to the issue.
 - Use <STEP BY STEP REASONING> to think of all possible causes like architectural misalignment, design flaw rather than just a bug, etc.
-- Look for similar patterns already solved elsewhere in the codebase in `.kilocode/rules/memory-bank` folder. and <WEB USE> if needed
+- Look for similar patterns already solved elsewhere in the codebase in `.kilo/rules/memory-bank` folder. and <WEB USE> if needed
 - Present your fix using <REASONING PRESENTATION> for validation.
 - Start modifying code to update and fix things using <SYSTEMATIC CODE PROTOCOL> and <TESTING> (both defined in [implement.md](.ai-files/rules-code/implement.md) ).
 

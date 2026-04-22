@@ -21,7 +21,7 @@ The `dist/` directory organizes files into logical subdirectories aligned with t
 
 The distribution is designed to work with multiple AI development platforms:
 
-- **`.kilocode/`** - Kilocode configuration and workflows
+- **`.kilo/`** - Kilocode configuration and workflows
   - `workflows/` - Kilocode workflow definitions
   - `skills/` - Kilocode skills (shared with Claude)
 - **`.claude/`** - Claude Code configuration
@@ -33,8 +33,8 @@ The distribution is designed to work with multiple AI development platforms:
 
 The build process uses symlinks to maintain flexibility and avoid duplication:
 
-- **Shared resources**: The `skills/` directory is symlinked to both `.kilocode/skills/` and `.claude/skills/` to ensure skills are available to both platforms
-- **Platform-specific configs**: Each platform (`.kilocode/`, `.claude/`, `.roo/`) gets its own symlink to the `dist/` directory
+- **Shared resources**: The `skills/` directory is symlinked to both `.kilo/skills/` and `.claude/skills/` to ensure skills are available to both platforms
+- **Platform-specific configs**: Each platform (`.kilo/`, `.claude/`, `.roo/`) gets its own symlink to the `dist/` directory
 - **Single source of truth**: The AI Files repository maintains its own `dist/` directory, which is then symlinked by each platform to their respective configuration directories
 
 ### Build Process
@@ -50,7 +50,7 @@ The `ai-files-cli` is a command-line interface that provides various utilities f
 
 ### ai-files-cli mcp
 
-Configure and manage MCP (Model Context Protocol) servers. This utility helps you add, remove, list, and manage MCP server configurations in `~/.kilocode/mcp.json`.
+Configure and manage MCP (Model Context Protocol) servers. This utility helps you add, remove, list, and manage MCP server configurations in `~/.kilo/mcp.json`.
 
 **Usage:**
 ```bash
@@ -329,7 +329,7 @@ ai-files-cli setup-worktree
 
 ### ai-files-cli update
 
-Update `.ai-files/`, `.claude/`, `.kilocode/`, `.roo/` directories from `dist/`. This utility handles recursive copying of files and folders, preserves relative symlinks, detects locally modified files, and provides interactive confirmation with diff view.
+Update `.ai-files/`, `.claude/`, `.kilo/`, `.roo/` directories from `dist/`. This utility handles recursive copying of files and folders, preserves relative symlinks, detects locally modified files, and provides interactive confirmation with diff view.
 
 **Usage:**
 ```bash
@@ -832,7 +832,7 @@ The `dist/` directory organizes files into logical subdirectories aligned with t
 
 The distribution is designed to work with multiple AI development platforms:
 
-- **`.kilocode/`** - Kilocode configuration and workflows
+- **`.kilo/`** - Kilocode configuration and workflows
   - `workflows/` - Kilocode workflow definitions
   - `skills/` - Kilocode skills (shared with Claude)
 - **`.claude/`** - Claude Code configuration
@@ -844,8 +844,8 @@ The distribution is designed to work with multiple AI development platforms:
 
 The build process uses symlinks to maintain flexibility and avoid duplication:
 
-- **Shared resources**: The `skills/` directory is symlinked to both `.kilocode/skills/` and `.claude/skills/` to ensure skills are available to both platforms
-- **Platform-specific configs**: Each platform (`.kilocode/`, `.claude/`, `.roo/`) gets its own symlink to the `dist/` directory
+- **Shared resources**: The `skills/` directory is symlinked to both `.kilo/skills/` and `.claude/skills/` to ensure skills are available to both platforms
+- **Platform-specific configs**: Each platform (`.kilo/`, `.claude/`, `.roo/`) gets its own symlink to the `dist/` directory
 - **Single source of truth**: The AI Files repository maintains its own `dist/` directory, which is then symlinked by each platform to their respective configuration directories
 
 ### Build Process
@@ -854,7 +854,7 @@ The Makefile orchestrates the distribution build through several targets:
 
 - **`make build`** - Prepares the `dist/` directory by creating necessary subdirectories and copying source files
 - **`make prepare-dist`** - Copies and organizes all source files into the `dist/` directory structure
-- **`make relink-from-dist`** - Creates symlinks from `dist/` to platform-specific directories (`.kilocode/`, `.claude/`, `.roo/`)
+- **`make relink-from-dist`** - Creates symlinks from `dist/` to platform-specific directories (`.kilo/`, `.claude/`, `.roo/`)
 - **`make prepare-claude`** - Sets up Claude Code specific commands by linking from `.ai-files/commands/`
 - **`make publish-spec-kit`** - Downloads and integrates Spec Kit templates for all platforms
 - **`make publish-memory-bank`** - Publishes memory bank instructions to all agent directories
