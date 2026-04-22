@@ -41,12 +41,20 @@ SOURCE_DIR="${SELF_DIR}/../dist"
 # Target directories to update
 TARGET_DIRS=(".ai-files" ".claude" ".kilo" ".roo")
 
+# Folders that should be merged (not fully replaced) within target directories
+MERGE_FOLDERS=("commands" "hooks" "skills")
+
+# Directories that should never be deleted (user's local data)
+PROTECTED_DIRS=(".ai-files/sessions" ".ai-files/memory" ".ai-files/memory-bank")
+
 # Tracking arrays
 declare -a COPIED_FILES=()
 declare -a DELETED_FILES=()
 declare -a SKIPPED_FILES=()
 declare -a CREATED_DIRS=()
 declare -a PRESERVED_SYMLINKS=()
+declare -a TARGET_ONLY_TO_KEEP=()
+declare -a TARGET_ONLY_TO_DELETE=()
 
 # Options
 AUTO_YES=false
@@ -74,6 +82,135 @@ print_error() {
 print_diff() {
     echo -e "${CYAN}📋 Diff:${NC}"
     diff -u "$1" "$2" || true
+}
+
+# Detect files that exist only in target (not in source)
+# Returns array of target-only file paths via nameref
+detect_target_only_files() {
+    local src_dir="$1"
+    local dest_dir="$2"
+    local base_path="$3"
+
+    # Use rsync with --delete and --dry-run to find files that would be deleted
+    local rsync_output
+    rsync_output=$(rsync --archive --delete --itemize-changes --dry-run "$src_dir/" "$dest_dir/" 2>&1 || true)
+
+    local target_only=()
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+
+        # Check for deletions (files in dest but not in src)
+        if [[ "$line" == *deleting* ]]; then
+            local flags="${line:0:11}"
+            local filepath="${line:12}"
+
+            # Skip directories
+            [[ "$filepath" == */ ]] && continue
+
+            local full_path="$base_path/$filepath"
+            # Skip protected paths (user's local data)
+            if is_protected_path "$full_path"; then
+                continue
+            fi
+
+            target_only+=("$full_path")
+        fi
+    done <<< "$rsync_output"
+
+    # Return array via nameref (passed as array name)
+    local -n result_array=$4
+    result_array=("${target_only[@]}")
+}
+
+# Prompt user about files that exist only in target
+# Returns arrays of files to keep and delete via global arrays
+prompt_target_only_files() {
+    local target_only=("$@")
+
+    local -a to_keep=()
+    local -a to_delete=()
+
+    if [[ ${#target_only[@]} -eq 0 ]]; then
+        return
+    fi
+
+    echo ""
+    print_warning "Found ${#target_only[@]} file(s) that exist only in your project:"
+    echo ""
+
+    for filepath in "${target_only[@]}"; do
+        if [[ "$AUTO_YES" == "true" ]]; then
+            # Auto-keep mode (default: keep, don't delete)
+            print_info "Auto-keeping (yes flag set): $filepath"
+            to_keep+=("$filepath")
+        elif [[ "$AUTO_NO" == "true" ]]; then
+            # This mode doesn't really make sense for target-only files
+            # Treat same as auto-keep
+            print_info "Keeping: $filepath"
+            to_keep+=("$filepath")
+        else
+            # Interactive mode
+            echo ""
+            echo -n "Keep this file? $filepath [Y/n/q] (Y=yes keep, n=no delete, q=quit): "
+            read -r response
+
+            case "$response" in
+                [Nn]*)
+                    to_delete+=("$filepath")
+                    echo "  🗑️  Will delete: $filepath"
+                    ;;
+                [Qq]*)
+                    print_info "Quitting update process"
+                    exit 0
+                    ;;
+                *)
+                    to_keep+=("$filepath")
+                    echo "  ✓ Will keep: $filepath"
+                    ;;
+            esac
+        fi
+    done
+
+    # Export results via global arrays
+    TARGET_ONLY_TO_KEEP=("${to_keep[@]}")
+    TARGET_ONLY_TO_DELETE=("${to_delete[@]}")
+}
+
+# Check if a path is protected (should not be deleted)
+is_protected_path() {
+    local filepath="$1"
+    local protected_path
+
+    for protected_path in "${PROTECTED_DIRS[@]}"; do
+        # Check if filepath starts with protected path
+        if [[ "$filepath" == "$protected_path"* ]]; then
+            return 0  # Protected
+        fi
+    done
+    return 1  # Not protected
+}
+
+# Check if a target directory is a symlink pointing to .ai-files/dot*
+# Returns 0 (true) if it's a managed symlink, 1 (false) otherwise
+is_managed_symlink() {
+    local target_dir="$1"
+    local target_path="$GIT_ROOT/$target_dir"
+
+    # Check if target exists and is a symlink
+    if [[ ! -L "$target_path" ]]; then
+        return 1  # Not a symlink, needs processing
+    fi
+
+    # Get the symlink target
+    local link_target
+    link_target="$(readlink "$target_path")"
+
+    # Check if it points to .ai-files/dot* (relative or absolute)
+    if [[ "$link_target" == ".ai-files/dot"* ]] || [[ "$link_target" == *"/.ai-files/dot"* ]]; then
+        return 0  # Managed by .ai-files structure
+    fi
+
+    return 1  # Not a managed symlink
 }
 
 # Show usage
@@ -290,6 +427,15 @@ process_directory() {
     local dest_dir="$2"
     local base_path="$3"
 
+    # Check if this is a merge folder (commands, hooks, or skills)
+    local is_merge_folder=false
+    for merge_folder in "${MERGE_FOLDERS[@]}"; do
+        if [[ "$base_path" == *"/$merge_folder" || "$base_path" == "$merge_folder" ]]; then
+            is_merge_folder=true
+            break
+        fi
+    done
+
     # Create destination directory if needed
     if [[ ! -d "$dest_dir" ]]; then
         if [[ "$DRY_RUN" == "false" ]]; then
@@ -303,13 +449,58 @@ process_directory() {
         fi
     fi
 
+    # For merge folders: detect target-only files before syncing
+    if [[ "$is_merge_folder" == "true" ]]; then
+        # Pass 1: Detect target-only files
+        local -a target_only_files=()
+        detect_target_only_files "$src_dir" "$dest_dir" "$base_path" target_only_files
+
+        # Pass 2: Prompt user about target-only files
+        if [[ ${#target_only_files[@]} -gt 0 && "$DRY_RUN" == "false" ]]; then
+            prompt_target_only_files "${target_only_files[@]}"
+
+            # Delete files user chose to delete
+            for filepath in "${TARGET_ONLY_TO_DELETE[@]}"; do
+                # Skip protected paths
+                if is_protected_path "$filepath"; then
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        echo "  🔒 Protected (not deleted): $filepath"
+                    fi
+                    continue
+                fi
+                local full_path="$GIT_ROOT/$filepath"
+                if [[ -e "$full_path" ]]; then
+                    rm -rf "$full_path"
+                    DELETED_FILES+=("$filepath")
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        echo "  🗑️  Deleted: $filepath"
+                    fi
+                fi
+            done
+        elif [[ ${#target_only_files[@]} -gt 0 && "$DRY_RUN" == "true" ]]; then
+            echo ""
+            print_warning "Found ${#target_only_files[@]} file(s) that exist only in your project:"
+            for filepath in "${target_only_files[@]}"; do
+                echo "   • $filepath"
+            done
+        fi
+    fi
+
     # Use rsync to copy files and detect changes
     # --archive: preserve permissions, times, symbolic links
     # --itemize-changes: show what changed
-    # --delete: delete files in dest that aren't in src
+    # --delete: delete files in dest that aren't in src (NOT for merge folders)
     # --dry-run: don't actually make changes
     # --verbose: show detailed information
     local rsync_opts="--archive --itemize-changes"
+    # Only add --delete for non-merge folders
+    if [[ "$is_merge_folder" == "false" ]]; then
+        # For parent directories, exclude merge folder contents from deletion
+        for merge_folder in "${MERGE_FOLDERS[@]}"; do
+            rsync_opts="$rsync_opts --exclude=$merge_folder/"
+        done
+        rsync_opts="$rsync_opts --delete"
+    fi
     if [[ "$DRY_RUN" == "true" ]]; then
         rsync_opts="$rsync_opts --dry-run"
     fi
@@ -340,10 +531,18 @@ process_directory() {
 
         # Check if file was deleted
         if [[ "$flags" == *deleting* ]]; then
-            deleted_files+=("$base_path/$filepath")
-            DELETED_FILES+=("$base_path/$filepath")
+            local full_path="$base_path/$filepath"
+            # Skip protected paths
+            if is_protected_path "$full_path"; then
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  🔒 Protected (not deleted): $full_path"
+                fi
+                continue
+            fi
+            deleted_files+=("$full_path")
+            DELETED_FILES+=("$full_path")
             if [[ "$VERBOSE" == "true" ]]; then
-                echo "  🗑️  Deleted: $base_path/$filepath"
+                echo "  🗑️  Deleted: $full_path"
             fi
             continue
         fi
@@ -475,13 +674,79 @@ for target_dir in "${TARGET_DIRS[@]}"; do
     src_path="$SOURCE_DIR/$target_dir"
     dest_path="$GIT_ROOT/$target_dir"
 
-    if [[ ! -d "$src_path" ]]; then
+    if [[ ! -e "$src_path" && ! -L "$src_path" ]]; then
         print_warning "Skipping $target_dir (not found in source)"
         continue
     fi
 
-    print_info "Processing $target_dir..."
-    process_directory "$src_path" "$dest_path" "$target_dir"
+    # Check if source is a symlink (should be recreated as symlink in target)
+    if [[ -L "$src_path" ]]; then
+        src_link_target="$(readlink "$src_path")"
+
+        # Check if it's a managed symlink (points to .ai-files/dot*)
+        if [[ "$src_link_target" == ".ai-files/dot"* ]] || [[ "$src_link_target" == *"/.ai-files/dot"* ]]; then
+            # Check if target already exists and is a managed symlink
+            if is_managed_symlink "$target_dir"; then
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  🔗 Managed symlink exists: $target_dir"
+                fi
+                # Update the symlink target if needed
+                if [[ "$DRY_RUN" == "false" ]]; then
+                    ln -sf "$src_link_target" "$dest_path"
+                fi
+                continue
+            fi
+
+            # Target doesn't exist or is not a managed symlink
+            # If target doesn't exist, create the symlink
+            if [[ ! -e "$dest_path" && ! -L "$dest_path" ]]; then
+                print_info "Creating managed symlink: $target_dir -> $src_link_target"
+                if [[ "$DRY_RUN" == "false" ]]; then
+                    mkdir -p "$(dirname "$dest_path")"
+                    ln -sf "$src_link_target" "$dest_path"
+                    PRESERVED_SYMLINKS+=("$target_dir -> $src_link_target")
+                fi
+                continue
+            fi
+
+            # Target exists but is not a symlink - it's a custom directory
+            print_info "Processing custom directory: $target_dir"
+            process_directory "$src_path" "$dest_path" "$target_dir"
+        else
+            # Source is a symlink but not to .ai-files/dot*
+            print_info "Processing symlink (non-managed): $target_dir"
+            process_directory "$src_path" "$dest_path" "$target_dir"
+        fi
+    else
+        # Source is a directory, process normally
+        print_info "Processing $target_dir..."
+        process_directory "$src_path" "$dest_path" "$target_dir"
+    fi
+
+    # Also process merge subdirectories separately (commands, hooks, skills)
+    for merge_folder in "${MERGE_FOLDERS[@]}"; do
+        merge_src="$src_path/$merge_folder"
+        merge_dest="$dest_path/$merge_folder"
+        merge_base="$target_dir/$merge_folder"
+
+        # Only process if merge folder exists in source
+        if [[ -d "$merge_src" ]]; then
+            # Skip if merge folder is a symlink to .ai-files/*
+            if [[ -L "$merge_dest" ]]; then
+                merge_link_target="$(readlink "$merge_dest")"
+                if [[ "$merge_link_target" == *".ai-files/"* ]]; then
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        echo "  🔗 Skipping managed symlink: $merge_base (points to .ai-files)"
+                    fi
+                    continue
+                fi
+            fi
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "  ↳ Processing merge subfolder: $merge_base"
+            fi
+            process_directory "$merge_src" "$merge_dest" "$merge_base"
+        fi
+    done
     echo ""
 done
 
@@ -523,6 +788,22 @@ fi
 if [[ $total_skipped -gt 0 ]]; then
     echo "⏭️  Files skipped (modified locally) ($total_skipped):"
     for file in "${SKIPPED_FILES[@]}"; do
+        echo "   • $file"
+    done
+    echo ""
+fi
+
+if [[ ${#TARGET_ONLY_TO_DELETE[@]} -gt 0 ]]; then
+    echo "🗑️  Target-only files deleted (${#TARGET_ONLY_TO_DELETE[@]}):"
+    for file in "${TARGET_ONLY_TO_DELETE[@]}"; do
+        echo "   • $file"
+    done
+    echo ""
+fi
+
+if [[ ${#TARGET_ONLY_TO_KEEP[@]} -gt 0 ]]; then
+    echo "✓ Target-only files preserved (${#TARGET_ONLY_TO_KEEP[@]}):"
+    for file in "${TARGET_ONLY_TO_KEEP[@]}"; do
         echo "   • $file"
     done
     echo ""
