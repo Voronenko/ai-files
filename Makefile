@@ -67,6 +67,9 @@ prepare-claude:
 		done \
 	' sh {} +
 	@echo "✅ Created symlinks to ./dist/.ai-files/dotclaude/commands/"
+	# speckit commands are available as a skills
+	@find ./dist/.ai-files/dotclaude/commands -type l -name 'speckit*.md' -delete
+	@echo "✅ Removed speckit command symlinks (available as skills)"
 
 build: prepare-dist prepare-claude create-symlinks
 	echo build completed
@@ -86,8 +89,14 @@ create-symlinks:
 			ln -sfr "$$f" "dist/.claude/commands/$$base"; \
 		done \
 	' sh {} +
-	# Create file/dir symlinks for .claude/skills/
-	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -exec sh -c '\
+	# Create file/dir symlinks for .claude/skills/ (exclude symlinks to avoid nesting)
+	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.claude/skills/$$base"; \
+		done \
+	' sh {} +
+	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type d -exec sh -c '\
 		for f do \
 			base=$$(basename "$$f"); \
 			ln -sfr "$$f" "dist/.claude/skills/$$base"; \
@@ -100,7 +109,13 @@ create-symlinks:
 			ln -sfr "$$f" "dist/.kilo/commands/$$base"; \
 		done \
 	' sh {} +
-	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -exec sh -c '\
+	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.kilo/skills/$$base"; \
+		done \
+	' sh {} +
+	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type d -exec sh -c '\
 		for f do \
 			base=$$(basename "$$f"); \
 			ln -sfr "$$f" "dist/.kilo/skills/$$base"; \
@@ -124,8 +139,23 @@ create-symlinks:
 			done \
 		' sh {} +; \
 	fi
+	# Link everything from dist/.ai-files/dotclaude/skills/ to dist/.claude/skills/
+	@if [ -d "dist/.ai-files/dotclaude/skills" ]; then \
+		find dist/.ai-files/dotclaude/skills -mindepth 1 -maxdepth 1 -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				if [ -e "dist/.claude/skills/$$base" ]; then \
+					rm -rf "dist/.claude/skills/$$base"; \
+				fi; \
+				ln -sfr "$$f" "dist/.claude/skills/$$base"; \
+			done \
+		' sh {} +; \
+	fi
 	@ln -sfn dist/.kilo .kilo
 	@ln -sfn dist/.claude .claude
+	@ln -sfn dist/.specify .specify
+	# Recreate dist/.specify symlink (removed at start of create-symlinks)
+	@ln -sfn .ai-files/dotspecify dist/.specify
 	@echo "✅ Symlinks created"
 
 publish-prompts:

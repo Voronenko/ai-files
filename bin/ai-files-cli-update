@@ -244,15 +244,6 @@ copy_file_or_symlink() {
         local link_target
         link_target="$(readlink "$src")"
 
-        # DEBUG: Check for problematic symlink targets
-        if [[ "$link_target" == ".ai-files/dotkilo" ]]; then
-            echo "FOUND PROBLEMATIC IN copy_file_or_symlink:"
-            echo "  link_target: $link_target"
-            echo "  rel_path: $rel_path"
-            echo "  dest: $dest"
-            echo "  src: $src"
-        fi
-
         if [[ "$DRY_RUN" == "false" ]]; then
             ln -sf "$link_target" "$dest"
             PRESERVED_SYMLINKS+=("$rel_path -> $link_target")
@@ -866,15 +857,6 @@ cmd_files() {
                     # Get the symlink target
                     local link_target="$(readlink "$src_entry")"
 
-                    # DEBUG: Check for problematic symlink targets in merge processing
-                    if [[ "$link_target" == ".ai-files/dotkilo" ]]; then
-                        echo "FOUND PROBLEMATIC IN MERGE:"
-                        echo "  link_target: $link_target"
-                        echo "  entry_rel: $entry_rel"
-                        echo "  merge_base: $merge_base"
-                        echo "  dest_entry: $dest_entry"
-                    fi
-
                     ln -sf "$link_target" "$dest_entry"
                     PRESERVED_SYMLINKS+=("$merge_base/$entry_rel -> $link_target")
                     if [[ "$VERBOSE" == "true" ]]; then
@@ -911,24 +893,12 @@ cmd_files() {
                 echo "  ↳ Processing symlinks in $target_dir/$dotdir"
             fi
 
-            # DEBUG UNCONDITIONAL - track all dot* processing
-            echo "DEBUG: About to process dotdir=$dotdir in $target_dir"
-            echo "  dotdir_src=$dotdir_src"
-            echo "  dotdir_dest=$dotdir_dest"
-
             # Walk through dotdir and copy symlinks
             while IFS= read -r -d '' entry; do
                 # Skip if entry is the dotdir itself (edge case in path manipulation)
                 [[ "$entry" == "$dotdir_src" ]] && continue
 
                 local entry_rel="${entry#$dotdir_src/}"
-
-                # DEBUG: ALL entries - track what's being processed
-                echo "DEBUG dotdir=$dotdir: Processing entry"
-                echo "  entry=$entry"
-                echo "  entry_rel=$entry_rel"
-                echo "  src_entry=$dotdir_src/$entry_rel"
-                echo "  dest_entry=$dotdir_dest/$entry_rel"
 
                 # Skip if entry_rel is empty or equals dotdir name (prevents dotkilo/dotkilo)
                 [[ -z "$entry_rel" ]] && continue
@@ -955,25 +925,6 @@ cmd_files() {
 
                     # Get the symlink target
                     local link_target="$(readlink "$src_entry")"
-
-                    # DEBUG: ALL symlinks in dot* processing - check for dotkilo/dotkilo pattern
-                    if [[ "$entry_rel" == "dotkilo" ]]; then
-                        echo "FOUND dotkilo IN entry_rel:"
-                        echo "  dotdir: $dotdir"
-                        echo "  entry_rel: $entry_rel"
-                        echo "  link_target: $link_target"
-                        echo "  dest_entry: $dest_entry"
-                    fi
-                    # Also check if dest_entry contains dotkilo/dotkilo
-                    case "$dest_entry" in
-                        */dotkilo/dotkilo)
-                            echo "FOUND dotkilo/dotkilo PATTERN IN dest_entry:"
-                            echo "  dotdir: $dotdir"
-                            echo "  entry_rel: $entry_rel"
-                            echo "  link_target: $link_target"
-                            echo "  dest_entry: $dest_entry"
-                            ;;
-                    esac
 
                     ln -sf "$link_target" "$dest_entry"
                     PRESERVED_SYMLINKS+=("$target_dir/$dotdir/$entry_rel -> $link_target")
