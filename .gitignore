@@ -2,10 +2,10 @@
 .kilo
 .kilo
 .claude
-.roo
 dist/*
 .env
 .specify
 .cache
 bin/goose
 docs/plans/
+ai-files-*.zip

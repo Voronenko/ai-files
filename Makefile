@@ -484,3 +484,45 @@ install-cli-to-local-bin:
 	fi; \
 	ln -s "$$SRC" "$$DST"; \
 	echo "✅ Created symlink: $$DST -> $$SRC"
+
+## Release management
+
+release:
+	@echo "🔄 Building release..."
+	make magic
+	@echo ""
+	@echo "📦 Creating release archive..."
+	@RELEASE_DATE=$$(date +%Y.%m.%d); \
+	RELEASE_NAME="ai-files-$$RELEASE_DATE"; \
+	RELEASE_TAG="$$RELEASE_DATE"; \
+	RELEASE_ZIP="$$RELEASE_NAME.zip"; \
+	echo "Release: $$RELEASE_NAME"; \
+	echo "Tag: $$RELEASE_TAG"; \
+	cd dist && zip -qr "../$$RELEASE_ZIP" . && cd ..; \
+	echo "✅ Created archive: $$RELEASE_ZIP"; \
+	echo ""; \
+	echo "🏷️  Creating git tag $$RELEASE_TAG..."; \
+	if git rev-parse "$$RELEASE_TAG" >/dev/null 2>&1; then \
+		echo "Warning: Tag $$RELEASE_TAG already exists, skipping tag creation"; \
+	else \
+		git tag -a "$$RELEASE_TAG" -m "Release $$RELEASE_NAME"; \
+		git push origin "$$RELEASE_TAG"; \
+		echo "✅ Tag created and pushed: $$RELEASE_TAG"; \
+	fi; \
+	echo ""; \
+	echo "📤 Creating GitHub release..."; \
+	if gh release view "$$RELEASE_TAG" >/dev/null 2>&1; then \
+		echo "Release already exists, uploading asset..."; \
+		gh release upload "$$RELEASE_TAG" "$$RELEASE_ZIP" --clobber; \
+	else \
+		gh release create "$$RELEASE_TAG" \
+			--title "$$RELEASE_NAME" \
+			--generate-notes \
+			"$$RELEASE_ZIP"; \
+	fi; \
+	echo "✅ Release created: $$RELEASE_TAG"; \
+	echo ""; \
+	echo "🎉 Release complete!"; \
+	echo "   Archive: $$RELEASE_ZIP"; \
+	echo "   Tag: $$RELEASE_TAG"; \
+	echo "   URL: $$(gh release view $$RELEASE_TAG --json url -q .url)"

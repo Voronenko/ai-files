@@ -1,0 +1,131 @@
+# Auto-generated release notes configuration for AI Files
+# See: https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - no-changelog
+    authors:
+      - dependabot[bot]
+      - renovate[bot]
+
+categories:
+  - title: ✨ New Features
+    labels:
+      - feature
+      - enhancement
+      - 'new feature'
+    exclude:
+      - 'internal'
+      - 'refactor'
+
+  - title: 🐛 Bug Fixes
+    labels:
+      - fix
+      - bugfix
+      - 'bug fix'
+      - regression
+
+  - title: 🔧 Improvements
+    labels:
+      - improvement
+      - refactor
+      - optimization
+      - performance
+
+  - title: 📚 Documentation
+    labels:
+      - docs
+      - documentation
+
+  - title: 🧪 Testing
+    labels:
+      - test
+      - testing
+
+  - title: 🔨 Internal
+    labels:
+      - internal
+      - ci
+      - build
+      - dependencies
+
+  - title: 🎨 Styles
+    labels:
+      - style
+
+  - title: ♻️ Refactoring
+    labels:
+      - refactor
+
+  - title: ⚡ Performance
+    labels:
+      - performance
+      - optimization
+
+# Change title for auto-generated release notes
+# Uses the tag name (YYYY.MM.DD format) as the title
+change-title: 'Release {{ .Tag }}'
+
+# Template for the release notes body
+note-template: |
+  ## AI Files {{ .Tag }}
+
+  **Release Date:** {{ .Date }}
+
+  {{ if .PreviousTag }}
+  **Previous Release:** [{{ .PreviousTag }}](../../{{ .PreviousTag }})
+  {{ end }}
+
+  {{ if .Milestones }}
+  {{ range .Milestones }}
+  🎯 Milestone: **{{ .Title }}**
+  {{ end }}
+  {{ end }}
+
+  {{ if .Categories }}
+  ### What's Changed
+
+  {{ range .Categories }}
+  {{ if .Items }}
+  #### {{ .Title }}
+
+  {{ range .Items }}
+  - {{ .Content }} [{{ .SHA | truncate 8 }}]({{ .PRURL }})
+  {{ end }}
+
+  {{ end }}
+  {{ end }}
+  {{ else }}
+  No changes in this release.
+  {{ end }}
+
+  {{ if .Contributors }}
+  ### Contributors
+
+  {{ range .Contributors }}
+  - @{{ .Login }}
+  {{ end }}
+  {{ end }}
+
+  ---
+
+  **Full Changelog**: https://github.com/{{ .Owner }}/{{ .Repository }}/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+# Configuration for version tag matching
+# Matches YYYY.MM.DD format (e.g., 2026.04.25)
+tag-filter: '^\d{4}\.\d{2}\.\d{2}$'
+
+# Exclude these commit types from release notes
+exclude-commit-types:
+  - chore
+  - wip
+  - 'WIP'
+  - 'work in progress'
+
+# Custom configuration for finding previous release
+# Since we use YYYY.MM.DD tags, we want to find the most recent tag
+previous-tag:
+  query: 'refs/tags/[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]'
+  sort-desc: true
