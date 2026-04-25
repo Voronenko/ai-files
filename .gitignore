@@ -8,3 +8,4 @@ dist/*
 .specify
 .cache
 bin/goose
+docs/plans/

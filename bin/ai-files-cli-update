@@ -1,20 +1,24 @@
 #!/bin/bash
 
-# ai-files-cli-update - Update .ai-files/, .claude/, .kilo/, .roo/ directories from dist/
+# ai-files-cli-update - Update ai-files directories with subcommands
 # This script handles:
-# - Recursive copying of all files and folders
-# - Preserving relative symlinks
-# - Detecting locally modified files and asking for confirmation with diff
-# - Tracking and reporting copied, deleted, and skipped files
+# - files: Update .ai-files/ content from dist/
+# - link-claude: Create .claude/ folder with symlinks to .ai-files/
+# - link-kilo: Create .kilo/ folder with symlinks to .ai-files/
+# - link-specify: Create .specify symlink to .ai-files/dotspecify/
 #
-# Usage: ai-files-cli-update [options]
-# Options:
-#   -s, --source DIR    Source directory (default: ./dist)
-#   -y, --yes           Automatically overwrite all modified files
-#   -n, --no            Skip all modified files (no overwrite)
-#   --dry-run           Show what would be done without making changes
+# Usage: ai-files-cli-update <subcommand> [options]
+# Subcommands:
+#   files       Update .ai-files/ content from dist/
+#   link-claude Create .claude/ folder with symlinks to .ai-files/
+#   link-kilo   Create .kilo/ folder with symlinks to .ai-files/
+#   link-specify Create .specify symlink to .ai-files/dotspecify/
+#   help        Show this help message
+#
+# Global options (apply to all subcommands):
 #   -v, --verbose       Enable verbose output
-#   -h, --help          Show this help message
+#   -d, --dry-run       Show what would be done without making changes
+#   -y, --yes           Auto-confirm all prompts
 
 set -euo pipefail
 
@@ -38,8 +42,8 @@ SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 # Default source directory (relative to script location)
 SOURCE_DIR="${SELF_DIR}/../dist"
 
-# Target directories to update
-TARGET_DIRS=(".ai-files" ".claude" ".kilo" ".roo")
+# Target directories to update (for files subcommand)
+TARGET_DIRS=(".ai-files" ".claude" ".kilo")
 
 # Folders that should be merged (not fully replaced) within target directories
 MERGE_FOLDERS=("commands" "hooks" "skills")
@@ -56,11 +60,13 @@ declare -a PRESERVED_SYMLINKS=()
 declare -a TARGET_ONLY_TO_KEEP=()
 declare -a TARGET_ONLY_TO_DELETE=()
 
-# Options
+# Global options
 AUTO_YES=false
-AUTO_NO=false
 DRY_RUN=false
 VERBOSE=false
+
+# Source directory override
+SOURCE_DIR_OVERRIDE=""
 
 # Functions for colored output
 print_info() {
@@ -82,6 +88,56 @@ print_error() {
 print_diff() {
     echo -e "${CYAN}📋 Diff:${NC}"
     diff -u "$1" "$2" || true
+}
+
+# Get git repository root
+detect_git_root() {
+    local current_dir="$(pwd)"
+    while [[ "$current_dir" != "/" ]]; do
+        if [[ -d "$current_dir/.git" ]]; then
+            echo "$current_dir"
+            return 0
+        fi
+        current_dir="$(dirname "$current_dir")"
+    done
+    return 1
+}
+
+# Check if a path is protected (should not be deleted)
+is_protected_path() {
+    local filepath="$1"
+    local protected_path
+
+    for protected_path in "${PROTECTED_DIRS[@]}"; do
+        # Check if filepath starts with protected path
+        if [[ "$filepath" == "$protected_path"* ]]; then
+            return 0  # Protected
+        fi
+    done
+    return 1  # Not protected
+}
+
+# Check if a target directory is a symlink pointing to .ai-files/dot*
+# Returns 0 (true) if it's a managed symlink, 1 (false) otherwise
+is_managed_symlink() {
+    local target_dir="$1"
+    local target_path="$GIT_ROOT/$target_dir"
+
+    # Check if target exists and is a symlink
+    if [[ ! -L "$target_path" ]]; then
+        return 1  # Not a symlink, needs processing
+    fi
+
+    # Get the symlink target
+    local link_target
+    link_target="$(readlink "$target_path")"
+
+    # Check if it points to .ai-files/dot* (relative or absolute)
+    if [[ "$link_target" == ".ai-files/dot"* ]] || [[ "$link_target" == *"/.ai-files/dot"* ]]; then
+        return 0  # Managed by .ai-files structure
+    fi
+
+    return 1  # Not a managed symlink
 }
 
 # Detect files that exist only in target (not in source)
@@ -143,7 +199,7 @@ prompt_target_only_files() {
             # Auto-keep mode (default: keep, don't delete)
             print_info "Auto-keeping (yes flag set): $filepath"
             to_keep+=("$filepath")
-        elif [[ "$AUTO_NO" == "true" ]]; then
+        elif [[ "$AUTO_YES" == "false" ]]; then
             # This mode doesn't really make sense for target-only files
             # Treat same as auto-keep
             print_info "Keeping: $filepath"
@@ -176,141 +232,6 @@ prompt_target_only_files() {
     TARGET_ONLY_TO_DELETE=("${to_delete[@]}")
 }
 
-# Check if a path is protected (should not be deleted)
-is_protected_path() {
-    local filepath="$1"
-    local protected_path
-
-    for protected_path in "${PROTECTED_DIRS[@]}"; do
-        # Check if filepath starts with protected path
-        if [[ "$filepath" == "$protected_path"* ]]; then
-            return 0  # Protected
-        fi
-    done
-    return 1  # Not protected
-}
-
-# Check if a target directory is a symlink pointing to .ai-files/dot*
-# Returns 0 (true) if it's a managed symlink, 1 (false) otherwise
-is_managed_symlink() {
-    local target_dir="$1"
-    local target_path="$GIT_ROOT/$target_dir"
-
-    # Check if target exists and is a symlink
-    if [[ ! -L "$target_path" ]]; then
-        return 1  # Not a symlink, needs processing
-    fi
-
-    # Get the symlink target
-    local link_target
-    link_target="$(readlink "$target_path")"
-
-    # Check if it points to .ai-files/dot* (relative or absolute)
-    if [[ "$link_target" == ".ai-files/dot"* ]] || [[ "$link_target" == *"/.ai-files/dot"* ]]; then
-        return 0  # Managed by .ai-files structure
-    fi
-
-    return 1  # Not a managed symlink
-}
-
-# Show usage
-show_usage() {
-    cat << EOF
-Usage: $(basename "$0") [OPTIONS]
-
-Update .ai-files/, .claude/, .kilo/, .roo/ directories from dist/
-
-Options:
-    -s, --source DIR    Source directory (default: ./dist)
-    -y, --yes           Automatically overwrite all modified files
-    -n, --no            Skip all modified files (no overwrite)
-    --dry-run           Show what would be done without making changes
-    -v, --verbose       Enable verbose output
-    -h, --help          Show this help message
-
-Examples:
-    $(basename "$0")                    # Interactive update
-    $(basename "$0") -y                  # Auto-overwrite all changes
-    $(basename "$0") -n                  # Skip all local changes
-    $(basename "$0") --dry-run           # Preview changes only
-
-EOF
-}
-
-# Parse command line arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        -h|--help)
-            show_usage
-            exit 0
-            ;;
-        -s|--source)
-            SOURCE_DIR="$2"
-            shift 2
-            ;;
-        -y|--yes)
-            AUTO_YES=true
-            shift
-            ;;
-        -n|--no)
-            AUTO_NO=true
-            shift
-            ;;
-        --dry-run)
-            DRY_RUN=true
-            shift
-            ;;
-        -v|--verbose)
-            VERBOSE=true
-            shift
-            ;;
-        *)
-            print_error "Unknown option: $1"
-            show_usage
-            exit 1
-            ;;
-    esac
-done
-
-# Resolve absolute path for source directory
-SOURCE_DIR="$(cd "$SOURCE_DIR" && pwd)"
-
-# Get git repository root
-detect_git_root() {
-    local current_dir="$(pwd)"
-    while [[ "$current_dir" != "/" ]]; do
-        if [[ -d "$current_dir/.git" ]]; then
-            echo "$current_dir"
-            return 0
-        fi
-        current_dir="$(dirname "$current_dir")"
-    done
-    return 1
-}
-
-GIT_ROOT=$(detect_git_root)
-if [[ $? -ne 0 ]]; then
-    print_error "Not in a git repository!"
-    exit 1
-fi
-
-print_info "Git repository root: $GIT_ROOT"
-print_info "Source directory: $SOURCE_DIR"
-
-# Check if source directory exists
-if [[ ! -d "$SOURCE_DIR" ]]; then
-    print_error "Source directory $SOURCE_DIR does not exist!"
-    print_info "Run 'make build' first to create the distribution."
-    exit 1
-fi
-
-# Check if target directories exist in source
-for dir in "${TARGET_DIRS[@]}"; do
-    if [[ ! -d "$SOURCE_DIR/$dir" ]]; then
-        print_warning "Source directory $dir not found in dist/ - skipping"
-    fi
-done
-
 # Function to copy file with symlink handling
 copy_file_or_symlink() {
     local src="$1"
@@ -322,6 +243,15 @@ copy_file_or_symlink() {
         # It's a symlink - preserve it
         local link_target
         link_target="$(readlink "$src")"
+
+        # DEBUG: Check for problematic symlink targets
+        if [[ "$link_target" == ".ai-files/dotkilo" ]]; then
+            echo "FOUND PROBLEMATIC IN copy_file_or_symlink:"
+            echo "  link_target: $link_target"
+            echo "  rel_path: $rel_path"
+            echo "  dest: $dest"
+            echo "  src: $src"
+        fi
 
         if [[ "$DRY_RUN" == "false" ]]; then
             ln -sf "$link_target" "$dest"
@@ -352,12 +282,6 @@ copy_file_or_symlink() {
                     fi
                 else
                     echo "  📝 Would overwrite: $rel_path"
-                fi
-            elif [[ "$AUTO_NO" == "true" ]]; then
-                print_info "Skipping (no flag set)"
-                SKIPPED_FILES+=("$rel_path (modified locally)")
-                if [[ "$VERBOSE" == "true" ]]; then
-                    echo "  ⏭️  Skipped: $rel_path"
                 fi
             else
                 # Interactive mode - show diff and ask
@@ -487,11 +411,6 @@ process_directory() {
     fi
 
     # Use rsync to copy files and detect changes
-    # --archive: preserve permissions, times, symbolic links
-    # --itemize-changes: show what changed
-    # --delete: delete files in dest that aren't in src (NOT for merge folders)
-    # --dry-run: don't actually make changes
-    # --verbose: show detailed information
     local rsync_opts="--archive --itemize-changes"
     # Only add --delete for non-merge folders
     if [[ "$is_merge_folder" == "false" ]]; then
@@ -521,8 +440,6 @@ process_directory() {
         [[ -z "$line" ]] && continue
 
         # Parse rsync itemize format
-        # Format: <YXcstpoguax> <file>
-        # We care about files that are modified, deleted, or new
         local flags="${line:0:11}"
         local filepath="${line:12}"
 
@@ -547,8 +464,7 @@ process_directory() {
             continue
         fi
 
-        # Check if file was modified (flags indicate change)
-        # f = file, * = changed, > = file is newer
+        # Check if file was modified
         if [[ "$flags" == *f* ]] && [[ "$flags" =~ [\*\<\>] ]]; then
             modified_files+=("$base_path/$filepath")
             continue
@@ -600,7 +516,7 @@ process_directory() {
         done
 
         # Handle actually modified files interactively if not in auto mode
-        if [[ ${#actually_modified[@]} -gt 0 && "$AUTO_YES" == "false" && "$AUTO_NO" == "false" ]]; then
+        if [[ ${#actually_modified[@]} -gt 0 && "$AUTO_YES" == "false" ]]; then
             for filepath in "${actually_modified[@]}"; do
                 local src_file="$src_dir/${filepath#$base_path/}"
                 local dest_file="$dest_dir/${filepath#$base_path/}"
@@ -653,194 +569,1275 @@ process_directory() {
                     fi
                 fi
             done
-        elif [[ ${#actually_modified[@]} -gt 0 && "$AUTO_NO" == "true" ]]; then
-            # Skip all modified files
-            for filepath in "${actually_modified[@]}"; do
-                SKIPPED_FILES+=("$filepath (modified locally)")
-                if [[ "$VERBOSE" == "true" ]]; then
-                    echo "  ⏭️  Skipped: $filepath"
-                fi
-            done
         fi
     fi
 }
 
-# Main update process
-echo ""
-echo "🔄 Starting update process..."
-echo ""
-
-for target_dir in "${TARGET_DIRS[@]}"; do
-    src_path="$SOURCE_DIR/$target_dir"
-    dest_path="$GIT_ROOT/$target_dir"
-
-    if [[ ! -e "$src_path" && ! -L "$src_path" ]]; then
-        print_warning "Skipping $target_dir (not found in source)"
-        continue
+# Show final summary
+show_final_summary() {
+    echo ""
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_warning "DRY RUN COMPLETED - No files were actually modified"
+    else
+        print_success "Update completed successfully!"
     fi
 
-    # Check if source is a symlink (should be recreated as symlink in target)
-    if [[ -L "$src_path" ]]; then
-        src_link_target="$(readlink "$src_path")"
+    echo ""
+    echo "📋 Summary:"
+    echo ""
 
-        # Check if it's a managed symlink (points to .ai-files/dot*)
-        if [[ "$src_link_target" == ".ai-files/dot"* ]] || [[ "$src_link_target" == *"/.ai-files/dot"* ]]; then
-            # Check if target already exists and is a managed symlink
-            if is_managed_symlink "$target_dir"; then
-                if [[ "$VERBOSE" == "true" ]]; then
-                    echo "  🔗 Managed symlink exists: $target_dir"
+    # Show statistics
+    local total_copied=${#COPIED_FILES[@]}
+    local total_deleted=${#DELETED_FILES[@]}
+    local total_skipped=${#SKIPPED_FILES[@]}
+    local total_created=${#CREATED_DIRS[@]}
+    local total_symlinks=${#PRESERVED_SYMLINKS[@]}
+
+    if [[ $total_copied -gt 0 ]]; then
+        echo "📄 Files copied/updated ($total_copied):"
+        for file in "${COPIED_FILES[@]}"; do
+            echo "   • $file"
+        done
+        echo ""
+    fi
+
+    if [[ $total_deleted -gt 0 ]]; then
+        echo "🗑️  Files deleted ($total_deleted):"
+        for file in "${DELETED_FILES[@]}"; do
+            echo "   • $file"
+        done
+        echo ""
+    fi
+
+    if [[ $total_skipped -gt 0 ]]; then
+        echo "⏭️  Files skipped (modified locally) ($total_skipped):"
+        for file in "${SKIPPED_FILES[@]}"; do
+            echo "   • $file"
+        done
+        echo ""
+    fi
+
+    if [[ ${#TARGET_ONLY_TO_DELETE[@]} -gt 0 ]]; then
+        echo "🗑️  Target-only files deleted (${#TARGET_ONLY_TO_DELETE[@]}):"
+        for file in "${TARGET_ONLY_TO_DELETE[@]}"; do
+            echo "   • $file"
+        done
+        echo ""
+    fi
+
+    if [[ ${#TARGET_ONLY_TO_KEEP[@]} -gt 0 ]]; then
+        echo "✓ Target-only files preserved (${#TARGET_ONLY_TO_KEEP[@]}):"
+        for file in "${TARGET_ONLY_TO_KEEP[@]}"; do
+            echo "   • $file"
+        done
+        echo ""
+    fi
+
+    if [[ $total_created -gt 0 ]]; then
+        echo "📁 Directories created ($total_created):"
+        for dir in "${CREATED_DIRS[@]}"; do
+            echo "   • $dir"
+        done
+        echo ""
+    fi
+
+    if [[ $total_symlinks -gt 0 ]]; then
+        echo "🔗 Symlinks preserved ($total_symlinks):"
+        for link in "${PRESERVED_SYMLINKS[@]}"; do
+            echo "   • $link"
+        done
+        echo ""
+    fi
+
+    if [[ $total_copied -eq 0 && $total_deleted -eq 0 && $total_skipped -eq 0 && $total_created -eq 0 && $total_symlinks -eq 0 ]]; then
+        echo "✨ No changes needed - all files are up to date"
+        echo ""
+    fi
+
+    echo "📂 Source: $SOURCE_DIR"
+    echo "📂 Target: $GIT_ROOT"
+    echo ""
+
+    if [[ "$DRY_RUN" == "false" ]]; then
+        print_info "Update complete! You may want to review the changes with git."
+    else
+        print_info "Run without --dry-run to apply these changes."
+    fi
+}
+
+# =============================================================================
+# Subcommand: files
+# =============================================================================
+
+show_files_help() {
+    cat << EOF
+Usage: $(basename "$0") files [OPTIONS]
+
+Update .ai-files/, .claude/, .kilo/ directories from dist/
+
+Options:
+    -s, --source DIR    Source directory (default: ./dist)
+    -y, --yes           Automatically overwrite all modified files
+    -d, --dry-run       Show what would be done without making changes
+    -v, --verbose       Enable verbose output
+    -h, --help          Show this help message
+
+Examples:
+    $(basename "$0") files                    # Interactive update
+    $(basename "$0") files -y                  # Auto-overwrite all changes
+    $(basename "$0") files --dry-run           # Preview changes only
+    $(basename "$0") files -s /path/to/dist    # Use custom source
+
+EOF
+}
+
+cmd_files() {
+    local source_dir="$SOURCE_DIR"
+
+    # Parse files-specific options (and process global options if not already)
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_files_help
+                exit 0
+                ;;
+            -s|--source)
+                source_dir="$2"
+                shift 2
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            -d|--dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            -y|--yes)
+                AUTO_YES=true
+                shift
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_files_help
+                exit 1
+                ;;
+        esac
+    done
+
+    # Resolve absolute path for source directory
+    source_dir="$(cd "$source_dir" && pwd)"
+
+    # Get git repository root
+    GIT_ROOT=$(detect_git_root)
+    if [[ $? -ne 0 ]]; then
+        print_error "Not in a git repository!"
+        exit 1
+    fi
+
+    print_info "Git repository root: $GIT_ROOT"
+    print_info "Source directory: $source_dir"
+
+    # Check if source directory exists
+    if [[ ! -d "$source_dir" ]]; then
+        print_error "Source directory $source_dir does not exist!"
+        print_info "Run 'make build' first to create the distribution."
+        exit 1
+    fi
+
+    # Check if target directories exist in source
+    for dir in "${TARGET_DIRS[@]}"; do
+        if [[ ! -d "$source_dir/$dir" ]]; then
+            print_warning "Source directory $dir not found in dist/ - skipping"
+        fi
+    done
+
+    # Main update process
+    echo ""
+    echo "🔄 Starting files update..."
+    echo ""
+
+    for target_dir in "${TARGET_DIRS[@]}"; do
+        src_path="$source_dir/$target_dir"
+        dest_path="$GIT_ROOT/$target_dir"
+
+        if [[ ! -e "$src_path" && ! -L "$src_path" ]]; then
+            print_warning "Skipping $target_dir (not found in source)"
+            continue
+        fi
+
+        # Check if source is a symlink (should be recreated as symlink in target)
+        if [[ -L "$src_path" ]]; then
+            src_link_target="$(readlink "$src_path")"
+
+            # Check if it's a managed symlink (points to .ai-files/dot*)
+            if [[ "$src_link_target" == ".ai-files/dot"* ]] || [[ "$src_link_target" == *"/.ai-files/dot"* ]]; then
+                # Check if target already exists and is a managed symlink
+                if is_managed_symlink "$target_dir"; then
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        echo "  🔗 Managed symlink exists: $target_dir"
+                    fi
+                    # Update the symlink target if needed
+                    if [[ "$DRY_RUN" == "false" ]]; then
+                        ln -sf "$src_link_target" "$dest_path"
+                    fi
+                    continue
                 fi
-                # Update the symlink target if needed
-                if [[ "$DRY_RUN" == "false" ]]; then
-                    ln -sf "$src_link_target" "$dest_path"
+
+                # Target doesn't exist or is not a managed symlink
+                # If target doesn't exist, create the symlink
+                if [[ ! -e "$dest_path" && ! -L "$dest_path" ]]; then
+                    print_info "Creating managed symlink: $target_dir -> $src_link_target"
+                    if [[ "$DRY_RUN" == "false" ]]; then
+                        mkdir -p "$(dirname "$dest_path")"
+                        ln -sf "$src_link_target" "$dest_path"
+                        PRESERVED_SYMLINKS+=("$target_dir -> $src_link_target")
+                    fi
+                    continue
                 fi
-                continue
+
+                # Target exists but is not a symlink - it's a custom directory
+                print_info "Processing custom directory: $target_dir"
+                process_directory "$src_path" "$dest_path" "$target_dir"
+            else
+                # Source is a symlink but not to .ai-files/dot*
+                print_info "Processing symlink (non-managed): $target_dir"
+                process_directory "$src_path" "$dest_path" "$target_dir"
             fi
-
-            # Target doesn't exist or is not a managed symlink
-            # If target doesn't exist, create the symlink
-            if [[ ! -e "$dest_path" && ! -L "$dest_path" ]]; then
-                print_info "Creating managed symlink: $target_dir -> $src_link_target"
-                if [[ "$DRY_RUN" == "false" ]]; then
-                    mkdir -p "$(dirname "$dest_path")"
-                    ln -sf "$src_link_target" "$dest_path"
-                    PRESERVED_SYMLINKS+=("$target_dir -> $src_link_target")
-                fi
-                continue
-            fi
-
-            # Target exists but is not a symlink - it's a custom directory
-            print_info "Processing custom directory: $target_dir"
-            process_directory "$src_path" "$dest_path" "$target_dir"
         else
-            # Source is a symlink but not to .ai-files/dot*
-            print_info "Processing symlink (non-managed): $target_dir"
+            # Source is a directory, process normally
+            print_info "Processing $target_dir..."
             process_directory "$src_path" "$dest_path" "$target_dir"
         fi
-    else
-        # Source is a directory, process normally
-        print_info "Processing $target_dir..."
-        process_directory "$src_path" "$dest_path" "$target_dir"
-    fi
 
-    # Also process merge subdirectories separately (commands, hooks, skills)
-    for merge_folder in "${MERGE_FOLDERS[@]}"; do
-        merge_src="$src_path/$merge_folder"
-        merge_dest="$dest_path/$merge_folder"
-        merge_base="$target_dir/$merge_folder"
+        # Also process merge subdirectories separately (commands, hooks, skills)
+        for merge_folder in "${MERGE_FOLDERS[@]}"; do
+            merge_src="$src_path/$merge_folder"
+            merge_dest="$dest_path/$merge_folder"
+            merge_base="$target_dir/$merge_folder"
 
-        # Only process if merge folder exists in source
-        if [[ -d "$merge_src" ]]; then
-            # Skip if merge folder is a symlink to .ai-files/*
-            if [[ -L "$merge_dest" ]]; then
-                merge_link_target="$(readlink "$merge_dest")"
-                if [[ "$merge_link_target" == *".ai-files/"* ]]; then
+            # Only process if merge folder exists in source
+            if [[ -d "$merge_src" ]]; then
+                # Skip if merge folder is a symlink to .ai-files/*
+                if [[ -L "$merge_dest" ]]; then
+                    merge_link_target="$(readlink "$merge_dest")"
+                    if [[ "$merge_link_target" == *".ai-files/"* ]]; then
+                        if [[ "$VERBOSE" == "true" ]]; then
+                            echo "  🔗 Skipping managed symlink: $merge_base (points to .ai-files)"
+                        fi
+                        continue
+                    fi
+                fi
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  ↳ Processing merge subfolder: $merge_base"
+                fi
+                process_directory "$merge_src" "$merge_dest" "$merge_base"
+
+                # Also explicitly ensure symlinks are copied (rsync may skip them)
+                # Walk through source merge folder and copy symlinks that don't exist in dest
+                while IFS= read -r -d '' entry; do
+                    # Skip if entry is the merge_src itself (edge case in path manipulation)
+                    [[ "$entry" == "$merge_src" ]] && continue
+
+                    local entry_rel="${entry#$merge_src/}"
+                    local src_entry="$merge_src/$entry_rel"
+                    local dest_entry="$merge_dest/$entry_rel"
+
+                    # Skip if entry is the merge_src itself (edge case in path manipulation)
+                    # This can happen when find returns an entry that exactly equals merge_src
+                    [[ "$entry" == "$merge_src" ]] && continue
+
+                    # Skip if not a symlink
+                    [[ -L "$src_entry" ]] || continue
+
+                    # Skip if destination already exists as symlink with same target
+                    if [[ -L "$dest_entry" ]]; then
+                        local src_target="$(readlink "$src_entry")"
+                        local dest_target="$(readlink "$dest_entry")"
+                        [[ "$src_target" == "$dest_target" ]] && continue
+                    fi
+
+                    # Copy the symlink
+                if [[ "$DRY_RUN" == "false" ]]; then
+                    # Create parent directory if needed
+                    local parent_dir="$(dirname "$dest_entry")"
+                    mkdir -p "$parent_dir"
+
+                    # Get the symlink target
+                    local link_target="$(readlink "$src_entry")"
+
+                    # DEBUG: Check for problematic symlink targets in merge processing
+                    if [[ "$link_target" == ".ai-files/dotkilo" ]]; then
+                        echo "FOUND PROBLEMATIC IN MERGE:"
+                        echo "  link_target: $link_target"
+                        echo "  entry_rel: $entry_rel"
+                        echo "  merge_base: $merge_base"
+                        echo "  dest_entry: $dest_entry"
+                    fi
+
+                    ln -sf "$link_target" "$dest_entry"
+                    PRESERVED_SYMLINKS+=("$merge_base/$entry_rel -> $link_target")
                     if [[ "$VERBOSE" == "true" ]]; then
-                        echo "  🔗 Skipping managed symlink: $merge_base (points to .ai-files)"
+                        echo "  🔗 Copied symlink: $merge_base/$entry_rel -> $link_target"
+                    fi
+                    else
+                        echo "  🔗 Would copy symlink: $merge_base/$entry_rel -> $(readlink "$src_entry")"
+                    fi
+                done < <(find "$merge_src" -mindepth 1 -print0 | sort -z)
+            fi
+        done
+
+        # Also process symlinks in dot* subdirectories (dotclaude, dotkilo)
+        # These contain symlinks that need to be preserved
+        for dotdir in dotclaude dotkilo; do
+            local dotdir_src="$src_path/$dotdir"
+            local dotdir_dest="$dest_path/$dotdir"
+
+            # Only process if dotdir exists in source
+            [[ -d "$dotdir_src" ]] || continue
+
+            # Skip if dotdir_dest is a symlink to .ai-files/*
+            if [[ -L "$dotdir_dest" ]]; then
+                local dotdir_link_target="$(readlink "$dotdir_dest")"
+                if [[ "$dotdir_link_target" == *".ai-files/"* ]]; then
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        echo "  🔗 Skipping managed symlink: $target_dir/$dotdir (points to .ai-files)"
                     fi
                     continue
                 fi
             fi
+
             if [[ "$VERBOSE" == "true" ]]; then
-                echo "  ↳ Processing merge subfolder: $merge_base"
+                echo "  ↳ Processing symlinks in $target_dir/$dotdir"
             fi
-            process_directory "$merge_src" "$merge_dest" "$merge_base"
-        fi
+
+            # DEBUG UNCONDITIONAL - track all dot* processing
+            echo "DEBUG: About to process dotdir=$dotdir in $target_dir"
+            echo "  dotdir_src=$dotdir_src"
+            echo "  dotdir_dest=$dotdir_dest"
+
+            # Walk through dotdir and copy symlinks
+            while IFS= read -r -d '' entry; do
+                # Skip if entry is the dotdir itself (edge case in path manipulation)
+                [[ "$entry" == "$dotdir_src" ]] && continue
+
+                local entry_rel="${entry#$dotdir_src/}"
+
+                # DEBUG: ALL entries - track what's being processed
+                echo "DEBUG dotdir=$dotdir: Processing entry"
+                echo "  entry=$entry"
+                echo "  entry_rel=$entry_rel"
+                echo "  src_entry=$dotdir_src/$entry_rel"
+                echo "  dest_entry=$dotdir_dest/$entry_rel"
+
+                # Skip if entry_rel is empty or equals dotdir name (prevents dotkilo/dotkilo)
+                [[ -z "$entry_rel" ]] && continue
+                [[ "$entry_rel" == "$dotdir" ]] && continue
+
+                local src_entry="$dotdir_src/$entry_rel"
+                local dest_entry="$dotdir_dest/$entry_rel"
+
+                # Skip if not a symlink
+                [[ -L "$src_entry" ]] || continue
+
+                # Skip if destination already exists as symlink with same target
+                if [[ -L "$dest_entry" ]]; then
+                    local src_target="$(readlink "$src_entry")"
+                    local dest_target="$(readlink "$dest_entry")"
+                    [[ "$src_target" == "$dest_target" ]] && continue
+                fi
+
+                # Copy the symlink
+                if [[ "$DRY_RUN" == "false" ]]; then
+                    # Create parent directory if needed
+                    local parent_dir="$(dirname "$dest_entry")"
+                    mkdir -p "$parent_dir"
+
+                    # Get the symlink target
+                    local link_target="$(readlink "$src_entry")"
+
+                    # DEBUG: ALL symlinks in dot* processing - check for dotkilo/dotkilo pattern
+                    if [[ "$entry_rel" == "dotkilo" ]]; then
+                        echo "FOUND dotkilo IN entry_rel:"
+                        echo "  dotdir: $dotdir"
+                        echo "  entry_rel: $entry_rel"
+                        echo "  link_target: $link_target"
+                        echo "  dest_entry: $dest_entry"
+                    fi
+                    # Also check if dest_entry contains dotkilo/dotkilo
+                    case "$dest_entry" in
+                        */dotkilo/dotkilo)
+                            echo "FOUND dotkilo/dotkilo PATTERN IN dest_entry:"
+                            echo "  dotdir: $dotdir"
+                            echo "  entry_rel: $entry_rel"
+                            echo "  link_target: $link_target"
+                            echo "  dest_entry: $dest_entry"
+                            ;;
+                    esac
+
+                    ln -sf "$link_target" "$dest_entry"
+                    PRESERVED_SYMLINKS+=("$target_dir/$dotdir/$entry_rel -> $link_target")
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        echo "  🔗 Copied symlink: $target_dir/$dotdir/$entry_rel -> $link_target"
+                    fi
+                else
+                    echo "  🔗 Would copy symlink: $target_dir/$dotdir/$entry_rel -> $(readlink "$src_entry")"
+                fi
+            done < <(find "$dotdir_src" -mindepth 1 -print0 | sort -z)
+        done
+        echo ""
     done
+
+    show_final_summary
+}
+
+# =============================================================================
+# Subcommand: link-claude
+# =============================================================================
+
+show_link_claude_help() {
+    cat << EOF
+Usage: $(basename "$0") link-claude [OPTIONS]
+
+Create .claude/ folder in repository root with symlinks to .ai-files/
+
+This command analyzes .ai-files/dotclaude/ structure and creates an identical
+structure under .claude/ where symlinks point to the resolved targets in
+.ai-files/.
+
+For example:
+  .ai-files/dotclaude/commands/foo.md -> ../../commands/bar.md
+  Becomes:
+  .claude/commands/foo.md -> .ai-files/commands/bar.md
+
+Options:
+    -d, --dry-run       Show what would be done without making changes
+    -v, --verbose       Enable verbose output
+    -y, --yes           Auto-confirm all prompts
+    -h, --help          Show this help message
+
+Examples:
+    $(basename "$0") link-claude              # Interactive mode
+    $(basename "$0") link-claude --dry-run    # Preview changes
+    $(basename "$0") link-claude -y           # Auto-confirm all
+
+EOF
+}
+
+# Process a single entry in dotclaude for link-claude
+process_dotclaude_entry() {
+    local source_root="$1"  # .ai-files/dotclaude
+    local target_root="$2"  # .claude
+    local relative_path="$3"  # e.g., commands/foo.md
+    local source_file="$source_root/$relative_path"
+    local target_file="$target_root/$relative_path"
+
+    # Derive display name from target_root (e.g., ".claude" or ".kilo")
+    local target_display="${target_root#$GIT_ROOT/}"
+
+    # Check if source exists
+    if [[ ! -e "$source_file" && ! -L "$source_file" ]]; then
+        return
+    fi
+
+    # Skip directories - they will be created implicitly when processing files
+    if [[ -d "$source_file" && ! -L "$source_file" ]]; then
+        return
+    fi
+
+    # Create target directory if needed
+    local target_dir="$(dirname "$target_file")"
+    if [[ ! -d "$target_dir" ]]; then
+        if [[ "$DRY_RUN" == "false" ]]; then
+            mkdir -p "$target_dir"
+            CREATED_DIRS+=("$target_display/${relative_path%/*}")
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "  📁 Created directory: $target_display/${relative_path%/*}"
+            fi
+        else
+            echo "  📁 Would create directory: $target_display/${relative_path%/*}"
+        fi
+    fi
+
+    # Check if source is a symlink
+    if [[ -L "$source_file" ]]; then
+        local link_target
+        link_target="$(readlink "$source_file")"
+
+        # Resolve relative symlink target
+        local resolved_target
+        if [[ "$link_target" == ../* ]]; then
+            # Calculate resolved target relative to .ai-files/
+            local link_dir="$(dirname "$source_file")"
+            local link_file="$(basename "$link_target")"
+            local link_parent_dir="$(dirname "$link_target")"
+            # Get absolute path of the resolved symlink
+            resolved_target="$(cd "$link_dir/$link_parent_dir" && pwd)/$link_file"
+            # Make it relative to git root
+            resolved_target="${resolved_target#$GIT_ROOT/}"
+        else
+            resolved_target="$link_target"
+        fi
+
+        # Check what already exists at target
+        if [[ -e "$target_file" || -L "$target_file" ]]; then
+            if [[ -L "$target_file" ]]; then
+                local existing_target
+                existing_target="$(readlink "$target_file")"
+                if [[ "$existing_target" == "$resolved_target" ]]; then
+                    # Correct symlink already exists
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        echo "  ✓ Symlink correct: $target_display/$relative_path"
+                    fi
+                    return
+                fi
+            fi
+
+            # Something different exists
+            print_warning "Conflict at $target_display/$relative_path"
+            if [[ "$AUTO_YES" == "true" ]]; then
+                print_info "Auto-replacing (yes flag set)"
+                if [[ "$DRY_RUN" == "false" ]]; then
+                    rm -rf "$target_file"
+                    ln -sf "$resolved_target" "$target_file"
+                    PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $resolved_target")
+                    echo "  🔗 Replaced: $target_display/$relative_path -> $resolved_target"
+                else
+                    PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $resolved_target")
+                    echo "  🔗 Would replace: $target_display/$relative_path -> $resolved_target"
+                fi
+            else
+                echo -n "Replace $target_display/$relative_path with symlink to $resolved_target? [y/N/a/q]: "
+                read -r response
+                case "$response" in
+                    [Yy]*)
+                        if [[ "$DRY_RUN" == "false" ]]; then
+                            rm -rf "$target_file"
+                            ln -sf "$resolved_target" "$target_file"
+                            PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $resolved_target")
+                            echo "  🔗 Replaced: $target_display/$relative_path -> $resolved_target"
+                        else
+                            echo "  🔗 Would replace: $target_display/$relative_path -> $resolved_target"
+                        fi
+                        ;;
+                    [Aa]*)
+                        AUTO_YES=true
+                        if [[ "$DRY_RUN" == "false" ]]; then
+                            rm -rf "$target_file"
+                            ln -sf "$resolved_target" "$target_file"
+                            PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $resolved_target")
+                            echo "  🔗 Replaced: $target_display/$relative_path -> $resolved_target"
+                        else
+                            echo "  🔗 Would replace: $target_display/$relative_path -> $resolved_target"
+                        fi
+                        ;;
+                    [Qq]*)
+                        print_info "Quitting"
+                        exit 0
+                        ;;
+                    *)
+                        SKIPPED_FILES+=("$target_display/$relative_path")
+                        echo "  ⏭️  Skipped: $target_display/$relative_path"
+                        ;;
+                esac
+            fi
+        else
+            # Create new symlink
+            if [[ "$DRY_RUN" == "false" ]]; then
+                ln -sf "$resolved_target" "$target_file"
+                PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $resolved_target")
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  🔗 Created symlink: $target_display/$relative_path -> $resolved_target"
+                fi
+            else
+                PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $resolved_target")
+                echo "  🔗 Would create symlink: $target_display/$relative_path -> $resolved_target"
+            fi
+        fi
+    else
+        # Regular file - link to source dotfolder
+        # Convert source_root to relative path from git root
+        local source_rel="${source_root#$GIT_ROOT/}"
+        local link_target="$source_rel/$relative_path"
+
+        # Check what already exists at target
+        if [[ -e "$target_file" || -L "$target_file" ]]; then
+            if [[ -L "$target_file" ]]; then
+                local existing_target
+                existing_target="$(readlink "$target_file")"
+                if [[ "$existing_target" == "$link_target" ]]; then
+                    # Correct symlink already exists
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        echo "  ✓ Symlink correct: $target_display/$relative_path"
+                    fi
+                    return
+                fi
+            fi
+
+            # Something different exists
+            print_warning "Conflict at $target_display/$relative_path"
+            if [[ "$AUTO_YES" == "true" ]]; then
+                print_info "Auto-replacing (yes flag set)"
+                if [[ "$DRY_RUN" == "false" ]]; then
+                    rm -rf "$target_file"
+                    ln -sf "$link_target" "$target_file"
+                    PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $link_target")
+                    echo "  🔗 Replaced: $target_display/$relative_path -> $link_target"
+                else
+                    PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $link_target")
+                    echo "  🔗 Would replace: $target_display/$relative_path -> $link_target"
+                fi
+            else
+                echo -n "Replace $target_display/$relative_path with symlink to $link_target? [y/N/a/q]: "
+                read -r response
+                case "$response" in
+                    [Yy]*)
+                        if [[ "$DRY_RUN" == "false" ]]; then
+                            rm -rf "$target_file"
+                            ln -sf "$link_target" "$target_file"
+                            PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $link_target")
+                            echo "  🔗 Replaced: $target_display/$relative_path -> $link_target"
+                        else
+                            echo "  🔗 Would replace: $target_display/$relative_path -> $link_target"
+                        fi
+                        ;;
+                    [Aa]*)
+                        AUTO_YES=true
+                        if [[ "$DRY_RUN" == "false" ]]; then
+                            rm -rf "$target_file"
+                            ln -sf "$link_target" "$target_file"
+                            PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $link_target")
+                            echo "  🔗 Replaced: $target_display/$relative_path -> $link_target"
+                        else
+                            echo "  🔗 Would replace: $target_display/$relative_path -> $link_target"
+                        fi
+                        ;;
+                    [Qq]*)
+                        print_info "Quitting"
+                        exit 0
+                        ;;
+                    *)
+                        SKIPPED_FILES+=("$target_display/$relative_path")
+                        echo "  ⏭️  Skipped: $target_display/$relative_path"
+                        ;;
+                esac
+            fi
+        else
+            # Create new symlink
+            if [[ "$DRY_RUN" == "false" ]]; then
+                ln -sf "$link_target" "$target_file"
+                PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $link_target")
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  🔗 Created symlink: $target_display/$relative_path -> $link_target"
+                fi
+            else
+                PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $link_target")
+                echo "  🔗 Would create symlink: $target_display/$relative_path -> $link_target"
+            fi
+        fi
+    fi
+}
+
+cmd_link_claude() {
+    # Parse link-claude-specific options (and process global options if not already)
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_link_claude_help
+                exit 0
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            -d|--dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            -y|--yes)
+                AUTO_YES=true
+                shift
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_link_claude_help
+                exit 1
+                ;;
+        esac
+    done
+
+    # Get git repository root
+    GIT_ROOT=$(detect_git_root)
+    if [[ $? -ne 0 ]]; then
+        print_error "Not in a git repository!"
+        exit 1
+    fi
+
+    local dotclaude_source="$GIT_ROOT/.ai-files/dotclaude"
+    local claude_target="$GIT_ROOT/.claude"
+
+    # Check if .ai-files/dotclaude exists
+    if [[ ! -d "$dotclaude_source" ]]; then
+        print_error ".ai-files/dotclaude not found!"
+        print_info "Run 'ai-files-cli update files' first to sync .ai-files/ from dist/"
+        exit 1
+    fi
+
+    # Check if .claude exists but is a file
+    if [[ -e "$claude_target" && ! -d "$claude_target" && ! -L "$claude_target" ]]; then
+        print_error ".claude exists but is not a directory or symlink!"
+        exit 1
+    fi
+
+    print_info "Git repository root: $GIT_ROOT"
+    print_info "Source: $dotclaude_source"
+    print_info "Target: $claude_target"
+
+    # Main process
     echo ""
+    echo "🔄 Creating .claude/ symlinks..."
+    echo ""
+
+    # Create .claude directory if it doesn't exist
+    if [[ ! -e "$claude_target" ]]; then
+        if [[ "$DRY_RUN" == "false" ]]; then
+            mkdir -p "$claude_target"
+            CREATED_DIRS+=(".claude")
+            echo "  📁 Created directory: .claude"
+        else
+            echo "  📁 Would create directory: .claude"
+        fi
+    fi
+
+    # Traverse dotclaude and create symlinks
+    while IFS= read -r -d '' entry; do
+        local relative_path="${entry#$dotclaude_source/}"
+        process_dotclaude_entry "$dotclaude_source" "$claude_target" "$relative_path"
+    done < <(find "$dotclaude_source" -mindepth 1 -print0 | sort -z)
+
+    # Handle target-only files (files in .claude not in dotclaude)
+    if [[ -d "$claude_target" ]]; then
+        local -a target_only_files=()
+        while IFS= read -r -d '' entry; do
+            local relative_path="${entry#$claude_target/}"
+            local source_file="$dotclaude_source/$relative_path"
+            if [[ ! -e "$source_file" && ! -L "$source_file" ]]; then
+                target_only_files+=(".claude/$relative_path")
+            fi
+        done < <(find "$claude_target" -mindepth 1 -print0 | sort -z)
+
+        if [[ ${#target_only_files[@]} -gt 0 ]]; then
+            if [[ "$AUTO_YES" == "true" ]]; then
+                # Auto-delete target-only files
+                for filepath in "${target_only_files[@]}"; do
+                    local full_path="$GIT_ROOT/$filepath"
+                    if [[ "$DRY_RUN" == "false" ]]; then
+                        rm -rf "$full_path"
+                        DELETED_FILES+=("$filepath")
+                        echo "  🗑️  Deleted: $filepath"
+                    else
+                        echo "  🗑️  Would delete: $filepath"
+                    fi
+                done
+            else
+                # Interactive mode
+                echo ""
+                print_warning "Found ${#target_only_files[@]} file(s) in .claude/ that don't exist in dotclaude:"
+                for filepath in "${target_only_files[@]}"; do
+                    echo ""
+                    echo -n "Delete $filepath? [y/N/a/q]: "
+                    read -r response
+                    case "$response" in
+                        [Yy]*)
+                            local full_path="$GIT_ROOT/$filepath"
+                            if [[ "$DRY_RUN" == "false" ]]; then
+                                rm -rf "$full_path"
+                                DELETED_FILES+=("$filepath")
+                                echo "  🗑️  Deleted: $filepath"
+                            else
+                                echo "  🗑️  Would delete: $filepath"
+                            fi
+                            ;;
+                        [Aa]*)
+                            AUTO_YES=true
+                            for remaining in "${target_only_files[@]}"; do
+                                local full_path="$GIT_ROOT/$remaining"
+                                if [[ "$DRY_RUN" == "false" ]]; then
+                                    rm -rf "$full_path"
+                                    DELETED_FILES+=("$remaining")
+                                    echo "  🗑️  Deleted: $remaining"
+                                else
+                                    echo "  🗑️  Would delete: $remaining"
+                                fi
+                            done
+                            break
+                            ;;
+                        [Qq]*)
+                            print_info "Quitting"
+                            exit 0
+                            ;;
+                        *)
+                            TARGET_ONLY_TO_KEEP+=("$filepath")
+                            echo "  ⏭️  Kept: $filepath"
+                            ;;
+                    esac
+                done
+            fi
+        fi
+    fi
+
+    show_final_summary
+}
+
+# =============================================================================
+# Subcommand: link-kilo
+# =============================================================================
+
+show_link_kilo_help() {
+    cat << EOF
+Usage: $(basename "$0") link-kilo [OPTIONS]
+
+Create .kilo/ folder in repository root with symlinks to .ai-files/
+
+This command analyzes .ai-files/dotkilo/ structure and creates an identical
+structure under .kilo/ where symlinks point to the resolved targets in
+.ai-files/.
+
+For example:
+  .ai-files/dotkilo/skills -> ../skills
+  Becomes:
+  .kilo/skills -> .ai-files/skills
+
+Options:
+    -d, --dry-run       Show what would be done without making changes
+    -v, --verbose       Enable verbose output
+    -y, --yes           Auto-confirm all prompts
+    -h, --help          Show this help message
+
+Examples:
+    $(basename "$0") link-kilo              # Interactive mode
+    $(basename "$0") link-kilo --dry-run    # Preview changes
+    $(basename "$0") link-kilo -y           # Auto-confirm all
+
+EOF
+}
+
+cmd_link_kilo() {
+    # Parse link-kilo-specific options (and process global options if not already)
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_link_kilo_help
+                exit 0
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            -d|--dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            -y|--yes)
+                AUTO_YES=true
+                shift
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_link_kilo_help
+                exit 1
+                ;;
+        esac
+    done
+
+    # Get git repository root
+    GIT_ROOT=$(detect_git_root)
+    if [[ $? -ne 0 ]]; then
+        print_error "Not in a git repository!"
+        exit 1
+    fi
+
+    local dotkilo_source="$GIT_ROOT/.ai-files/dotkilo"
+    local kilo_target="$GIT_ROOT/.kilo"
+
+    # Check if .ai-files/dotkilo exists
+    if [[ ! -d "$dotkilo_source" ]]; then
+        print_error ".ai-files/dotkilo not found!"
+        print_info "Run 'ai-files-cli update files' first to sync .ai-files/ from dist/"
+        exit 1
+    fi
+
+    # Check if .kilo exists but is a file
+    if [[ -e "$kilo_target" && ! -d "$kilo_target" && ! -L "$kilo_target" ]]; then
+        print_error ".kilo exists but is not a directory or symlink!"
+        exit 1
+    fi
+
+    print_info "Git repository root: $GIT_ROOT"
+    print_info "Source: $dotkilo_source"
+    print_info "Target: $kilo_target"
+
+    # Main process
+    echo ""
+    echo "🔄 Creating .kilo/ symlinks..."
+    echo ""
+
+    # Create .kilo directory if it doesn't exist
+    if [[ ! -e "$kilo_target" ]]; then
+        if [[ "$DRY_RUN" == "false" ]]; then
+            mkdir -p "$kilo_target"
+            CREATED_DIRS+=(".kilo")
+            echo "  📁 Created directory: .kilo"
+        else
+            echo "  📁 Would create directory: .kilo"
+        fi
+    fi
+
+    # Traverse dotkilo and create symlinks
+    while IFS= read -r -d '' entry; do
+        local relative_path="${entry#$dotkilo_source/}"
+        process_dotclaude_entry "$dotkilo_source" "$kilo_target" "$relative_path"
+    done < <(find "$dotkilo_source" -mindepth 1 -print0 | sort -z)
+
+    # Handle target-only files (files in .kilo not in dotkilo)
+    if [[ -d "$kilo_target" ]]; then
+        local -a target_only_files=()
+        while IFS= read -r -d '' entry; do
+            local relative_path="${entry#$kilo_target/}"
+            local source_file="$dotkilo_source/$relative_path"
+            if [[ ! -e "$source_file" && ! -L "$source_file" ]]; then
+                target_only_files+=(".kilo/$relative_path")
+            fi
+        done < <(find "$kilo_target" -mindepth 1 -print0 | sort -z)
+
+        if [[ ${#target_only_files[@]} -gt 0 ]]; then
+            if [[ "$AUTO_YES" == "true" ]]; then
+                # Auto-delete target-only files
+                for filepath in "${target_only_files[@]}"; do
+                    local full_path="$GIT_ROOT/$filepath"
+                    if [[ "$DRY_RUN" == "false" ]]; then
+                        rm -rf "$full_path"
+                        DELETED_FILES+=("$filepath")
+                        echo "  🗑️  Deleted: $filepath"
+                    else
+                        echo "  🗑️  Would delete: $filepath"
+                    fi
+                done
+            else
+                # Interactive mode
+                echo ""
+                print_warning "Found ${#target_only_files[@]} file(s) in .kilo/ that don't exist in dotkilo:"
+                for filepath in "${target_only_files[@]}"; do
+                    echo ""
+                    echo -n "Delete $filepath? [y/N/a/q]: "
+                    read -r response
+                    case "$response" in
+                        [Yy]*)
+                            local full_path="$GIT_ROOT/$filepath"
+                            if [[ "$DRY_RUN" == "false" ]]; then
+                                rm -rf "$full_path"
+                                DELETED_FILES+=("$filepath")
+                                echo "  🗑️  Deleted: $filepath"
+                            else
+                                echo "  🗑️  Would delete: $filepath"
+                            fi
+                            ;;
+                        [Aa]*)
+                            AUTO_YES=true
+                            for remaining in "${target_only_files[@]}"; do
+                                local full_path="$GIT_ROOT/$remaining"
+                                if [[ "$DRY_RUN" == "false" ]]; then
+                                    rm -rf "$full_path"
+                                    DELETED_FILES+=("$remaining")
+                                    echo "  🗑️  Deleted: $remaining"
+                                else
+                                    echo "  🗑️  Would delete: $remaining"
+                                fi
+                            done
+                            break
+                            ;;
+                        [Qq]*)
+                            print_info "Quitting"
+                            exit 0
+                            ;;
+                        *)
+                            TARGET_ONLY_TO_KEEP+=("$filepath")
+                            echo "  ⏭️  Kept: $filepath"
+                            ;;
+                    esac
+                done
+            fi
+        fi
+    fi
+
+    show_final_summary
+}
+
+# =============================================================================
+# Subcommand: link-specify
+# =============================================================================
+
+show_link_specify_help() {
+    cat << EOF
+Usage: $(basename "$0") link-specify [OPTIONS]
+
+Create .specify symlink in repository root pointing to .ai-files/dotspecify/
+
+This creates a single symlink .specify -> .ai-files/dotspecify
+
+Options:
+    -d, --dry-run       Show what would be done without making changes
+    -v, --verbose       Enable verbose output
+    -y, --yes           Auto-confirm all prompts
+    -h, --help          Show this help message
+
+Examples:
+    $(basename "$0") link-specify              # Interactive mode
+    $(basename "$0") link-specify --dry-run    # Preview changes
+    $(basename "$0") link-specify -y           # Auto-confirm all
+
+EOF
+}
+
+cmd_link_specify() {
+    # Parse link-specify-specific options (and process global options if not already)
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_link_specify_help
+                exit 0
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            -d|--dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            -y|--yes)
+                AUTO_YES=true
+                shift
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_link_specify_help
+                exit 1
+                ;;
+        esac
+    done
+
+    # Get git repository root
+    GIT_ROOT=$(detect_git_root)
+    if [[ $? -ne 0 ]]; then
+        print_error "Not in a git repository!"
+        exit 1
+    fi
+
+    local dotspecify_source="$GIT_ROOT/.ai-files/dotspecify"
+    local specify_target="$GIT_ROOT/.specify"
+    local link_target=".ai-files/dotspecify"
+
+    # Check if .ai-files/dotspecify exists
+    if [[ ! -d "$dotspecify_source" ]]; then
+        print_error ".ai-files/dotspecify not found!"
+        print_info "Run 'ai-files-cli update files' first to sync .ai-files/ from dist/"
+        exit 1
+    fi
+
+    print_info "Git repository root: $GIT_ROOT"
+    print_info "Source: $dotspecify_source"
+    print_info "Target: .specify -> $link_target"
+
+    # Main process
+    echo ""
+    echo "🔄 Creating .specify symlink..."
+    echo ""
+
+    # Check what already exists at target
+    if [[ -e "$specify_target" || -L "$specify_target" ]]; then
+        if [[ -L "$specify_target" ]]; then
+            local existing_target
+            existing_target="$(readlink "$specify_target")"
+            if [[ "$existing_target" == "$link_target" ]]; then
+                # Correct symlink already exists
+                print_success ".specify already points to $link_target"
+                return
+            fi
+        fi
+
+        # Something different exists
+        print_warning "Conflict at .specify"
+        if [[ "$AUTO_YES" == "true" ]]; then
+            print_info "Auto-replacing (yes flag set)"
+            if [[ "$DRY_RUN" == "false" ]]; then
+                rm -rf "$specify_target"
+                ln -sf "$link_target" "$specify_target"
+                PRESERVED_SYMLINKS+=(".specify -> $link_target")
+                echo "  🔗 Replaced: .specify -> $link_target"
+            else
+                PRESERVED_SYMLINKS+=(".specify -> $link_target")
+                echo "  🔗 Would replace: .specify -> $link_target"
+            fi
+        else
+            echo -n "Replace .specify with symlink to $link_target? [y/N/a/q]: "
+            read -r response
+            case "$response" in
+                [Yy]*)
+                    if [[ "$DRY_RUN" == "false" ]]; then
+                        rm -rf "$specify_target"
+                        ln -sf "$link_target" "$specify_target"
+                        PRESERVED_SYMLINKS+=(".specify -> $link_target")
+                        echo "  🔗 Replaced: .specify -> $link_target"
+                    else
+                        PRESERVED_SYMLINKS+=(".specify -> $link_target")
+                        echo "  🔗 Would replace: .specify -> $link_target"
+                    fi
+                    ;;
+                [Aa]*)
+                    AUTO_YES=true
+                    if [[ "$DRY_RUN" == "false" ]]; then
+                        rm -rf "$specify_target"
+                        ln -sf "$link_target" "$specify_target"
+                        PRESERVED_SYMLINKS+=(".specify -> $link_target")
+                        echo "  🔗 Replaced: .specify -> $link_target"
+                    else
+                        PRESERVED_SYMLINKS+=(".specify -> $link_target")
+                        echo "  🔗 Would replace: .specify -> $link_target"
+                    fi
+                    ;;
+                [Qq]*)
+                    print_info "Quitting"
+                    exit 0
+                    ;;
+                *)
+                    SKIPPED_FILES+=(".specify")
+                    echo "  ⏭️  Skipped: .specify"
+                    ;;
+            esac
+        fi
+    else
+        # Create new symlink
+        if [[ "$DRY_RUN" == "false" ]]; then
+            ln -sf "$link_target" "$specify_target"
+            PRESERVED_SYMLINKS+=(".specify -> $link_target")
+            echo "  🔗 Created symlink: .specify -> $link_target"
+        else
+            PRESERVED_SYMLINKS+=(".specify -> $link_target")
+            echo "  🔗 Would create symlink: .specify -> $link_target"
+        fi
+    fi
+
+    show_final_summary
+}
+
+# =============================================================================
+# Help and main dispatch
+# =============================================================================
+
+show_usage() {
+    cat << EOF
+Usage: $(basename "$0") <subcommand> [options]
+
+Update ai-files utilities with subcommands.
+
+Subcommands:
+  files       Update .ai-files/ content from dist/
+  link-claude Create .claude/ folder with symlinks to .ai-files/
+  link-kilo   Create .kilo/ folder with symlinks to .ai-files/
+  link-specify Create .specify symlink to .ai-files/dotspecify/
+  help        Show this help message
+
+Global options (apply to all subcommands):
+  -v, --verbose       Enable verbose output
+  -d, --dry-run       Show what would be done without making changes
+  -y, --yes           Auto-confirm all prompts
+
+For subcommand-specific help, use:
+  $(basename "$0") <subcommand> --help
+
+Examples:
+  $(basename "$0") files                   # Update .ai-files/ interactively
+  $(basename "$0") files -y               # Auto-overwrite all changes
+  $(basename "$0") files --dry-run        # Preview changes
+  $(basename "$0") link-claude            # Create .claude/ interactively
+  $(basename "$0") link-claude -y         # Auto-confirm all
+  $(basename "$0") link-kilo             # Create .kilo/ interactively
+  $(basename "$0") link-kilo -y          # Auto-confirm all
+  $(basename "$0") link-specify          # Create .specify symlink interactively
+  $(basename "$0") link-specify -y       # Auto-confirm all
+
+EOF
+}
+
+# Parse arguments - handle global options and subcommand
+declare -a SUBCOMMAND_ARGS=()
+SUBCOMMAND=""
+
+# First pass: find subcommand and collect subcommand args
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -d|--dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        -y|--yes)
+            AUTO_YES=true
+            shift
+            ;;
+        files|link-claude|link-kilo|link-specify|help)
+            SUBCOMMAND="$1"
+            shift
+            # Rest are subcommand args
+            SUBCOMMAND_ARGS=("$@")
+            break
+            ;;
+        -h|--help)
+            if [[ -z "$SUBCOMMAND" ]]; then
+                show_usage
+                exit 0
+            else
+                SUBCOMMAND_ARGS+=("$1")
+                shift
+            fi
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            show_usage
+            exit 1
+            ;;
+    esac
 done
 
-# Final summary
-echo ""
-if [[ "$DRY_RUN" == "true" ]]; then
-    print_warning "DRY RUN COMPLETED - No files were actually modified"
-else
-    print_success "Update completed successfully!"
-fi
+# Default to help if no subcommand
+SUBCOMMAND="${SUBCOMMAND:-help}"
 
-echo ""
-echo "📋 Summary:"
-echo ""
-
-# Show statistics
-total_copied=${#COPIED_FILES[@]}
-total_deleted=${#DELETED_FILES[@]}
-total_skipped=${#SKIPPED_FILES[@]}
-total_created=${#CREATED_DIRS[@]}
-total_symlinks=${#PRESERVED_SYMLINKS[@]}
-
-if [[ $total_copied -gt 0 ]]; then
-    echo "📄 Files copied/updated ($total_copied):"
-    for file in "${COPIED_FILES[@]}"; do
-        echo "   • $file"
-    done
-    echo ""
-fi
-
-if [[ $total_deleted -gt 0 ]]; then
-    echo "🗑️  Files deleted ($total_deleted):"
-    for file in "${DELETED_FILES[@]}"; do
-        echo "   • $file"
-    done
-    echo ""
-fi
-
-if [[ $total_skipped -gt 0 ]]; then
-    echo "⏭️  Files skipped (modified locally) ($total_skipped):"
-    for file in "${SKIPPED_FILES[@]}"; do
-        echo "   • $file"
-    done
-    echo ""
-fi
-
-if [[ ${#TARGET_ONLY_TO_DELETE[@]} -gt 0 ]]; then
-    echo "🗑️  Target-only files deleted (${#TARGET_ONLY_TO_DELETE[@]}):"
-    for file in "${TARGET_ONLY_TO_DELETE[@]}"; do
-        echo "   • $file"
-    done
-    echo ""
-fi
-
-if [[ ${#TARGET_ONLY_TO_KEEP[@]} -gt 0 ]]; then
-    echo "✓ Target-only files preserved (${#TARGET_ONLY_TO_KEEP[@]}):"
-    for file in "${TARGET_ONLY_TO_KEEP[@]}"; do
-        echo "   • $file"
-    done
-    echo ""
-fi
-
-if [[ $total_created -gt 0 ]]; then
-    echo "📁 Directories created ($total_created):"
-    for dir in "${CREATED_DIRS[@]}"; do
-        echo "   • $dir"
-    done
-    echo ""
-fi
-
-if [[ $total_symlinks -gt 0 ]]; then
-    echo "🔗 Symlinks preserved ($total_symlinks):"
-    for link in "${PRESERVED_SYMLINKS[@]}"; do
-        echo "   • $link"
-    done
-    echo ""
-fi
-
-if [[ $total_copied -eq 0 && $total_deleted -eq 0 && $total_skipped -eq 0 && $total_created -eq 0 ]]; then
-    echo "✨ No changes needed - all files are up to date"
-    echo ""
-elif [[ $total_copied -eq 0 && $total_deleted -eq 0 && $total_skipped -eq 0 && $total_created -gt 0 ]]; then
-    echo "✨ Directories created - ready for use"
-    echo ""
-fi
-
-echo "📂 Source: $SOURCE_DIR"
-echo "📂 Target: $GIT_ROOT"
-echo ""
-
-if [[ "$DRY_RUN" == "false" ]]; then
-    print_info "Update complete! You may want to review the changes with git."
-else
-    print_info "Run without --dry-run to apply these changes."
-fi
+case "$SUBCOMMAND" in
+    files)
+        cmd_files "${SUBCOMMAND_ARGS[@]}"
+        ;;
+    link-claude)
+        cmd_link_claude "${SUBCOMMAND_ARGS[@]}"
+        ;;
+    link-kilo)
+        cmd_link_kilo "${SUBCOMMAND_ARGS[@]}"
+        ;;
+    link-specify)
+        cmd_link_specify "${SUBCOMMAND_ARGS[@]}"
+        ;;
+    help|-h|--help)
+        show_usage
+        ;;
+    *)
+        echo "Unknown subcommand: $SUBCOMMAND" >&2
+        echo ""
+        show_usage
+        exit 1
+        ;;
+esac
 
 exit 0

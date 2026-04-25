@@ -11,7 +11,6 @@ clean:
 	mkdir -p ./dist/.ai-files
 	mkdir -p ./dist/.ai-files/skills/
 	mkdir -p ./dist/.ai-files/commands/
-	mkdir -p ./dist/.ai-files/dotroo/commands
 	mkdir -p ./dist/.ai-files/dotkilo/commands
 	# claude supports resolving symlinks, only one source
 	mkdir -p ./dist/.ai-files/dotclaude/commands
@@ -21,22 +20,18 @@ clean:
 	# create symlinks from hidden names to visible directories (relative symlinks)
 	ln -sfn .ai-files/dotkilo dist/.kilo
 	ln -sfn .ai-files/dotclaude dist/.claude
-	ln -sfn .ai-files/dotroo dist/.roo
 	ln -sfn .ai-files/dotspecify dist/.specify
 	# ai-files repo uses own dist
 	ln -sfn dist/.kilo .kilo
 	ln -sfn dist/.claude   .claude
-	ln -sfn dist/.roo      .roo
 relink-from-dist:
 	# create symlinks from hidden names to visible directories (relative symlinks)
 	ln -sfn .ai-files/dotkilo dist/.kilo
 	ln -sfn .ai-files/dotclaude dist/.claude
-	ln -sfn .ai-files/dotroo dist/.roo
 	ln -sfn .ai-files/dotspecify dist/.specify
 	# ai-files repo uses own dist
 	ln -sfn dist/.kilo .kilo
 	ln -sfn dist/.claude   .claude
-	ln -sfn dist/.roo      .roo
 
 
 prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prompts
@@ -77,25 +72,66 @@ build: prepare-dist prepare-claude create-symlinks
 	echo build completed
 
 create-symlinks:
-	@echo "Creating symlinks..."
-	@ln -sfn .ai-files/dotkilo dist/.kilo
-	@ln -sfn .ai-files/dotclaude dist/.claude
-	@ln -sfn .ai-files/dotroo dist/.roo
-	@ln -sfn .ai-files/dotspecify dist/.specify
+	@echo "Creating .claude/ and .kilo/ directories with symlinks..."
+	# Create directories (remove symlinks if they exist)
+	@if [ -L "dist/.claude" ]; then rm "dist/.claude"; fi
+	@if [ -L "dist/.kilo" ]; then rm "dist/.kilo"; fi
+	@if [ -L "dist/.specify" ]; then rm "dist/.specify"; fi
+	@mkdir -p dist/.claude/commands dist/.claude/skills
+	@mkdir -p dist/.kilo/commands dist/.kilo/skills dist/.kilo/rules
+	# Create file-level symlinks for .claude/commands/
+	@find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.claude/commands/$$base"; \
+		done \
+	' sh {} +
+	# Create file/dir symlinks for .claude/skills/
+	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.claude/skills/$$base"; \
+		done \
+	' sh {} +
+	# Same for .kilo/
+	@find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.kilo/commands/$$base"; \
+		done \
+	' sh {} +
+	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.kilo/skills/$$base"; \
+		done \
+	' sh {} +
+	@find dist/.ai-files/rules -mindepth 1 -maxdepth 1 -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.kilo/rules/$$base"; \
+		done \
+	' sh {} +
+	# Link everything from dist/.ai-files/dotclaude/ to dist/.claude/ (except commands, which are handled above)
+	@if [ -d "dist/.ai-files/dotclaude" ]; then \
+		find dist/.ai-files/dotclaude -mindepth 1 -maxdepth 1 ! -name "commands" -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				if [ -L "dist/.claude/$$base" ]; then \
+					rm "dist/.claude/$$base"; \
+				fi; \
+				ln -sfr "$$f" "dist/.claude/$$base"; \
+			done \
+		' sh {} +; \
+	fi
 	@ln -sfn dist/.kilo .kilo
 	@ln -sfn dist/.claude .claude
-	@ln -sfn dist/.roo .roo
 	@echo "✅ Symlinks created"
 
 publish-prompts:
 	mkdir -p ./dist/.ai-files/prompts
 	cp -r ./prompts/ ./dist/.ai-files
 
-
-link-roo:
-	@if [ ! -L ~/.roo ]; then \
-		ln -s ~/ai-files/dist/roo ~/.roo; \
-	fi
 
 adr-toc: adr-graph
 	adr generate toc > ./docs/architecture/decisions/README.md
@@ -123,26 +159,6 @@ publish-commands-kilo:
 		done \
 	' sh {} +; \
 	echo "✅ Successfully created symlinks to ./dist/.ai-files/dotkilo/commands/"
-
-publish-spec-kit-roo:
-	@echo "Creating symlinks for roo commands..."
-	@mkdir -p ./dist/.ai-files/dotroo/commands; \
-	find ./dist/.ai-files/commands/speckit -type f -name '*.md' -exec sh -c '\
-		for f do \
-			ln -sfr "$$f" "./dist/.ai-files/dotroo/commands/$$(basename "$$f")"; \
-		done \
-	' sh {} +; \
-	echo "✅ Successfully created symlinks to ./dist/.ai-files/dotroo/commands/"
-
-publish-commands-roo:
-	@echo "Creating symlinks for non-speckit commands to roo..."
-	@mkdir -p ./dist/.ai-files/dotroo/commands; \
-	find ./dist/.ai-files/commands -maxdepth 1 -type f -name '*.md' -exec sh -c '\
-		for f do \
-			ln -sfr "$$f" "./dist/.ai-files/dotroo/commands/$$(basename "$$f")"; \
-		done \
-	' sh {} +; \
-	echo "✅ Successfully created symlinks to ./dist/.ai-files/dotroo/commands/"
 
 publish-spec-kit-claude:
 	@echo "Initializing claude skills using specify CLI..."
@@ -176,16 +192,15 @@ publish-spec-kit-claude:
 	rm -rf "$$TEMP_DIR"; \
 	echo "✅ Successfully initialized .claude/skills/ templates to ./dist/.ai-files/dotclaude/skills/"
 
-publish-spec-kit: publish-spec-kit-templates publish-spec-kit-roo publish-spec-kit-kilo publish-spec-kit-claude
+publish-spec-kit: publish-spec-kit-templates publish-spec-kit-kilo publish-spec-kit-claude
 	@echo ""
 	@echo "🎉 All spec-kit templates have been successfully processed!"
 	@echo "📦 Summary:"
 	@echo "   • .kilo/ commands linked to ./dist/.ai-files/dotkilo/"
-	@echo "   • .roo/ commands linked to ./dist/.ai-files/dotroo/"
 	@echo "   • .claude/ skills initialized to ./dist/.ai-files/dotclaude/"
 	@echo "   • .specify/ templates initialized to ./dist/.ai-files/dotspecify/"
 	@echo ""
-	@echo "✨ All four spec-kit templates are now ready for use!"
+	@echo "✨ All spec-kit templates are now ready for use!"
 
 publish-commands-source:
 	@echo "Copying commands source to dist..."
@@ -194,12 +209,11 @@ publish-commands-source:
 	@chmod +x ./dist/.ai-files/dotspecify/scripts/bash/*.sh
 	@echo "✅ Commands source copied to ./dist/.ai-files/commands/"
 
-publish-commands: publish-commands-source publish-commands-roo publish-commands-kilo
+publish-commands: publish-commands-source publish-commands-kilo
 	@echo ""
 	@echo "🎉 All non-speckit commands have been successfully linked!"
 	@echo "📦 Summary:"
 	@echo "   • workout commands linked to ./dist/.ai-files/dotkilo/commands/"
-	@echo "   • workout commands linked to ./dist/.ai-files/dotroo/commands/"
 	@echo "   • pr-review, resolve-merge-conflicts also linked"
 	@echo ""
 	@echo "✨ All agents now have access to workout and other custom commands!"
@@ -261,13 +275,10 @@ publish-memory-bank:
 		exit 1; \
 	fi
 	@echo "Creating memory bank directories for each agent..."
-	@mkdir -p ./dist/.ai-files/dotroo/rules/memory-bank
 	@mkdir -p ./dist/.ai-files/dotkilo/rules/memory-bank
 	@echo "Copying memory bank instructions to agent directories..."
-	@cp "prompts/memory-bank-instructions.md" "./dist/.ai-files/dotroo/rules/memory-bank/"
 	@cp "prompts/memory-bank-instructions.md" "./dist/.ai-files/dotkilo/rules/memory-bank/"
 	@echo "✅ Memory bank successfully published to all agent directories:"
-	@echo "   • ./dist/.ai-files/dotroo/rules/memory-bank/"
 	@echo "   • ./dist/.ai-files/dotkilo/rules/memory-bank/"
 
 
