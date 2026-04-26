@@ -268,13 +268,13 @@ Install using copy method instead of symlink:
 ai-files-cli skills-add vercel-labs/agent-skills --skill frontend-design --method copy
 ```
 
-### ai-files-cli setup-worktree
+### ai-files-cli worktree
 
 Set up ai-files symlinks in git worktrees. This utility automatically configures AI coding agent symlinks and configuration files when working with git worktrees, ensuring each worktree has access to the main repository's AI files configuration.
 
 **Usage:**
 ```bash
-ai-files-cli setup-worktree
+ai-files-cli worktree
 ```
 
 **Prerequisites:**
@@ -299,7 +299,7 @@ git worktree add ../my-project-feature -b feature/new-feature
 cd ../my-project-feature
 
 # Run the setup script
-ai-files-cli setup-worktree
+ai-files-cli worktree
 ```
 
 **Output example:**

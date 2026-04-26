@@ -27,10 +27,8 @@ obsidian_file_exists() {
     _vault="$1"
     _opath="$2"
     _result=$(obsidian file --vault "$_vault" --path "$_opath" </dev/null 2>&1 || true)
-    case "$_result" in
-        *"not found"*) return 1 ;;
-        *) return 0 ;;
-    esac
+    _returned_path=$(echo "$_result" | head -1 | cut -f2)
+    [ "$_returned_path" = "$_opath" ]
 }
 
 is_memory_file() {
