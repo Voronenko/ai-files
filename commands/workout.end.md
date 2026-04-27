@@ -40,7 +40,7 @@ The summary should be thorough enough that another developer (or AI) can underst
 
 8. Ask if user wants to add this session into obsidian, if yes run command
 
-ai-files-cli obsidian-add <path to session markdown file> -t tag1,tag2,tag3
+ai-files obsidian-add <path to session markdown file> -t tag1,tag2,tag3
 
 where tag1 tag2 and tag3 are tags from summary
 

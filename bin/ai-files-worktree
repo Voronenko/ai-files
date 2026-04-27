@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# ai-files-cli-worktree - Set up ai-files symlinks in git worktrees
+# ai-files-worktree - Set up ai-files symlinks in git worktrees
 # This script sets up symlinks from the current git worktree to the main
 # ai-files repository, enabling AI coding tools to work across worktrees.
 #
-# Usage: ai-files-cli worktree
+# Usage: ai-files worktree
 #
 # The script must be run from within a git worktree.
 
@@ -74,7 +74,7 @@ print_error() {
 
 show_help() {
     cat <<EOF
-Usage: ai-files-cli worktree [-h|--help]
+Usage: ai-files worktree [-h|--help]
 
 Set up ai-files symlinks in git worktrees.
 
@@ -97,7 +97,7 @@ Examples:
   # Create a worktree and set up ai-files
   git worktree add ../my-feature -b feature/my-feature
   cd ../my-feature
-  ai-files-cli worktree
+  ai-files worktree
 
 Files:
   .worktreeinclude    Optional file with glob patterns of files to copy
@@ -128,7 +128,7 @@ setup_worktree() {
         echo "Usage:"
         echo "  1. Create a worktree: git worktree add <path> -b <branch>"
         echo "  2. cd <path>"
-        echo "  3. ai-files-cli worktree"
+        echo "  3. ai-files worktree"
         exit 1
     fi
 

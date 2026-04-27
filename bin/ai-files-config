@@ -284,7 +284,7 @@ cmd_setup() {
 
 show_help() {
     cat <<EOF
-Usage: ai-files-cli config <command> [args]
+Usage: ai-files config <command> [args]
 
 Manage ai-files configuration stored in local git config under ${CONFIG_SECTION}.* section.
 
@@ -302,14 +302,14 @@ Known keys:
   vault-default-path         Default folder path within vault
   vault-session-default-path Default session folder path within vault
   vault-memory-default-path  Default memory folder path within vault
-  ai-files-cli config setup
-  ai-files-cli config set vault my-vault
-  ai-files-cli config set project-slug myorg/myapp
-  ai-files-cli config set vault-default-path "pages/repo-mine"
-  ai-files-cli config set vault-session-default-path "sessions"
-  ai-files-cli config list
-  ai-files-cli config get vault
-  ai-files-cli config unset vault-default-path
+  ai-files config setup
+  ai-files config set vault my-vault
+  ai-files config set project-slug myorg/myapp
+  ai-files config set vault-default-path "pages/repo-mine"
+  ai-files config set vault-session-default-path "sessions"
+  ai-files config list
+  ai-files config get vault
+  ai-files config unset vault-default-path
 EOF
 }
 
@@ -324,15 +324,15 @@ case "$SUB" in
         cmd_list
         ;;
     get)
-        [ $# -lt 1 ] && { echo "usage: ai-files-cli config get <key>" >&2; exit 1; }
+        [ $# -lt 1 ] && { echo "usage: ai-files config get <key>" >&2; exit 1; }
         cmd_get "$1"
         ;;
     set)
-        [ $# -lt 2 ] && { echo "usage: ai-files-cli config set <key> <value>" >&2; exit 1; }
+        [ $# -lt 2 ] && { echo "usage: ai-files config set <key> <value>" >&2; exit 1; }
         cmd_set "$1" "$2"
         ;;
     unset|rm|remove)
-        [ $# -lt 1 ] && { echo "usage: ai-files-cli config unset <key>" >&2; exit 1; }
+        [ $# -lt 1 ] && { echo "usage: ai-files config unset <key>" >&2; exit 1; }
         cmd_unset "$1"
         ;;
     help|-h|--help)

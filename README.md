@@ -42,17 +42,17 @@ The Makefile orchestrates distribution build through several targets:
 - **`make build`** - Prepares the `dist/` directory by creating necessary subdirectories and copying source files
 
 
-## ai-files-cli
+## ai-files
 
-The `ai-files-cli` is a command-line interface that provides various utilities for managing AI Files project configuration, MCP servers, memory services, and more. It serves as a dispatcher that routes commands to specialized subcommands.
+The `ai-files` is a command-line interface that provides various utilities for managing AI Files project configuration, MCP servers, memory services, and more. It serves as a dispatcher that routes commands to specialized subcommands.
 
-### ai-files-cli mcp
+### ai-files mcp
 
 Configure and manage MCP (Model Context Protocol) servers. This utility helps you add, remove, list, and manage MCP server configurations in `~/.kilo/mcp.json`.
 
 **Usage:**
 ```bash
-ai-files-cli mcp <command> [options]
+ai-files mcp <command> [options]
 ```
 
 **Commands:**
@@ -76,46 +76,46 @@ ai-files-cli mcp <command> [options]
 
 Add HTTP transport server:
 ```bash
-ai-files-cli mcp add --transport http sentry https://mcp.sentry.dev/mcp
+ai-files mcp add --transport http sentry https://mcp.sentry.dev/mcp
 ```
 
 Add SSE transport server:
 ```bash
-ai-files-cli mcp add --transport sse asana https://mcp.asana.com/sse
+ai-files mcp add --transport sse asana https://mcp.asana.com/sse
 ```
 
 Add stdio transport server with environment variables:
 ```bash
-ai-files-cli mcp add --transport stdio git --env TOKEN=AA -- npx -y git-mcp-server
+ai-files mcp add --transport stdio git --env TOKEN=AA -- npx -y git-mcp-server
 ```
 
 List all configured servers:
 ```bash
-ai-files-cli mcp list
+ai-files mcp list
 ```
 
 Get server details:
 ```bash
-ai-files-cli mcp get git
+ai-files mcp get git
 ```
 
 Remove a server:
 ```bash
-ai-files-cli mcp remove git
+ai-files mcp remove git
 ```
 
 Start MCP server with custom environment:
 ```bash
-ai-files-cli mcp serve --env XYZ=111 -- ./server-binary --stdio
+ai-files mcp serve --env XYZ=111 -- ./server-binary --stdio
 ```
 
-### ai-files-cli memory-service
+### ai-files memory-service
 
 Manage MCP Memory Service for the current project. This utility helps you check memory service status, view statistics, and launch the HTTP UI interface.
 
 **Usage:**
 ```bash
-ai-files-cli memory-service <command>
+ai-files memory-service <command>
 ```
 
 **Commands:**
@@ -136,7 +136,7 @@ The script searches for memory MCP server configuration in:
 
 Check memory service status:
 ```bash
-ai-files-cli memory-service status
+ai-files memory-service status
 ```
 
 This will display:
@@ -149,7 +149,7 @@ This will display:
 
 Start memory service with HTTP UI:
 ```bash
-ai-files-cli memory-service ui
+ai-files memory-service ui
 ```
 
 This will:
@@ -157,13 +157,13 @@ This will:
 - Start the memory server with HTTP interface
 - Allow you to interact with the memory service through a web UI
 
-### ai-files-cli obsidian-add
+### ai-files obsidian-add
 
 Add a new entry to Obsidian from an existing markdown file with AI Files defaults. This utility automatically adds relevant tags and organizes notes in your Obsidian vault.
 
 **Usage:**
 ```bash
-ai-files-cli obsidian-add [options] <markdown-file>
+ai-files obsidian-add [options] <markdown-file>
 ```
 
 **Environment Variables (defaults):**
@@ -189,31 +189,31 @@ ai-files-cli obsidian-add [options] <markdown-file>
 
 Use environment defaults:
 ```bash
-ai-files-cli obsidian-add ./note.md
+ai-files obsidian-add ./note.md
 ```
 
 Override vault:
 ```bash
-ai-files-cli obsidian-add -v KB ./note.md
+ai-files obsidian-add -v KB ./note.md
 ```
 
 Override path:
 ```bash
-ai-files-cli obsidian-add -p "custom/path" ./note.md
+ai-files obsidian-add -p "custom/path" ./note.md
 ```
 
 Add with extra tags and open in Obsidian:
 ```bash
-ai-files-cli obsidian-add -t "work,ideas" ./note.md -o
+ai-files obsidian-add -t "work,ideas" ./note.md -o
 ```
 
-### ai-files-cli skills-add
+### ai-files skills-add
 
 Install Claude Code skills from git repositories. This utility discovers, lists, and installs skills to either project-local (`.claude/skills/`) or global (`~/.claude/skills/`) directories.
 
 **Usage:**
 ```bash
-ai-files-cli skills-add <REPO_SOURCE> [OPTIONS]
+ai-files skills-add <REPO_SOURCE> [OPTIONS]
 ```
 
 **Arguments:**
@@ -240,41 +240,41 @@ ai-files-cli skills-add <REPO_SOURCE> [OPTIONS]
 
 List available skills:
 ```bash
-ai-files-cli skills-add vercel-labs/agent-skills --list
+ai-files skills-add vercel-labs/agent-skills --list
 ```
 
 Install specific skill:
 ```bash
-ai-files-cli skills-add vercel-labs/agent-skills --skill frontend-design
+ai-files skills-add vercel-labs/agent-skills --skill frontend-design
 ```
 
 Install multiple skills:
 ```bash
-ai-files-cli skills-add vercel-labs/agent-skills --skill frontend-design --skill skill-creator
+ai-files skills-add vercel-labs/agent-skills --skill frontend-design --skill skill-creator
 ```
 
 Install all skills globally:
 ```bash
-ai-files-cli skills-add vercel-labs/agent-skills --all --global
+ai-files skills-add vercel-labs/agent-skills --all --global
 ```
 
 Non-interactive installation (CI/CD):
 ```bash
-ai-files-cli skills-add vercel-labs/agent-skills --skill frontend-design --yes
+ai-files skills-add vercel-labs/agent-skills --skill frontend-design --yes
 ```
 
 Install using copy method instead of symlink:
 ```bash
-ai-files-cli skills-add vercel-labs/agent-skills --skill frontend-design --method copy
+ai-files skills-add vercel-labs/agent-skills --skill frontend-design --method copy
 ```
 
-### ai-files-cli worktree
+### ai-files worktree
 
 Set up ai-files symlinks in git worktrees. This utility automatically configures AI coding agent symlinks and configuration files when working with git worktrees, ensuring each worktree has access to the main repository's AI files configuration.
 
 **Usage:**
 ```bash
-ai-files-cli worktree
+ai-files worktree
 ```
 
 **Prerequisites:**
@@ -299,7 +299,7 @@ git worktree add ../my-project-feature -b feature/new-feature
 cd ../my-project-feature
 
 # Run the setup script
-ai-files-cli worktree
+ai-files worktree
 ```
 
 **Output example:**
@@ -325,13 +325,13 @@ ai-files-cli worktree
 - The script exits with an error if `.ai-files` exists but is not a symlink
 - Run this script once per worktree after creating it
 
-### ai-files-cli update
+### ai-files update
 
 Update `.ai-files/`, `.claude/`, `.kilo/` directories from `dist/`. This utility handles recursive copying of files and folders, preserves relative symlinks, detects locally modified files, and provides interactive confirmation with diff view.
 
 **Usage:**
 ```bash
-ai-files-cli update [OPTIONS]
+ai-files update [OPTIONS]
 ```
 
 **Options:**
@@ -355,41 +355,41 @@ ai-files-cli update [OPTIONS]
 
 Interactive update (asks for each modified file):
 ```bash
-ai-files-cli update
+ai-files update
 ```
 
 Auto-overwrite all changes:
 ```bash
-ai-files-cli update -y
+ai-files update -y
 ```
 
 Skip all local changes:
 ```bash
-ai-files-cli update -n
+ai-files update -n
 ```
 
 Preview changes only (dry run):
 ```bash
-ai-files-cli update --dry-run
+ai-files update --dry-run
 ```
 
 Verbose output with detailed file operations:
 ```bash
-ai-files-cli update -v
+ai-files update -v
 ```
 
 Update from custom source directory:
 ```bash
-ai-files-cli update -s /path/to/custom/dist
+ai-files update -s /path/to/custom/dist
 ```
 
-### ai-files-cli version
+### ai-files version
 
 Show version information for the ai-files project. The version is derived from git tags, branch names, or commit hashes.
 
 **Usage:**
 ```bash
-ai-files-cli version
+ai-files version
 ```
 
 **Version Detection Logic:**
@@ -401,7 +401,7 @@ ai-files-cli version
 **Examples:**
 
 ```bash
-ai-files-cli version
+ai-files version
 # Output: v1.2.3 (if on tag)
 # Output: main-abc1234 (if on branch)
 # Output: detached-abc1234 (if detached HEAD)

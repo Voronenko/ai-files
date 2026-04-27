@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# ai-files-cli-update - Update ai-files directories with subcommands
+# ai-files-update - Update ai-files directories with subcommands
 # This script handles:
 # - files: Update .ai-files/ content from dist/
 # - link-claude: Create .claude/ folder with symlinks to .ai-files/
 # - link-kilo: Create .kilo/ folder with symlinks to .ai-files/
 # - link-specify: Create .specify symlink to .ai-files/dotspecify/
 #
-# Usage: ai-files-cli-update <subcommand> [options]
+# Usage: ai-files-update <subcommand> [options]
 # Subcommands:
 #   files       Update .ai-files/ content from dist/
 #   link-claude Create .claude/ folder with symlinks to .ai-files/
@@ -1352,7 +1352,7 @@ cmd_link_claude() {
     # Check if .ai-files/dotclaude exists
     if [[ ! -d "$dotclaude_source" ]]; then
         print_error ".ai-files/dotclaude not found!"
-        print_info "Run 'ai-files-cli update files' first to sync .ai-files/ from dist/"
+        print_info "Run 'ai-files update files' first to sync .ai-files/ from dist/"
         exit 1
     fi
 
@@ -1536,7 +1536,7 @@ cmd_link_kilo() {
     # Check if .ai-files/dotkilo exists
     if [[ ! -d "$dotkilo_source" ]]; then
         print_error ".ai-files/dotkilo not found!"
-        print_info "Run 'ai-files-cli update files' first to sync .ai-files/ from dist/"
+        print_info "Run 'ai-files update files' first to sync .ai-files/ from dist/"
         exit 1
     fi
 
@@ -1714,7 +1714,7 @@ cmd_link_specify() {
     # Check if .ai-files/dotspecify exists
     if [[ ! -d "$dotspecify_source" ]]; then
         print_error ".ai-files/dotspecify not found!"
-        print_info "Run 'ai-files-cli update files' first to sync .ai-files/ from dist/"
+        print_info "Run 'ai-files update files' first to sync .ai-files/ from dist/"
         exit 1
     fi
 

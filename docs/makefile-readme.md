@@ -399,7 +399,7 @@ graph TD
 | `install-antigravity-apt` | antigravity | apt (from custom repo) | Adds Antigravity apt repository, installs via apt - requires sudo for repository setup |
 | `install-ai-goose` | goose | bash installer (from GitHub releases) | Goose CLI - downloads latest release, installs to ~/ai-files/bin |
 | `install-mcp-memory-service` | mcp-memory-service | pipx | MCP Memory Service with onnxruntime injection |
-| `install-cli-to-local-bin` | ai-files-cli | symlink | Creates symlink from project bin/ai-files-cli to ~/.local/bin/ai-files-cli |
+| `install-cli-to-local-bin` | ai-files | symlink | Creates symlink from project bin/ai-files to ~/.local/bin/ai-files |
 
 ### Installation Categories Summary
 
@@ -426,4 +426,4 @@ graph TD
 - antigravity (apt)
 - goose CLI
 - mcp-memory-service
-- ai-files-cli (symlink)
+- ai-files (symlink)

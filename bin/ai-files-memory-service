@@ -236,7 +236,7 @@ cmd_ui() {
 # Show help
 show_help() {
     cat <<EOF
-Usage: ai-files-cli memory-service <command>
+Usage: ai-files memory-service <command>
 
 Manage MCP Memory Service for the current project.
 
@@ -246,8 +246,8 @@ Commands:
   help      Show this help message
 
 Examples:
-  ai-files-cli memory-service status
-  ai-files-cli memory-service ui
+  ai-files memory-service status
+  ai-files memory-service ui
 
 The script searches for memory MCP server configuration in:
   - .claude/config.json

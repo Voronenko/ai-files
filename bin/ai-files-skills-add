@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# ai-files-cli-skills-add - Install Claude Code skills from git repositories
+# ai-files-skills-add - Install Claude Code skills from git repositories
 #
 # This script discovers, lists, and installs skills from git repositories to
 # .claude/skills/ (project-local) or ~/.claude/skills/ (global).
 #
-# Usage: ai-files-cli-skills-add <REPO_SOURCE> [OPTIONS]
+# Usage: ai-files-skills-add <REPO_SOURCE> [OPTIONS]
 
 set -euo pipefail
 
@@ -633,7 +633,7 @@ parse_arguments() {
 
 show_usage() {
     cat <<'EOF'
-Usage: ai-files-cli-skills-add <REPO_SOURCE> [OPTIONS]
+Usage: ai-files-skills-add <REPO_SOURCE> [OPTIONS]
 
 Install Claude Code skills from git repositories.
 
@@ -655,22 +655,22 @@ Options:
 
 Examples:
   # List available skills
-  ai-files-cli-skills-add vercel-labs/agent-skills --list
+  ai-files-skills-add vercel-labs/agent-skills --list
 
   # Install specific skill
-  ai-files-cli-skills-add vercel-labs/agent-skills --skill frontend-design
+  ai-files-skills-add vercel-labs/agent-skills --skill frontend-design
 
   # Install multiple skills
-  ai-files-cli-skills-add vercel-labs/agent-skills --skill frontend-design --skill skill-creator
+  ai-files-skills-add vercel-labs/agent-skills --skill frontend-design --skill skill-creator
 
   # Install all skills globally
-  ai-files-cli-skills-add vercel-labs/agent-skills --all --global
+  ai-files-skills-add vercel-labs/agent-skills --all --global
 
   # Interactive skill selection (requires fzf)
-  ai-files-cli-skills-add voronenko/ai-files --skill
+  ai-files-skills-add voronenko/ai-files --skill
 
   # Non-interactive installation (CI/CD)
-  ai-files-cli-skills-add vercel-labs/agent-skills --skill frontend-design --yes
+  ai-files-skills-add vercel-labs/agent-skills --skill frontend-design --yes
 
 Environment Variables:
   INSTALL_INTERNAL_SKILLS    Include skills marked as internal (default: 0)
