@@ -808,8 +808,100 @@ cmd_files() {
             merge_base="$target_dir/$merge_folder"
 
             # Only process if merge folder exists in source
-            if [[ -d "$merge_src" ]]; then
-                # Skip if merge folder is a symlink to .ai-files/*
+            if [[ -d "$merge_src" || -L "$merge_src" ]]; then
+                # Check if merge_src is a symlink that should be replicated
+                if [[ -L "$merge_src" ]]; then
+                    local src_link_target
+                    src_link_target="$(readlink "$merge_src")"
+
+                    # Check if it's a managed symlink (points to .ai-files/*)
+                    if [[ "$src_link_target" == *".ai-files/"* ]] || [[ "$src_link_target" == "../*" ]]; then
+                        # Resolve the symlink target to get absolute .ai-files path
+                        local link_dir="$(dirname "$merge_src")"
+                        local resolved_target
+                        resolved_target="$(cd "$link_dir" 2>/dev/null && pwd)/${src_link_target}"
+
+                        # Convert to path relative to git root
+                        resolved_target="${resolved_target#$GIT_ROOT/}"
+
+                        # Check if destination already exists with the correct symlink
+                        if [[ -L "$merge_dest" ]]; then
+                            local existing_target
+                            existing_target="$(readlink "$merge_dest")"
+                            if [[ "$existing_target" == "$resolved_target" ]]; then
+                                if [[ "$VERBOSE" == "true" ]]; then
+                                    echo "  ✓ Symlink correct: $merge_base -> $resolved_target"
+                                fi
+                                continue
+                            fi
+                        fi
+
+                        # Create or replace the symlink
+                        if [[ -e "$merge_dest" || -L "$merge_dest" ]]; then
+                            if [[ "$AUTO_YES" == "true" ]]; then
+                                if [[ "$DRY_RUN" == "false" ]]; then
+                                    rm -rf "$merge_dest"
+                                    mkdir -p "$(dirname "$merge_dest")"
+                                    ln -sf "$resolved_target" "$merge_dest"
+                                    PRESERVED_SYMLINKS+=("$merge_base -> $resolved_target")
+                                    echo "  🔗 Replaced: $merge_base -> $resolved_target"
+                                else
+                                    echo "  🔗 Would replace: $merge_base -> $resolved_target"
+                                fi
+                            else
+                                print_warning "Conflict at $merge_base"
+                                echo -n "Replace with symlink to $resolved_target? [y/N/a/q]: "
+                                read -r response
+                                case "$response" in
+                                    [Yy]*)
+                                        if [[ "$DRY_RUN" == "false" ]]; then
+                                            rm -rf "$merge_dest"
+                                            mkdir -p "$(dirname "$merge_dest")"
+                                            ln -sf "$resolved_target" "$merge_dest"
+                                            PRESERVED_SYMLINKS+=("$merge_base -> $resolved_target")
+                                            echo "  🔗 Replaced: $merge_base -> $resolved_target"
+                                        else
+                                            echo "  🔗 Would replace: $merge_base -> $resolved_target"
+                                        fi
+                                        ;;
+                                    [Aa]*)
+                                        AUTO_YES=true
+                                        if [[ "$DRY_RUN" == "false" ]]; then
+                                            rm -rf "$merge_dest"
+                                            mkdir -p "$(dirname "$merge_dest")"
+                                            ln -sf "$resolved_target" "$merge_dest"
+                                            PRESERVED_SYMLINKS+=("$merge_base -> $resolved_target")
+                                            echo "  🔗 Replaced: $merge_base -> $resolved_target"
+                                        else
+                                            echo "  🔗 Would replace: $merge_base -> $resolved_target"
+                                        fi
+                                        ;;
+                                    [Qq]*)
+                                        print_info "Quitting"
+                                        exit 0
+                                        ;;
+                                    *)
+                                        SKIPPED_FILES+=("$merge_base")
+                                        echo "  ⏭️  Skipped: $merge_base"
+                                        ;;
+                                esac
+                            fi
+                        else
+                            # Create new symlink
+                            if [[ "$DRY_RUN" == "false" ]]; then
+                                mkdir -p "$(dirname "$merge_dest")"
+                                ln -sf "$resolved_target" "$merge_dest"
+                                PRESERVED_SYMLINKS+=("$merge_base -> $resolved_target")
+                                echo "  🔗 Created symlink: $merge_base -> $resolved_target"
+                            else
+                                echo "  🔗 Would create symlink: $merge_base -> $resolved_target"
+                            fi
+                        fi
+                        continue
+                    fi
+                fi
+
+                # Skip if merge folder is a symlink to .ai-files/* (already handled above)
                 if [[ -L "$merge_dest" ]]; then
                     merge_link_target="$(readlink "$merge_dest")"
                     if [[ "$merge_link_target" == *".ai-files/"* ]]; then
@@ -878,63 +970,93 @@ cmd_files() {
             # Only process if dotdir exists in source
             [[ -d "$dotdir_src" ]] || continue
 
-            # Skip if dotdir_dest is a symlink to .ai-files/*
+            # Check if dotdir_dest is a managed symlink (points to .ai-files/*)
+            local dotdir_is_managed=false
             if [[ -L "$dotdir_dest" ]]; then
                 local dotdir_link_target="$(readlink "$dotdir_dest")"
                 if [[ "$dotdir_link_target" == *".ai-files/"* ]]; then
+                    dotdir_is_managed=true
                     if [[ "$VERBOSE" == "true" ]]; then
-                        echo "  🔗 Skipping managed symlink: $target_dir/$dotdir (points to .ai-files)"
+                        echo "  🔗 Skipping symlink processing for managed symlink: $target_dir/$dotdir (points to .ai-files)"
                     fi
+                fi
+            fi
+
+            # Only process symlinks if not a managed symlink
+            if [[ "$dotdir_is_managed" == "false" ]]; then
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  ↳ Processing symlinks in $target_dir/$dotdir"
+                fi
+
+                # Walk through dotdir and copy symlinks
+                while IFS= read -r -d '' entry; do
+                    # Skip if entry is the dotdir itself (edge case in path manipulation)
+                    [[ "$entry" == "$dotdir_src" ]] && continue
+
+                    local entry_rel="${entry#$dotdir_src/}"
+
+                    # Skip if entry_rel is empty or equals dotdir name (prevents dotkilo/dotkilo)
+                    [[ -z "$entry_rel" ]] && continue
+                    [[ "$entry_rel" == "$dotdir" ]] && continue
+
+                    local src_entry="$dotdir_src/$entry_rel"
+                    local dest_entry="$dotdir_dest/$entry_rel"
+
+                    # Skip if not a symlink
+                    [[ -L "$src_entry" ]] || continue
+
+                    # Skip if destination already exists as symlink with same target
+                    if [[ -L "$dest_entry" ]]; then
+                        local src_target="$(readlink "$src_entry")"
+                        local dest_target="$(readlink "$dest_entry")"
+                        [[ "$src_target" == "$dest_target" ]] && continue
+                    fi
+
+                    # Copy the symlink
+                    if [[ "$DRY_RUN" == "false" ]]; then
+                        # Create parent directory if needed
+                        local parent_dir="$(dirname "$dest_entry")"
+                        mkdir -p "$parent_dir"
+
+                        # Get the symlink target
+                        local link_target="$(readlink "$src_entry")"
+
+                        ln -sf "$link_target" "$dest_entry"
+                        PRESERVED_SYMLINKS+=("$target_dir/$dotdir/$entry_rel -> $link_target")
+                        if [[ "$VERBOSE" == "true" ]]; then
+                            echo "  🔗 Copied symlink: $target_dir/$dotdir/$entry_rel -> $link_target"
+                        fi
+                    else
+                        echo "  🔗 Would copy symlink: $target_dir/$dotdir/$entry_rel -> $(readlink "$src_entry")"
+                    fi
+                done < <(find "$dotdir_src" -mindepth 1 -print0 | sort -z)
+            fi
+
+            # Also process merge folders within dot* directories (e.g., hooks, commands)
+            # These are regular directories that need to be synced to target
+            for merge_folder in "${MERGE_FOLDERS[@]}"; do
+                local dot_merge_src="$dotdir_src/$merge_folder"
+                local dot_merge_dest="$dest_path/$merge_folder"
+                local dot_merge_base="$target_dir/$merge_folder"
+
+                # Only process if the merge folder exists in dotdir
+                [[ -d "$dot_merge_src" ]] || continue
+
+                # Check if this merge folder was already processed in the main target directory
+                # If it was, skip it to avoid duplicate processing
+                local main_merge_src="$src_path/$merge_folder"
+                if [[ -e "$main_merge_src" || -L "$main_merge_src" ]]; then
+                    # Already processed in main loop, skip here
                     continue
                 fi
-            fi
 
-            if [[ "$VERBOSE" == "true" ]]; then
-                echo "  ↳ Processing symlinks in $target_dir/$dotdir"
-            fi
-
-            # Walk through dotdir and copy symlinks
-            while IFS= read -r -d '' entry; do
-                # Skip if entry is the dotdir itself (edge case in path manipulation)
-                [[ "$entry" == "$dotdir_src" ]] && continue
-
-                local entry_rel="${entry#$dotdir_src/}"
-
-                # Skip if entry_rel is empty or equals dotdir name (prevents dotkilo/dotkilo)
-                [[ -z "$entry_rel" ]] && continue
-                [[ "$entry_rel" == "$dotdir" ]] && continue
-
-                local src_entry="$dotdir_src/$entry_rel"
-                local dest_entry="$dotdir_dest/$entry_rel"
-
-                # Skip if not a symlink
-                [[ -L "$src_entry" ]] || continue
-
-                # Skip if destination already exists as symlink with same target
-                if [[ -L "$dest_entry" ]]; then
-                    local src_target="$(readlink "$src_entry")"
-                    local dest_target="$(readlink "$dest_entry")"
-                    [[ "$src_target" == "$dest_target" ]] && continue
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  ↳ Processing merge folder from $target_dir/$dotdir/$merge_folder to $dot_merge_base"
                 fi
 
-                # Copy the symlink
-                if [[ "$DRY_RUN" == "false" ]]; then
-                    # Create parent directory if needed
-                    local parent_dir="$(dirname "$dest_entry")"
-                    mkdir -p "$parent_dir"
-
-                    # Get the symlink target
-                    local link_target="$(readlink "$src_entry")"
-
-                    ln -sf "$link_target" "$dest_entry"
-                    PRESERVED_SYMLINKS+=("$target_dir/$dotdir/$entry_rel -> $link_target")
-                    if [[ "$VERBOSE" == "true" ]]; then
-                        echo "  🔗 Copied symlink: $target_dir/$dotdir/$entry_rel -> $link_target"
-                    fi
-                else
-                    echo "  🔗 Would copy symlink: $target_dir/$dotdir/$entry_rel -> $(readlink "$src_entry")"
-                fi
-            done < <(find "$dotdir_src" -mindepth 1 -print0 | sort -z)
+                # Process the directory
+                process_directory "$dot_merge_src" "$dot_merge_dest" "$dot_merge_base"
+            done
         done
         echo ""
     done
