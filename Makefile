@@ -468,8 +468,8 @@ install-mcp-memory-service:
 
 install-cli-to-local-bin:
 	@set -e; \
-	SRC="$(PWD)/bin/ai-files-cli"; \
-	DST="$(HOME)/.local/bin/ai-files-cli"; \
+	SRC="$(PWD)/bin/ai-files"; \
+	DST="$(HOME)/.local/bin/ai-files"; \
 	if [ ! -f "$$SRC" ]; then \
 		echo "Error: Source file not found: $$SRC"; \
 		exit 1; \

@@ -42,7 +42,7 @@ get_version() {
 dispatch_to_external() {
     local cmd="$1"
     shift
-    local external="${SELF_DIR}/ai-files-cli-${cmd}"
+    local external="${SELF_DIR}/ai-files-${cmd}"
 
     if [[ -x "$external" ]]; then
         exec "$external" "$@"
@@ -51,35 +51,35 @@ dispatch_to_external() {
 
 show_root_help() {
     cat <<EOF
-Usage: ai-files-cli <command> [options]
+Usage: ai-files <command> [options]
 
 Commands:
   mcp          Configure and manage MCP servers
-  update       Update ai-files utilities (if ai-files-cli-update exists)
+  update       Update ai-files utilities (if ai-files-update exists)
   version      Show version information
 
 Any command can be overridden by placing a file:
-  ai-files-cli-<command>
+  ai-files-<command>
 
 EOF
 
     # Discover and list extension commands
     local extensions
-    extensions=$(find "$SELF_DIR" -maxdepth 1 -type f -name "ai-files-cli-*" -executable -printf "%f\n" 2>/dev/null | sed 's/^ai-files-cli-//' | sort)
+    extensions=$(find "$SELF_DIR" -maxdepth 1 -type f -name "ai-files-*" -executable -printf "%f\n" 2>/dev/null | sed 's/^ai-files-//' | sort)
 
     if [ -n "$extensions" ]; then
         echo "Extension Commands:"
         echo "$extensions" | while read -r tool; do
-            echo "  ai-files-cli $tool"
+            echo "  ai-files $tool"
         done
         echo ""
     fi
 
     cat <<EOF
 Examples:
-  ai-files-cli mcp list
-  ai-files-cli update
-  ai-files-cli version
+  ai-files mcp list
+  ai-files update
+  ai-files version
 EOF
 }
 
@@ -94,11 +94,11 @@ case "$CMD" in
         show_root_help
         ;;
     mcp)
-        echo "Error: ai-files-cli-mcp not found. Create executable: ${SELF_DIR}/ai-files-cli-mcp" >&2
+        echo "Error: ai-files-mcp not found. Create executable: ${SELF_DIR}/ai-files-mcp" >&2
         exit 1
         ;;
     update)
-        echo "No builtin update command. Provide ai-files-cli-update." >&2
+        echo "No builtin update command. Provide ai-files-update." >&2
         exit 1
         ;;
     version)

@@ -12,7 +12,7 @@ ensure_config_exists() {
 
 show_mcp_help() {
     cat <<EOF
-Usage: ai-files-cli mcp [options] [command]
+Usage: ai-files mcp [options] [command]
 
 Configure and manage MCP servers
 
@@ -31,12 +31,12 @@ Options for 'add':
   --   end of options
 
 Examples:
-  ai-files-cli mcp add --transport http sentry https://mcp.sentry.dev/mcp
-  ai-files-cli mcp add --transport sse asana https://mcp.asana.com/sse
-  ai-files-cli mcp add --transport stdio git --env TOKEN=AA -- npx -y git-mcp-server
+  ai-files mcp add --transport http sentry https://mcp.sentry.dev/mcp
+  ai-files mcp add --transport sse asana https://mcp.asana.com/sse
+  ai-files mcp add --transport stdio git --env TOKEN=AA -- npx -y git-mcp-server
 
 Launching:
-  ai-files-cli mcp serve --env XYZ=111 -- ./server-binary --stdio
+  ai-files mcp serve --env XYZ=111 -- ./server-binary --stdio
 EOF
 }
 
@@ -216,7 +216,7 @@ mcp_serve() {
     done
 
     if (( ${#cmd[@]} == 0 )); then
-        echo "Usage: ai-files-cli mcp serve -- <cmd> [args...]"
+        echo "Usage: ai-files mcp serve -- <cmd> [args...]"
         exit 1
     fi
 

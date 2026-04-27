@@ -24,7 +24,7 @@ We will use a `.worktreeinclude` file in the repository root to track files that
 **How it works:**
 - `.worktreeinclude` uses `.gitignore` syntax to list file patterns
 - Only gitignored files matching patterns are copied (tracked files never duplicated)
-- The `ai-files-cli worktree` command automatically processes `.worktreeinclude`
+- The `ai-files worktree` command automatically processes `.worktreeinclude`
 - When Claude creates a worktree, the setup script copies matching files
 
 **Example `.worktreeinclude`:**
@@ -44,7 +44,7 @@ config/local.*
 ```
 
 **Implementation:**
-- The `bin/ai-files-cli-worktree` script already includes this functionality
+- The `bin/ai-files-worktree` script already includes this functionality
 - `expand_worktree_patterns()` function processes glob patterns
 - Interactive prompts handle file conflicts during setup
 - Candidates are suggested based on gitignored files

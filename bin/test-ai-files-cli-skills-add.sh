@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# test-ai-files-cli-skills-add.sh - Test suite for ai-files-cli-skills-add script
+# test-ai-files-skills-add.sh - Test suite for ai-files-skills-add script
 #
-# This script tests all functionality of the ai-files-cli-skills-add script
+# This script tests all functionality of the ai-files-skills-add script
 # including listing, installing, error handling, and edge cases.
 #
-# Usage: scripts/test-ai-files-cli-skills-add.sh
+# Usage: scripts/test-ai-files-skills-add.sh
 
 set -euo pipefail
 
@@ -14,9 +14,9 @@ set -euo pipefail
 #=============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MAIN_SCRIPT="${SCRIPT_DIR}/ai-files-cli-skills-add"
+MAIN_SCRIPT="${SCRIPT_DIR}/ai-files-skills-add"
 TEST_REPO="vercel-labs/agent-skills"
-TEMP_BASE="/tmp/ai-files-cli-skills-add-test"
+TEMP_BASE="/tmp/ai-files-skills-add-test"
 
 # Test counters
 TESTS_RUN=0
@@ -667,7 +667,7 @@ test_function_documentation() {
 main() {
     echo ""
     echo "========================================"
-    echo "ai-files-cli-skills-add TEST SUITE"
+    echo "ai-files-skills-add TEST SUITE"
     echo "========================================"
     echo "Testing: $MAIN_SCRIPT"
     echo "Test Repository: $TEST_REPO"
