@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+#
+# ai-files-skill-disable - Disable a Claude Code skill by removing symlinks
+#
+# This script removes symlinks from .claude/skills/ and/or .kilo/skills/
+#
+# Usage: ai-files-skill-disable <skill-name> [OPTIONS]
+
+set -euo pipefail
+
+readonly EXIT_SUCCESS=0
+readonly EXIT_NOT_LINKED=1
+readonly EXIT_PERMISSION=2
+readonly EXIT_ERROR=3
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# Resolve script location
+SCRIPT_PATH="$0"
+while [ -h "$SCRIPT_PATH" ]; do
+    DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$DIR/$SCRIPT_PATH"
+done
+SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+PROJECT_ROOT="$(cd "$SELF_DIR/.." && pwd)"
+
+# Command-line options
+CLAUDE_ONLY=false
+KILO_ONLY=false
+SKILL_NAME=""
+
+error() {
+    echo -e "${RED}Error:${NC} $1" >&2
+}
+
+success() {
+    echo -e "${GREEN}✓${NC} $1"
+}
+
+info() {
+    echo "  $1"
+}
+
+show_help() {
+    cat <<EOF
+Usage: ai-files skill disable <skill-name> [OPTIONS]
+
+Disable a Claude Code skill by removing symlinks from target directories.
+
+Arguments:
+  skill-name              Name of the skill to disable (required)
+
+Options:
+  --claude-only           Disable only for Claude (.claude/skills/)
+  --kilo-only            Disable only for Kilo (.kilo/skills/)
+  -h, --help             Show this help message
+
+Examples:
+  ai-files skill disable adr-tools
+  ai-files skill disable lnav --claude-only
+  ai-files skill disable graphify --kilo-only
+
+This only removes symlinks; the skill source files in .ai-files/skills/
+or .ai-files/dotclaude/skills/ are preserved.
+EOF
+}
+
+disable_skill_in_dir() {
+    local skill_name="$1"
+    local target_dir="$2"
+    local target_path="$target_dir/$skill_name"
+
+    # Check if symlink exists
+    if [ ! -e "$target_path" ] && [ ! -L "$target_path" ]; then
+        info "Not linked in $(basename "$target_dir")"
+        return 1
+    fi
+
+    # Remove symlink (or file/directory, but warn)
+    if [ -L "$target_path" ]; then
+        rm -f "$target_path" 2>/dev/null || {
+            error "Failed to remove symlink from $(basename "$target_dir")"
+            return "$EXIT_ERROR"
+        }
+        success "Disabled in $(basename "$target_dir")"
+        return 0
+    else
+        error "Path exists but is not a symlink: $target_path"
+        return "$EXIT_ERROR"
+    fi
+}
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --claude-only)
+                CLAUDE_ONLY=true
+                ;;
+            --kilo-only)
+                KILO_ONLY=true
+                ;;
+            -h|--help)
+                show_help
+                exit "$EXIT_SUCCESS"
+                ;;
+            -*)
+                error "Unknown option: $1"
+                show_help
+                exit "$EXIT_ERROR"
+                ;;
+            *)
+                if [ -z "$SKILL_NAME" ]; then
+                    SKILL_NAME="$1"
+                else
+                    error "Unexpected argument: $1"
+                    show_help
+                    exit "$EXIT_ERROR"
+                fi
+                ;;
+        esac
+        shift
+    done
+
+    if [ -z "$SKILL_NAME" ]; then
+        error "Skill name is required"
+        show_help
+        exit "$EXIT_ERROR"
+    fi
+
+    if [[ "$CLAUDE_ONLY" == true ]] && [[ "$KILO_ONLY" == true ]]; then
+        error "Options --claude-only and --kilo-only are mutually exclusive"
+        exit "$EXIT_ERROR"
+    fi
+}
+
+main() {
+    parse_arguments "$@"
+
+    echo "Disabling skill: $SKILL_NAME"
+
+    local claude_disabled=false
+    local kilo_disabled=false
+
+    # Disable in Claude
+    if [[ "$KILO_ONLY" != true ]]; then
+        if disable_skill_in_dir "$SKILL_NAME" "$PROJECT_ROOT/.claude/skills"; then
+            claude_disabled=true
+        fi
+    fi
+
+    # Disable in Kilo
+    if [[ "$CLAUDE_ONLY" != true ]]; then
+        if disable_skill_in_dir "$SKILL_NAME" "$PROJECT_ROOT/.kilo/skills"; then
+            kilo_disabled=true
+        fi
+    fi
+
+    echo ""
+
+    # Check if anything was disabled
+    if [[ "$claude_disabled" == false ]] && [[ "$kilo_disabled" == false ]]; then
+        info "Skill was not linked in any target directory"
+        exit "$EXIT_SUCCESS"
+    fi
+
+    success "Skill disabled successfully"
+}
+
+main "$@"

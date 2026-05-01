@@ -93,6 +93,53 @@ case "$CMD" in
     help|-h|--help)
         show_root_help
         ;;
+    skill)
+        SUB="${1:-help}"
+        shift || true
+        case "$SUB" in
+            enable)
+                skill_enable="${SELF_DIR}/ai-files-skill-enable"
+                if [[ -x "$skill_enable" ]]; then
+                    exec "$skill_enable" "$@"
+                else
+                    echo "Error: ai-files-skill-enable not found." >&2
+                    exit 1
+                fi
+                ;;
+            disable)
+                skill_disable="${SELF_DIR}/ai-files-skill-disable"
+                if [[ -x "$skill_disable" ]]; then
+                    exec "$skill_disable" "$@"
+                else
+                    echo "Error: ai-files-skill-disable not found." >&2
+                    exit 1
+                fi
+                ;;
+            help|-h|--help|"")
+                cat <<EOF
+Usage: ai-files skill <command> [options]
+
+Manage Claude Code skills.
+
+Commands:
+  enable <name>      Enable a specific skill
+  disable <name>     Disable a specific skill
+
+Examples:
+  ai-files skill enable adr-tools
+  ai-files skill disable lnav
+  ai-files skill enable graphify --claude-only
+
+See 'ai-files skill <command> --help' for more details.
+EOF
+                ;;
+            *)
+                echo "Error: Unknown skill command: $SUB" >&2
+                echo "Valid commands: enable, disable" >&2
+                exit 1
+                ;;
+        esac
+        ;;
     mcp)
         echo "Error: ai-files-mcp not found. Create executable: ${SELF_DIR}/ai-files-mcp" >&2
         exit 1

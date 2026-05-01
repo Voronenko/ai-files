@@ -12,4 +12,7 @@ skill-mattpocock-improve-codebase-architecture:
 	ai-files skill-add mattpocock/skills/improve-codebase-architecture
 
 skill-juliusbrussee-caveman:
-	ai-files skills-add JuliusBrussee/caveman --all
+	ai-files skills-add JuliusBrussee/caveman -l  #--all
+
+skill-google-cloud:
+	ai-files skill-add google/skills -l

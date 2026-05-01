@@ -314,6 +314,9 @@ publish-memory-bank:
 
 ## Common tools installation routines
 
+install-graphify:
+	pipx install graphifyy
+
 install-spec-bmad:
 	npm install -g bmad-method
 install-spec-bmad-local:
