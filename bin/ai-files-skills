@@ -1,0 +1,473 @@
+#!/usr/bin/env bash
+#
+# ai-files-skills - Interactive skill management using fzf
+#
+# This script provides an interactive interface to manage Claude Code skills.
+# It discovers available skills, shows their enabled status, and allows
+# bulk enabling/disabling via fzf selection.
+#
+# Usage: ai-files skills [OPTIONS]
+
+set -euo pipefail
+
+readonly EXIT_SUCCESS=0
+readonly EXIT_NO_SELECTION=1
+readonly EXIT_FZF_MISSING=2
+readonly EXIT_ERROR=3
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Resolve script location
+SCRIPT_PATH="$0"
+while [ -h "$SCRIPT_PATH" ]; do
+    DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$DIR/$SCRIPT_PATH"
+done
+SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+PROJECT_ROOT="$(cd "$SELF_DIR/.." && pwd)"
+
+# Command-line options
+CLAUDE_ONLY=false
+KILO_ONLY=false
+
+error() {
+    echo -e "${RED}Error:${NC} $1" >&2
+}
+
+success() {
+    echo -e "${GREEN}✓${NC} $1"
+}
+
+check_fzf() {
+    if ! command -v fzf &>/dev/null; then
+        return 1
+    fi
+    return 0
+}
+
+show_help() {
+    cat <<EOF
+Usage: ai-files skills [OPTIONS]
+       ai-files skills <SUBCOMMAND> [OPTIONS]
+
+Interactive skill management using fzf.
+
+Subcommands:
+  add <REPO> [OPTIONS]    Install skills from a git repository
+  explore <REPO> [OPTIONS] Explore a repo and generate gilt config
+
+Options:
+  --claude-only           Show and manage only Claude skills (.claude/skills/)
+  --kilo-only            Show and manage only Kilo skills (.kilo/skills/)
+  -h, --help             Show this help message
+
+The interface shows:
+  Status indicators:
+    [✓✓]  Enabled in both Claude and Kilo
+    [✓ ]  Enabled only in Claude
+    [ ✓]  Enabled only in Kilo
+    [  ]  Disabled in both
+
+  Controls:
+    [TAB]   Multi-select
+    [ENTER] Confirm selection
+    [ESC]   Quit
+
+  After selection, choose action:
+    [e] Enable selected skills
+    [d] Disable selected skills
+    [t] Toggle selected skills
+    [q] Quit without changes
+
+Examples:
+  ai-files skills
+  ai-files skills --claude-only
+  ai-files skills --kilo-only
+
+Note: Requires fzf to be installed. Install with:
+  Ubuntu/Debian: sudo apt-get install fzf
+  macOS: brew install fzf
+EOF
+}
+
+discover_skills() {
+    local skills=""
+
+    # Get skills from .ai-files/skills/
+    if [ -d "$PROJECT_ROOT/.ai-files/skills" ]; then
+        while IFS= read -r -d '' skill_dir; do
+            local skill_name
+            skill_name=$(basename "$skill_dir")
+            skills="$skills$skill_name\t$skill_dir\n"
+        done < <(find "$PROJECT_ROOT/.ai-files/skills" -mindepth 1 -maxdepth 1 -type d -not -name ".*" -print0 2>/dev/null)
+    fi
+
+    # Get skills from .ai-files/dotclaude/skills/
+    if [ -d "$PROJECT_ROOT/.ai-files/dotclaude/skills" ]; then
+        while IFS= read -r -d '' skill_dir; do
+            local skill_name
+            skill_name=$(basename "$skill_dir")
+            skills="$skills$skill_name\t$skill_dir\n"
+        done < <(find "$PROJECT_ROOT/.ai-files/dotclaude/skills" -mindepth 1 -maxdepth 1 -type d -not -name ".*" -print0 2>/dev/null)
+    fi
+
+    echo -e "$skills" | sort -u
+}
+
+check_skill_status() {
+    local skill_name="$1"
+    local claude_path="$PROJECT_ROOT/.claude/skills/$skill_name"
+    local kilo_path="$PROJECT_ROOT/.kilo/skills/$skill_name"
+
+    local claude_enabled=false
+    local kilo_enabled=false
+
+    if [ -L "$claude_path" ] && [ -e "$claude_path" ]; then
+        claude_enabled=true
+    fi
+
+    if [ -L "$kilo_path" ] && [ -e "$kilo_path" ]; then
+        kilo_enabled=true
+    fi
+
+    echo "$claude_enabled:$kilo_enabled"
+}
+
+get_skill_description() {
+    local skill_path="$1"
+    local skill_md="$skill_path/SKILL.md"
+
+    if [ ! -f "$skill_md" ]; then
+        echo "No description available"
+        return
+    fi
+
+    # Extract description from YAML front matter
+    local desc
+    desc=$(awk '/^---$/{if(n==1)exit; n=1;next} n==1 && /^description:/{print substr($0,14)}' "$skill_md" 2>/dev/null || echo "")
+
+    if [ -n "$desc" ]; then
+        # Remove quotes and trim
+        desc="${desc%\"}"
+        desc="${desc#\"}"
+        echo "$desc"
+    else
+        echo "See SKILL.md for details"
+    fi
+}
+
+select_skills() {
+    local skills_data="$1"
+
+    local fzf_input
+    fzf_input=$(while IFS=$'\t' read -r name path; do
+        [ -z "$name" ] && continue
+        local status
+        status=$(check_skill_status "$name")
+        local claude_enabled="${status%%:*}"
+        local kilo_enabled="${status##*:}"
+
+        local status_str
+        if [[ "$CLAUDE_ONLY" == true ]]; then
+            if [[ "$claude_enabled" == true ]]; then
+                status_str="✓"
+            else
+                status_str=" "
+            fi
+        elif [[ "$KILO_ONLY" == true ]]; then
+            if [[ "$kilo_enabled" == true ]]; then
+                status_str="✓"
+            else
+                status_str=" "
+            fi
+        else
+            local c=" " k=" "
+            [[ "$claude_enabled" == true ]] && c="✓"
+            [[ "$kilo_enabled" == true ]] && k="✓"
+            status_str="${c}${k}"
+        fi
+
+        local description
+        description=$(get_skill_description "$path")
+        local max_desc=60
+        if [ ${#description} -gt $max_desc ]; then
+            description="${description:0:$max_desc}…"
+        fi
+
+        printf '[%s]\t%s\t%s\t%s\n' "$status_str" "$name" "$description" "$path"
+    done <<< "$skills_data")
+
+    [ -z "$fzf_input" ] && return
+
+    local selected
+    selected=$(echo "$fzf_input" | fzf \
+        --multi \
+        --prompt="Select skills: " \
+        --header="[TAB] multi-select | [ENTER] confirm | [ESC] quit" \
+        --height=~50% \
+        --layout=reverse \
+        --delimiter=$'\t' \
+        --with-nth=1,2,3 \
+        --preview='skill_path="{4}"; cat "$skill_path/SKILL.md" 2>/dev/null | head -40 || echo "No SKILL.md"' \
+        --preview-window=right:40%:wrap \
+        --bind 'tab:toggle+down' \
+        --color='fg+:bold,pointer:green' \
+        || true)
+
+    echo "$selected"
+}
+
+prompt_for_action() {
+    local count="$1"
+
+    cat >&2 <<EOF
+
+Selected $count skill(s)
+
+Choose action:
+  [e] Enable  - create symlinks in .claude/skills/ and/or .kilo/skills/
+  [d] Disable - remove symlinks from .claude/skills/ and/or .kilo/skills/
+  [t] Toggle  - enable if disabled, disable if enabled
+  [q] Quit    - abort without making changes
+
+EOF
+
+    local response
+    if [ -e /dev/tty ]; then
+        read -p "Action (enable/disable/toggle/quit) [e/d/t/q]: " response </dev/tty
+    else
+        read -p "Action (enable/disable/toggle/quit) [e/d/t/q]: " response
+    fi
+
+    case "$response" in
+        [Ee]|[Ee]nable)
+            echo "enable"
+            ;;
+        [Dd]|[Dd]isable)
+            echo "disable"
+            ;;
+        [Tt]|[Tt]oggle)
+            echo "toggle"
+            ;;
+        [Qq]|[Qq]uit|"")
+            echo "quit"
+            ;;
+        *)
+            echo "quit"
+            ;;
+    esac
+}
+
+extract_skill_names() {
+    local selection="$1"
+
+    echo "$selection" | while IFS=$'\t' read -r _ name _ _; do
+        [ -n "$name" ] && echo "$name"
+    done
+}
+
+execute_enable() {
+    local skill_name="$1"
+    local enable_script="$SELF_DIR/ai-files-skill-enable"
+    local args=("$skill_name")
+
+    if [[ "$CLAUDE_ONLY" == true ]]; then
+        args+=(--claude-only)
+    elif [[ "$KILO_ONLY" == true ]]; then
+        args+=(--kilo-only)
+    fi
+
+    if "$enable_script" "${args[@]}" 2>&1; then
+        success "Enabled: $skill_name"
+    else
+        error "Failed to enable: $skill_name"
+        return 1
+    fi
+}
+
+execute_disable() {
+    local skill_name="$1"
+    local disable_script="$SELF_DIR/ai-files-skill-disable"
+    local args=("$skill_name")
+
+    if [[ "$CLAUDE_ONLY" == true ]]; then
+        args+=(--claude-only)
+    elif [[ "$KILO_ONLY" == true ]]; then
+        args+=(--kilo-only)
+    fi
+
+    if "$disable_script" "${args[@]}" 2>&1; then
+        success "Disabled: $skill_name"
+    else
+        error "Failed to disable: $skill_name"
+        return 1
+    fi
+}
+
+execute_toggle() {
+    local skill_name="$1"
+    local status
+    status=$(check_skill_status "$skill_name")
+    local claude_enabled="${status%%:*}"
+    local kilo_enabled="${status##*:}"
+
+    local any_enabled=false
+    if [[ "$claude_enabled" == true ]] || [[ "$kilo_enabled" == true ]]; then
+        any_enabled=true
+    fi
+
+    if [[ "$any_enabled" == true ]]; then
+        execute_disable "$skill_name"
+    else
+        execute_enable "$skill_name"
+    fi
+}
+
+process_selection() {
+    local selection="$1"
+    local action="$2"
+
+    local count
+    count=$(echo "$selection" | grep -c '^[^[:space:]]' || true)
+
+    if [ "$count" -eq 0 ]; then
+        return
+    fi
+
+    local action_label
+    case "$action" in
+        enable)  action_label="Enabling" ;;
+        disable) action_label="Disabling" ;;
+        toggle)  action_label="Toggling" ;;
+    esac
+    echo "$action_label $count skill(s)..."
+
+    local processed=0
+    local failed=0
+    while IFS= read -r skill_name; do
+        [ -z "$skill_name" ] && continue
+        case "$action" in
+            enable)
+                execute_enable "$skill_name" || ((failed++)) || true
+                ;;
+            disable)
+                execute_disable "$skill_name" || ((failed++)) || true
+                ;;
+            toggle)
+                execute_toggle "$skill_name" || ((failed++)) || true
+                ;;
+        esac
+        ((processed++)) || true
+    done <<< "$(extract_skill_names "$selection")"
+
+    echo ""
+    if [ "$failed" -gt 0 ]; then
+        error "Processed $processed skill(s), $failed failed"
+        return 1
+    else
+        success "Processed $processed skill(s)"
+    fi
+}
+
+dispatch_to_subcommand() {
+    local sub="$1"
+    shift
+    local external="${SELF_DIR}/ai-files-skills-${sub}"
+
+    if [[ -x "$external" ]]; then
+        exec "$external" "$@"
+    fi
+}
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --claude-only)
+                CLAUDE_ONLY=true
+                ;;
+            --kilo-only)
+                KILO_ONLY=true
+                ;;
+            -h|--help)
+                show_help
+                exit "$EXIT_SUCCESS"
+                ;;
+            add|explore)
+                dispatch_to_subcommand "$1" "${@:2}"
+                ;;
+            *)
+                # Try dispatching to ai-files-skills-<arg> subcommand
+                dispatch_to_subcommand "$1" "${@:2}"
+                error "Unexpected argument: $1"
+                show_help
+                exit "$EXIT_ERROR"
+                ;;
+        esac
+        shift
+    done
+
+    if [[ "$CLAUDE_ONLY" == true ]] && [[ "$KILO_ONLY" == true ]]; then
+        error "Options --claude-only and --kilo-only are mutually exclusive"
+        exit "$EXIT_ERROR"
+    fi
+}
+
+main() {
+    parse_arguments "$@"
+
+    # Check for fzf
+    if ! check_fzf; then
+        error "fzf is required but not installed"
+        echo "" >&2
+        echo "Install fzf:" >&2
+        echo "  Ubuntu/Debian: sudo apt-get install fzf" >&2
+        echo "  macOS: brew install fzf" >&2
+        echo "" >&2
+        echo "Or use ai-files skill enable/disable commands directly." >&2
+        exit "$EXIT_FZF_MISSING"
+    fi
+
+    # Discover skills
+    local skills_data
+    skills_data=$(discover_skills)
+
+    local skill_count
+    skill_count=$(echo -e "$skills_data" | grep -c '^[^[:space:]]' || true)
+
+    if [ "$skill_count" -eq 0 ]; then
+        error "No skills found"
+        exit "$EXIT_SUCCESS"
+    fi
+
+    echo "Found $skill_count skill(s)"
+    echo ""
+
+    # Show selection interface
+    local selection
+    selection=$(select_skills "$skills_data")
+
+    if [ -z "$selection" ]; then
+        echo "No skills selected"
+        exit "$EXIT_SUCCESS"
+    fi
+
+    # Prompt for action
+    local action
+    action=$(prompt_for_action "$(echo "$selection" | grep -c '^[^[:space:]]' || true)")
+
+    if [[ "$action" == "quit" ]]; then
+        echo "Cancelled"
+        exit "$EXIT_SUCCESS"
+    fi
+
+    # Process selection
+    process_selection "$selection" "$action"
+}
+
+main "$@"

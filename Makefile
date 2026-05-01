@@ -49,6 +49,15 @@ prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prom
 	cp -r rules ./dist/.ai-files/
 	# unified skills
 	cp -r skills ./dist/.ai-files/
+	# vendor skills
+	if [ -d vendor/skills ]; then \
+		cp -r vendor/skills/* ./dist/.ai-files/skills/; \
+	fi
+	# vendor agents
+	if [ -d vendor/agents ]; then \
+		mkdir -p ./dist/.ai-files/agents && \
+		cp -r vendor/agents/* ./dist/.ai-files/agents/; \
+	fi
 	# Makefile for dist operations
 	cp Makefile.dist ./dist/Makefile
 	# gitignore for dist
@@ -80,8 +89,8 @@ create-symlinks:
 	@if [ -L "dist/.claude" ]; then rm "dist/.claude"; fi
 	@if [ -L "dist/.kilo" ]; then rm "dist/.kilo"; fi
 	@if [ -L "dist/.specify" ]; then rm "dist/.specify"; fi
-	@mkdir -p dist/.claude/commands dist/.claude/skills
-	@mkdir -p dist/.kilo/commands dist/.kilo/skills dist/.kilo/rules
+	@mkdir -p dist/.claude/commands dist/.claude/skills dist/.claude/agents
+	@mkdir -p dist/.kilo/commands dist/.kilo/skills dist/.kilo/agents dist/.kilo/rules
 	# Create file-level symlinks for .claude/commands/
 	@find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
 		for f do \
@@ -121,6 +130,24 @@ create-symlinks:
 			ln -sfr "$$f" "dist/.kilo/skills/$$base"; \
 		done \
 	' sh {} +
+	# Create file-level symlinks for .kilo/agents/
+	@if [ -d "dist/.ai-files/agents" ]; then \
+		find dist/.ai-files/agents -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.kilo/agents/$$base"; \
+			done \
+		' sh {} +; \
+	fi
+	# Create dir-level symlinks for .kilo/agents/
+	@if [ -d "dist/.ai-files/agents" ]; then \
+		find dist/.ai-files/agents -mindepth 1 -maxdepth 1 -type d -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.kilo/agents/$$base"; \
+			done \
+		' sh {} +; \
+	fi
 	@find dist/.ai-files/rules -mindepth 1 -maxdepth 1 -exec sh -c '\
 		for f do \
 			base=$$(basename "$$f"); \
@@ -148,6 +175,24 @@ create-symlinks:
 					rm -rf "dist/.claude/skills/$$base"; \
 				fi; \
 				ln -sfr "$$f" "dist/.claude/skills/$$base"; \
+			done \
+		' sh {} +; \
+	fi
+	# Create file-level symlinks for .claude/agents/
+	@if [ -d "dist/.ai-files/agents" ]; then \
+		find dist/.ai-files/agents -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.claude/agents/$$base"; \
+			done \
+		' sh {} +; \
+	fi
+	# Create dir-level symlinks for .claude/agents/
+	@if [ -d "dist/.ai-files/agents" ]; then \
+		find dist/.ai-files/agents -mindepth 1 -maxdepth 1 -type d -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.claude/agents/$$base"; \
 			done \
 		' sh {} +; \
 	fi
@@ -313,6 +358,9 @@ publish-memory-bank:
 
 
 ## Common tools installation routines
+
+install-graphify:
+	pipx install graphifyy
 
 install-spec-bmad:
 	npm install -g bmad-method

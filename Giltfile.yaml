@@ -3,32 +3,44 @@ giltDir: ~/.gilt/clone
 debug: false
 parallel: true
 
-# repositories:
-#   - git: https://github.com/github/spec-kit.git
-#     version: main
-#     sources:
-#       # Copy all Markdown files from templates/commands/
-#       - src: templates/commands/*.md
-#         dstDir: plugins/spec-kit/specflows
-#       - src: templates/*-template.md
-#         dstDir: plugins/spec-kit/dotspecify/templates
-#       - src: scripts/bash/*
-#         dstDir: plugins/spec-kit/dotspecify/scripts/bash/
-#       - src: memory/*
-#         dstDir: plugins/spec-kit/dotspecify/memory
-#     commands:
-#      # rename templates per spec-kit logic
-#       - cmd: bash
-#         args:
-#           - -c
-#           - |
-#             cd plugins/spec-kit/specflows
-#             for f in *.md; do
-#               base=$(basename "$f" .md)
-#               mv "$f" "speckit.${base}.md"
-#             done
-#       - cmd: bash
-#         args:
-#           - -c
-#           - |
-#             chmod +x ./plugins/spec-kit/dotspecify/scripts/bash/*.sh
+repositories:
+  # ai-files skills explore obra/superpowers
+  - git: git@github.com:obra/superpowers.git
+    version: main
+    sources:
+      - src: skills/writing-plans
+        dstDir: vendor/skills/writing-plans
+      - src: skills/systematic-debugging
+        dstDir: vendor/skills/systematic-debugging
+      - src: skills/receiving-code-review
+        dstDir: vendor/skills/receiving-code-review
+      - src: skills/verification-before-completion
+        dstDir: vendor/skills/verification-before-completion
+      - src: skills/dispatching-parallel-agents
+        dstDir: vendor/skills/dispatching-parallel-agents
+      - src: skills/writing-skills
+        dstDir: vendor/skills/writing-skills
+      - src: skills/executing-plans
+        dstDir: vendor/skills/executing-plans
+      - src: skills/brainstorming
+        dstDir: vendor/skills/brainstorming
+      - src: skills/requesting-code-review
+        dstDir: vendor/skills/requesting-code-review
+      - src: skills/subagent-driven-development
+        dstDir: vendor/skills/subagent-driven-development
+      - src: skills/using-git-worktrees
+        dstDir: vendor/skills/using-git-worktrees
+      - src: skills/finishing-a-development-branch
+        dstDir: vendor/skills/finishing-a-development-branch
+      - src: skills/using-superpowers
+        dstDir: vendor/skills/using-superpowers
+      - src: skills/test-driven-development
+        dstDir: vendor/skills/test-driven-development
+      - src: agents/code-reviewer.md
+        dstDir: vendor/agents/code-reviewer
+      - src: commands/write-plan.md
+        dstDir: vendor/agents/write-plan
+      - src: commands/execute-plan.md
+        dstDir: vendor/agents/execute-plan
+      - src: commands/brainstorm.md
+        dstDir: vendor/agents/brainstorm
