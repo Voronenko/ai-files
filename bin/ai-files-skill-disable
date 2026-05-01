@@ -87,7 +87,8 @@ disable_skill_in_dir() {
             error "Failed to remove symlink from $(basename "$target_dir")"
             return "$EXIT_ERROR"
         }
-        success "Disabled in $(basename "$target_dir")"
+        local rel_path="${target_path#"$PROJECT_ROOT/"}"
+        success "Removed $rel_path"
         return 0
     else
         error "Path exists but is not a symlink: $target_path"

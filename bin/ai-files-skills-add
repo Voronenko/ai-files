@@ -108,15 +108,15 @@ normalize_url() {
     local source="$1"
     local normalized_url=""
 
-    # GitHub shorthand: owner/repo
-    if [[ "$source" =~ ^[^/]+/[^/]+$ ]]; then
-        normalized_url="https://github.com/${source}"
     # Already has protocol
-    elif [[ "$source" =~ ^https?:// ]]; then
+    if [[ "$source" =~ ^https?:// ]]; then
         normalized_url="$source"
     # SSH URL
     elif [[ "$source" =~ ^git@ ]]; then
         normalized_url="$source"
+    # GitHub shorthand: owner/repo
+    elif [[ "$source" =~ ^[^/]+/[^/]+$ ]]; then
+        normalized_url="https://github.com/${source}"
     else
         error "Invalid repository source: $source"
         exit "$EXIT_EXPECTED_FAILURE"

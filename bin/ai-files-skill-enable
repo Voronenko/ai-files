@@ -120,7 +120,7 @@ enable_skill_in_dir() {
     # Check if already enabled
     if [ -L "$target_path" ]; then
         if [ -e "$target_path" ]; then
-            info "Already enabled in $(basename "$target_dir")"
+            info "Already enabled: ${target_path#"$PROJECT_ROOT/"}"
             return 0
         else
             # Broken symlink, remove it
@@ -138,7 +138,8 @@ enable_skill_in_dir() {
         return "$EXIT_ERROR"
     }
 
-    success "Enabled in $(basename "$target_dir")"
+    local rel_path="${target_path#"$PROJECT_ROOT/"}"
+    success "Created $rel_path"
     return 0
 }
 

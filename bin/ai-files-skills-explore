@@ -1,0 +1,467 @@
+#!/usr/bin/env bash
+#
+# ai-files-skills-explore - Explore a git repo and generate gilt config for skills
+#
+# Clones a repository, discovers skills, and outputs a gilt.yaml config
+# mapping each skill to skills_lib/<skill_name>.
+#
+# Usage: ai-files-skills-explore <REPO_SOURCE> [OPTIONS]
+
+set -euo pipefail
+
+#=============================================================================
+# EXIT CODE CONSTANTS
+#=============================================================================
+
+readonly EXIT_SUCCESS=0
+readonly EXIT_EXPECTED_FAILURE=1
+readonly EXIT_ERROR=2
+readonly EXIT_PERMISSION=3
+readonly EXIT_NETWORK=4
+readonly EXIT_INVALID_SKILL=5
+
+#=============================================================================
+# GLOBAL VARIABLES
+#=============================================================================
+
+GLOBAL_MODE=false
+BRANCH="main"
+OUTPUT_FILE=""
+REPO_SOURCE=""
+TEMP_DIR=""
+
+#=============================================================================
+# SIGNAL TRAPPING
+#=============================================================================
+
+# shellcheck disable=SC2317
+cleanup() {
+    local exit_code=$?
+    if [[ -n "${TEMP_DIR:-}" ]] && [[ -d "$TEMP_DIR" ]]; then
+        rm -rf "$TEMP_DIR"
+    fi
+    exit "$exit_code"
+}
+
+trap cleanup EXIT INT ERR
+
+#=============================================================================
+# ERROR HANDLING
+#=============================================================================
+
+error() {
+    local message="$1"
+    echo "Error: $message" >&2
+}
+
+#=============================================================================
+# PREREQUISITE CHECKS
+#=============================================================================
+
+check_git() {
+    if ! command -v git &>/dev/null; then
+        error "git is not installed"
+        exit "$EXIT_ERROR"
+    fi
+}
+
+check_yq() {
+    if ! command -v yq &>/dev/null; then
+        error "yq is not installed"
+        exit "$EXIT_ERROR"
+    fi
+}
+
+#=============================================================================
+# URL NORMALIZATION
+#=============================================================================
+
+normalize_url() {
+    local source="$1"
+    local normalized_url=""
+
+    if [[ "$source" =~ ^https?:// ]]; then
+        normalized_url="$source"
+    elif [[ "$source" =~ ^git@ ]]; then
+        normalized_url="$source"
+    elif [[ "$source" =~ ^[^/]+/[^/]+$ ]]; then
+        normalized_url="https://github.com/${source}"
+    else
+        error "Invalid repository source: $source"
+        exit "$EXIT_EXPECTED_FAILURE"
+    fi
+
+    echo "$normalized_url"
+}
+
+convert_to_git_url() {
+    local url="$1"
+
+    if [[ "$url" =~ ^https://github\.com/([^/]+/[^/]+)(\.git)?$ ]]; then
+        local repo_path="${BASH_REMATCH[1]}"
+        echo "git@github.com:${repo_path}.git"
+    else
+        echo "$url"
+    fi
+}
+
+#=============================================================================
+# TEMPORARY DIRECTORY MANAGEMENT
+#=============================================================================
+
+create_temp_dir() {
+    TEMP_DIR="$(mktemp -d -t skills-explore-XXXXXX 2>/dev/null || mktemp -d)" || {
+        error "Cannot create temporary directory"
+        exit "$EXIT_ERROR"
+    }
+}
+
+#=============================================================================
+# GIT CLONE
+#=============================================================================
+
+clone_repository() {
+    local repo_url="$1"
+    local branch="$2"
+    local timeout="${SKILLS_CLONE_TIMEOUT:-300}"
+
+    echo "==> Cloning repository..." >&2
+
+    if command -v timeout &>/dev/null; then
+        if ! timeout "$timeout" git clone --depth 1 --branch "$branch" --quiet "$repo_url" "$TEMP_DIR" 2>/dev/null; then
+            if ! timeout "$timeout" git clone --depth 1 --quiet "$repo_url" "$TEMP_DIR" 2>/dev/null; then
+                error "Unable to clone repository '$repo_url'"
+                exit "$EXIT_NETWORK"
+            fi
+        fi
+    else
+        if ! git clone --depth 1 --branch "$branch" --quiet "$repo_url" "$TEMP_DIR" 2>/dev/null; then
+            if ! git clone --depth 1 --quiet "$repo_url" "$TEMP_DIR" 2>/dev/null; then
+                error "Unable to clone repository '$repo_url'"
+                exit "$EXIT_NETWORK"
+            fi
+        fi
+    fi
+}
+
+detect_default_branch() {
+    local branch
+    branch=$(git -C "$TEMP_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+    echo "$branch"
+}
+
+#=============================================================================
+# SKILL DISCOVERY
+#=============================================================================
+
+discover_skills() {
+    local repo_path="$1"
+    local skill_files=()
+    local install_internal="${INSTALL_INTERNAL_SKILLS:-0}"
+
+    local priority_dirs=(
+        "."
+        "skills/"
+        "skills/.curated/"
+        "skills/.experimental/"
+        "skills/.system/"
+    )
+
+    for dir in "${priority_dirs[@]}"; do
+        local search_path="$repo_path/$dir"
+        if [[ -d "$search_path" ]]; then
+            while IFS= read -r -d '' file; do
+                skill_files+=("$file")
+            done < <(find "$search_path" -maxdepth 2 -name "SKILL.md" -print0 2>/dev/null)
+        fi
+    done
+
+    if [[ ${#skill_files[@]} -eq 0 ]]; then
+        while IFS= read -r -d '' file; do
+            if ! echo "$file" | grep -qE "(node_modules/|\.git/|dist/|build/|__pycache__|\.venv/|venv/)"; then
+                skill_files+=("$file")
+            fi
+        done < <(find "$repo_path" -maxdepth 5 -name "SKILL.md" -print0 2>/dev/null)
+    fi
+
+    for skill_file in "${skill_files[@]}"; do
+        parse_skill_file "$skill_file" "$install_internal" "$repo_path"
+    done
+}
+
+extract_front_matter() {
+    local file="$1"
+    awk '/^---$/{n++; next} n==1' "$file"
+}
+
+parse_skill_file() {
+    local skill_file="$1"
+    local install_internal="$2"
+    local repo_path="$3"
+    local name description is_internal skill_dir front_matter relative_src
+
+    front_matter=$(extract_front_matter "$skill_file")
+
+    name=$(echo "$front_matter" | yq '.name' 2>/dev/null | head -1)
+
+    if [[ -z "$name" ]] || [[ "$name" == "null" ]] || [[ "$name" == *"null"* ]]; then
+        return 1
+    fi
+
+    description=$(echo "$front_matter" | yq '.description' 2>/dev/null | head -1)
+
+    if [[ -z "$description" ]] || [[ "$description" == "null" ]] || [[ "$description" == *"null"* ]]; then
+        return 1
+    fi
+
+    is_internal=$(echo "$front_matter" | yq '.metadata.internal // false' 2>/dev/null | head -1)
+    if [[ -z "$is_internal" ]] || [[ "$is_internal" == "null" ]]; then
+        is_internal="false"
+    fi
+
+    if [[ "$is_internal" == "true" ]] && [[ "$install_internal" != "1" ]]; then
+        return 0
+    fi
+
+    skill_dir=$(dirname "$skill_file")
+    relative_src="${skill_dir#$repo_path/}"
+
+    local sanitized_name
+    sanitized_name=$(sanitize_skill_name "$name")
+
+    printf '%s\t%s\t%s\t%s\n' "$sanitized_name" "$description" "$relative_src" "$is_internal"
+}
+
+#=============================================================================
+# AGENT DISCOVERY
+#=============================================================================
+
+discover_agents() {
+    local repo_path="$1"
+    local agents_dirs=("agents" "commands" ".claude/agents")
+
+    for dir in "${agents_dirs[@]}"; do
+        local search_path="$repo_path/$dir"
+        if [[ -d "$search_path" ]]; then
+            find "$search_path" -maxdepth 2 -name "*.md" -print0 2>/dev/null
+        fi
+    done
+}
+
+sanitize_agent_name() {
+    local raw_name="$1"
+    local sanitized
+
+    sanitized="${raw_name%.md}"
+    sanitized="${sanitized,,}"
+    sanitized=$(echo "$sanitized" | tr -c 'a-z0-9\n' '-')
+    while [[ "$sanitized" == *"--"* ]]; do
+        sanitized="${sanitized//--/-}"
+    done
+    sanitized="${sanitized#-}"
+    sanitized="${sanitized%-}"
+
+    echo "$sanitized"
+}
+
+sanitize_skill_name() {
+    local raw_name="$1"
+    local sanitized
+
+    sanitized="${raw_name,,}"
+    sanitized=$(echo "$sanitized" | tr -c 'a-z0-9\n' '-')
+    while [[ "$sanitized" == *"--"* ]]; do
+        sanitized="${sanitized//--/-}"
+    done
+    sanitized="${sanitized#-}"
+    sanitized="${sanitized%-}"
+
+    echo "$sanitized"
+}
+
+#=============================================================================
+# GILT CONFIG GENERATION
+#=============================================================================
+
+generate_gilt_config() {
+    local repo_url="$1"
+    local branch="$2"
+    local skills_data="$3"
+    local agents_data="$4"
+    local output_file="$5"
+
+    local git_url
+    git_url=$(convert_to_git_url "$repo_url")
+
+    local config_content
+    config_content="---
+giltDir: ~/.gilt/clone
+debug: false
+parallel: true
+
+repositories:
+  # ai-files skills explore ${REPO_SOURCE}
+  - git: ${git_url}
+    version: ${branch}
+    sources:"
+
+    while IFS=$'\t' read -r name description relative_src _; do
+        config_content+=$(printf "\n      - src: %s\n        dstDir: vendor/skills/%s" "$relative_src" "$name")
+    done <<< "$skills_data"
+
+    if [[ -n "$agents_data" ]]; then
+        while IFS=$'\t' read -r name relative_src; do
+            [[ -z "$name" ]] && continue
+            config_content+=$(printf "\n      - src: %s\n        dstDir: vendor/agents/%s" "$relative_src" "$name")
+        done <<< "$agents_data"
+    fi
+
+    if [[ -n "$output_file" ]]; then
+        echo "$config_content" > "$output_file"
+        echo "==> Config written to $output_file" >&2
+    else
+        echo "$config_content"
+    fi
+}
+
+#=============================================================================
+# COMMAND-LINE ARGUMENT PARSING
+#=============================================================================
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --branch|-b)
+                if [[ -z "${2:-}" ]] || [[ "${2:0:1}" == "-" ]]; then
+                    error "Option --branch requires an argument"
+                    exit "$EXIT_ERROR"
+                fi
+                BRANCH="$2"
+                shift
+                ;;
+            --output|-o)
+                if [[ -z "${2:-}" ]] || [[ "${2:0:1}" == "-" ]]; then
+                    error "Option --output requires an argument"
+                    exit "$EXIT_ERROR"
+                fi
+                OUTPUT_FILE="$2"
+                shift
+                ;;
+            --help|-h)
+                show_usage
+                exit "$EXIT_SUCCESS"
+                ;;
+            -*)
+                error "Unknown option: $1"
+                show_usage
+                exit "$EXIT_ERROR"
+                ;;
+            *)
+                if [[ -n "$REPO_SOURCE" ]]; then
+                    error "Unexpected argument: $1"
+                    exit "$EXIT_ERROR"
+                fi
+                REPO_SOURCE="$1"
+                ;;
+        esac
+        shift
+    done
+
+    if [[ -z "$REPO_SOURCE" ]]; then
+        error "Repository source is required"
+        show_usage
+        exit "$EXIT_ERROR"
+    fi
+}
+
+#=============================================================================
+# USAGE
+#=============================================================================
+
+show_usage() {
+    cat <<'EOF'
+Usage: ai-files-skills-explore <REPO_SOURCE> [OPTIONS]
+
+Explore a git repository and generate gilt config for discovered skills.
+
+Arguments:
+  REPO_SOURCE            Repository source (URL, shorthand, or SSH)
+                         Examples: vercel-labs/agent-skills
+                                   https://github.com/vercel-labs/agent-skills
+                                   git@github.com:vercel-labs/agent-skills.git
+
+Options:
+  -b, --branch <ref>     Git branch/tag to clone (default: main)
+  -o, --output <file>    Write config to file instead of stdout
+  -h, --help             Show this help message
+
+Examples:
+  # Explore and print gilt config
+  ai-files-skills-explore vercel-labs/agent-skills
+
+  # Specify branch and write to file
+  ai-files-skills-explore vercel-labs/agent-skills --branch v1.0 --output gilt.yml
+
+  # Use SSH URL
+  ai-files-skills-explore git@github.com:obra/superpowers.git
+
+Environment Variables:
+  INSTALL_INTERNAL_SKILLS    Include skills marked as internal (default: 0)
+  SKILLS_CLONE_TIMEOUT       Git clone timeout in seconds (default: 300)
+EOF
+}
+
+#=============================================================================
+# MAIN ENTRY POINT
+#=============================================================================
+
+main() {
+    parse_arguments "$@"
+
+    check_git
+    check_yq
+
+    local repo_url
+    repo_url="$(normalize_url "$REPO_SOURCE")"
+
+    create_temp_dir
+
+    clone_repository "$repo_url" "$BRANCH"
+
+    local actual_branch
+    actual_branch=$(detect_default_branch)
+
+    echo "==> Discovering skills..." >&2
+    local discovered_skills
+    discovered_skills=$(discover_skills "$TEMP_DIR")
+
+    local skill_count
+    skill_count=$(echo "$discovered_skills" | grep -c '^[^[:space:]]' || true)
+
+    echo "==> Discovering agents..." >&2
+    local discovered_agents=""
+    discovered_agents=$(while IFS= read -r -d '' agent_file; do
+        local agent_rel="${agent_file#$TEMP_DIR/}"
+        local agent_basename
+        agent_basename=$(basename "$agent_file")
+        local agent_name
+        agent_name=$(sanitize_agent_name "$agent_basename")
+        printf '%s\t%s\n' "$agent_name" "$agent_rel"
+    done < <(discover_agents "$TEMP_DIR"))
+
+    local agent_count=0
+    if [[ -n "$discovered_agents" ]]; then
+        agent_count=$(echo "$discovered_agents" | grep -c '^[^[:space:]]' || true)
+    fi
+
+    if [[ "$skill_count" -eq 0 ]] && [[ "$agent_count" -eq 0 ]]; then
+        error "No skills or agents found in repository"
+        exit "$EXIT_INVALID_SKILL"
+    fi
+
+    echo "==> Found $skill_count skill(s), $agent_count agent(s)" >&2
+
+    generate_gilt_config "$repo_url" "$actual_branch" "$discovered_skills" "$discovered_agents" "$OUTPUT_FILE"
+}
+
+main "$@"

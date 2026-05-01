@@ -54,8 +54,13 @@ check_fzf() {
 show_help() {
     cat <<EOF
 Usage: ai-files skills [OPTIONS]
+       ai-files skills <SUBCOMMAND> [OPTIONS]
 
 Interactive skill management using fzf.
+
+Subcommands:
+  add <REPO> [OPTIONS]    Install skills from a git repository
+  explore <REPO> [OPTIONS] Explore a repo and generate gilt config
 
 Options:
   --claude-only           Show and manage only Claude skills (.claude/skills/)
@@ -221,15 +226,17 @@ select_skills() {
 prompt_for_action() {
     local count="$1"
 
-    echo ""
-    echo "Selected $count skill(s)"
-    echo ""
-    echo "Choose action:"
-    echo "  [e] Enable  - create symlinks in .claude/skills/ and/or .kilo/skills/"
-    echo "  [d] Disable - remove symlinks from .claude/skills/ and/or .kilo/skills/"
-    echo "  [t] Toggle  - enable if disabled, disable if enabled"
-    echo "  [q] Quit    - abort without making changes"
-    echo ""
+    cat >&2 <<EOF
+
+Selected $count skill(s)
+
+Choose action:
+  [e] Enable  - create symlinks in .claude/skills/ and/or .kilo/skills/
+  [d] Disable - remove symlinks from .claude/skills/ and/or .kilo/skills/
+  [t] Toggle  - enable if disabled, disable if enabled
+  [q] Quit    - abort without making changes
+
+EOF
 
     local response
     if [ -e /dev/tty ]; then
@@ -276,7 +283,12 @@ execute_enable() {
         args+=(--kilo-only)
     fi
 
-    "$enable_script" "${args[@]}" >/dev/null 2>&1 || true
+    if "$enable_script" "${args[@]}" 2>&1; then
+        success "Enabled: $skill_name"
+    else
+        error "Failed to enable: $skill_name"
+        return 1
+    fi
 }
 
 execute_disable() {
@@ -290,7 +302,12 @@ execute_disable() {
         args+=(--kilo-only)
     fi
 
-    "$disable_script" "${args[@]}" >/dev/null 2>&1 || true
+    if "$disable_script" "${args[@]}" 2>&1; then
+        success "Disabled: $skill_name"
+    else
+        error "Failed to disable: $skill_name"
+        return 1
+    fi
 }
 
 execute_toggle() {
@@ -323,26 +340,49 @@ process_selection() {
         return
     fi
 
-    echo "Processing $count skill(s)..."
+    local action_label
+    case "$action" in
+        enable)  action_label="Enabling" ;;
+        disable) action_label="Disabling" ;;
+        toggle)  action_label="Toggling" ;;
+    esac
+    echo "$action_label $count skill(s)..."
 
     local processed=0
+    local failed=0
     while IFS= read -r skill_name; do
+        [ -z "$skill_name" ] && continue
         case "$action" in
             enable)
-                execute_enable "$skill_name"
+                execute_enable "$skill_name" || ((failed++)) || true
                 ;;
             disable)
-                execute_disable "$skill_name"
+                execute_disable "$skill_name" || ((failed++)) || true
                 ;;
             toggle)
-                execute_toggle "$skill_name"
+                execute_toggle "$skill_name" || ((failed++)) || true
                 ;;
         esac
         ((processed++)) || true
     done <<< "$(extract_skill_names "$selection")"
 
     echo ""
-    success "Processed $processed skill(s)"
+    if [ "$failed" -gt 0 ]; then
+        error "Processed $processed skill(s), $failed failed"
+        return 1
+    else
+        success "Processed $processed skill(s)"
+    fi
+}
+
+dispatch_to_subcommand() {
+    local sub="$1"
+    shift
+    local external="${SELF_DIR}/ai-files-skills-${sub}"
+
+    if [[ -x "$external" ]]; then
+        exec "$external" "$@"
+    fi
 }
 
 parse_arguments() {
@@ -358,12 +398,12 @@ parse_arguments() {
                 show_help
                 exit "$EXIT_SUCCESS"
                 ;;
-            -*)
-                error "Unknown option: $1"
-                show_help
-                exit "$EXIT_ERROR"
+            add|explore)
+                dispatch_to_subcommand "$1" "${@:2}"
                 ;;
             *)
+                # Try dispatching to ai-files-skills-<arg> subcommand
+                dispatch_to_subcommand "$1" "${@:2}"
                 error "Unexpected argument: $1"
                 show_help
                 exit "$EXIT_ERROR"

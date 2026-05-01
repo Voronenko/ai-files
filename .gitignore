@@ -9,3 +9,5 @@ dist/*
 bin/goose
 docs/plans/
 ai-files-*.zip
+#3rd party skills
+vendor/
