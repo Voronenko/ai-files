@@ -3,3 +3,17 @@ repos:
     rev: v1.37.1
     hooks:
       - id: yamllint
+  - repo: local
+    hooks:
+      - id: sort-gitignore
+        name: Sort .gitignore (preserve comments)
+        entry: >
+          sh -c '
+          tmp=$(mktemp) &&
+          {
+            grep "^#" .gitignore;
+            grep -v "^#" .gitignore | grep -v "^$" | sort -u;
+          } > "$tmp" &&
+          mv "$tmp" .gitignore
+          '
+        language: system

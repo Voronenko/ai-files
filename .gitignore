@@ -1,13 +1,11 @@
-.roomodes
-.kilo
-.kilo
+ai-files-*.zip
+bin/goose
+.cache
 .claude
 dist/*
-.env
-.specify
-.cache
-bin/goose
 docs/plans/
-ai-files-*.zip
-#3rd party skills
+.env
+.kilo
+.roomodes
+.specify
 vendor/
