@@ -80,8 +80,70 @@ prepare-claude:
 	@find ./dist/.ai-files/dotclaude/commands -type l -name 'speckit*.md' -delete
 	@echo "✅ Removed speckit command symlinks (available as skills)"
 
-build: prepare-dist prepare-claude create-symlinks
+build: prepare-dist prepare-claude create-default-symlinks
 	echo build completed
+
+# Helper: Read default skills from YAML, output space-separated list
+get-default-skills:
+	@if [ ! -f "default_skills.yaml" ]; then \
+		echo "" >&2; \
+		exit 1; \
+	fi
+	@if command -v yq >/dev/null 2>&1; then \
+		yq eval '.default_skills[]' default_skills.yaml 2>/dev/null | tr '\n' ' ' | sed 's/ *$$//'; \
+	else \
+		grep -E '^\s+-\s+[a-zA-Z0-9_-]+' default_skills.yaml 2>/dev/null | \
+			sed 's/^\s*-\s*//' | tr '\n' ' ' | sed 's/ *$$//'; \
+	fi
+
+# Helper: Link default skills from config to both .claude and .kilo
+_link-default-skills:
+	@echo "Linking default skills..."
+	@mkdir -p dist/.claude/skills dist/.kilo/skills
+	@DEFAULT_SKILLS=$$(make --no-print-directory get-default-skills 2>/dev/null); \
+	if [ -z "$$DEFAULT_SKILLS" ]; then \
+		echo "  ⚠️  Using all skills (default_skills.yaml not found or empty)"; \
+		DEFAULT_SKILLS=$$(find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -exec basename {} \;); \
+	fi; \
+	for skill in $$DEFAULT_SKILLS; do \
+		if [ -e "dist/.ai-files/skills/$$skill" ]; then \
+			ln -sfr "dist/.ai-files/skills/$$skill" "dist/.claude/skills/$$skill" 2>/dev/null; \
+			ln -sfr "dist/.ai-files/skills/$$skill" "dist/.kilo/skills/$$skill" 2>/dev/null; \
+		fi \
+	done; \
+	echo "  ✅ Linked $$(echo $$DEFAULT_SKILLS | wc -w) skills"
+
+# Create symlinks with default skills filter
+# Runs create-symlinks first, then removes skills not in default_skills.yaml
+create-default-symlinks:
+	@echo "Creating symlinks with default skills filter..."
+	@$(MAKE) --no-print-directory create-symlinks
+	@echo "Filtering to default skills only..."
+	@DEFAULT_SKILLS=$$(make --no-print-directory get-default-skills 2>/dev/null); \
+	if [ -z "$$DEFAULT_SKILLS" ]; then \
+		echo "  ⚠️  No default skills configured, keeping all skills"; \
+	else \
+		echo "  Keeping: $$DEFAULT_SKILLS"; \
+		cd dist/.claude/skills && \
+		for item in *; do \
+			if [ "$$item" != "*" ] && [ -e "$$item" ]; then \
+				if ! echo "$$DEFAULT_SKILLS" | grep -q "$$item"; then \
+					rm -rf "$$item" 2>/dev/null; \
+				fi; \
+			fi; \
+		done; \
+		cd - >/dev/null; \
+		cd dist/.kilo/skills && \
+		for item in *; do \
+			if [ "$$item" != "*" ] && [ -e "$$item" ]; then \
+				if ! echo "$$DEFAULT_SKILLS" | grep -q "$$item"; then \
+					rm -rf "$$item" 2>/dev/null; \
+				fi; \
+			fi; \
+		done; \
+		cd - >/dev/null; \
+		echo "  ✅ Filtered to default skills"; \
+	fi
 
 create-symlinks:
 	@echo "Creating .claude/ and .kilo/ directories with symlinks..."
@@ -154,15 +216,25 @@ create-symlinks:
 			ln -sfr "$$f" "dist/.kilo/rules/$$base"; \
 		done \
 	' sh {} +
-	# Link everything from dist/.ai-files/dotclaude/ to dist/.claude/ (except commands, which are handled above)
+	# Link everything from dist/.ai-files/dotclaude/ to dist/.claude/ (except commands and hooks, handled separately)
 	@if [ -d "dist/.ai-files/dotclaude" ]; then \
-		find dist/.ai-files/dotclaude -mindepth 1 -maxdepth 1 ! -name "commands" -exec sh -c '\
+		find dist/.ai-files/dotclaude -mindepth 1 -maxdepth 1 ! -name "commands" ! -name "hooks" -exec sh -c '\
 			for f do \
 				base=$$(basename "$$f"); \
 				if [ -L "dist/.claude/$$base" ]; then \
 					rm "dist/.claude/$$base"; \
 				fi; \
 				ln -sfr "$$f" "dist/.claude/$$base"; \
+			done \
+		' sh {} +; \
+	fi
+	# Link individual files from hooks/ directory
+	@if [ -d "dist/.ai-files/dotclaude/hooks" ]; then \
+		mkdir -p dist/.claude/hooks; \
+		find dist/.ai-files/dotclaude/hooks -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.claude/hooks/$$base"; \
 			done \
 		' sh {} +; \
 	fi
