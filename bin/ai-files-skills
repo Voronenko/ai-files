@@ -134,35 +134,6 @@ check_skill_status() {
     echo "$claude_enabled:$kilo_enabled"
 }
 
-get_status_indicator() {
-    local claude_enabled="$1"
-    local kilo_enabled="$2"
-
-    if [[ "$CLAUDE_ONLY" == true ]]; then
-        if [[ "$claude_enabled" == true ]]; then
-            echo -e "[${GREEN}✓${NC}]"
-        else
-            echo "[ ]"
-        fi
-    elif [[ "$KILO_ONLY" == true ]]; then
-        if [[ "$kilo_enabled" == true ]]; then
-            echo -e "[${GREEN}✓${NC}]"
-        else
-            echo "[ ]"
-        fi
-    else
-        if [[ "$claude_enabled" == true ]] && [[ "$kilo_enabled" == true ]]; then
-            echo -e "[${GREEN}✓✓${NC}]"
-        elif [[ "$claude_enabled" == true ]]; then
-            echo -e "[${GREEN}✓${NC} ]"
-        elif [[ "$kilo_enabled" == true ]]; then
-            echo "[ ${GREEN}✓${NC}]"
-        else
-            echo "[  ]"
-        fi
-    fi
-}
-
 get_skill_description() {
     local skill_path="$1"
     local skill_md="$skill_path/SKILL.md"
@@ -186,50 +157,63 @@ get_skill_description() {
     fi
 }
 
-format_skill_entry() {
-    local skill_name="$1"
-    local skill_path="$2"
-
-    local status
-    status=$(check_skill_status "$skill_name")
-    local claude_enabled="${status%%:*}"
-    local kilo_enabled="${status##*:}"
-
-    local status_indicator
-    status_indicator=$(get_status_indicator "$claude_enabled" "$kilo_enabled")
-
-    local description
-    description=$(get_skill_description "$skill_path")
-
-    # Truncate description if too long
-    local max_desc=50
-    if [ ${#description} -gt $max_desc ]; then
-        description="${description:0:$max_desc}…"
-    fi
-
-    # Format: status + skill_name + description
-    printf "%s  %-25s  %s" "$status_indicator" "$skill_name" "$description"
-}
-
 select_skills() {
     local skills_data="$1"
 
-    local fzf_args=(
-        --multi
-        --prompt="Select skills: "
-        --header="[TAB] Multi-select | [ENTER] Confirm | [ESC] Quit"
-        --height=50%
-        --layout=reverse
-        --delimiter=$'\t'
-        --with-nth=2
-        --preview="echo {} | cut -f2 | xargs cat {}/SKILL.md 2>/dev/null | head -30 || echo 'No SKILL.md'"
-        --preview-window=right:30%
-    )
+    local fzf_input
+    fzf_input=$(while IFS=$'\t' read -r name path; do
+        [ -z "$name" ] && continue
+        local status
+        status=$(check_skill_status "$name")
+        local claude_enabled="${status%%:*}"
+        local kilo_enabled="${status##*:}"
+
+        local status_str
+        if [[ "$CLAUDE_ONLY" == true ]]; then
+            if [[ "$claude_enabled" == true ]]; then
+                status_str="✓"
+            else
+                status_str=" "
+            fi
+        elif [[ "$KILO_ONLY" == true ]]; then
+            if [[ "$kilo_enabled" == true ]]; then
+                status_str="✓"
+            else
+                status_str=" "
+            fi
+        else
+            local c=" " k=" "
+            [[ "$claude_enabled" == true ]] && c="✓"
+            [[ "$kilo_enabled" == true ]] && k="✓"
+            status_str="${c}${k}"
+        fi
+
+        local description
+        description=$(get_skill_description "$path")
+        local max_desc=60
+        if [ ${#description} -gt $max_desc ]; then
+            description="${description:0:$max_desc}…"
+        fi
+
+        printf '[%s]\t%s\t%s\t%s\n' "$status_str" "$name" "$description" "$path"
+    done <<< "$skills_data")
+
+    [ -z "$fzf_input" ] && return
 
     local selected
-    selected=$(echo -e "$skills_data" | while IFS=$'\t' read -r name path; do
-        format_skill_entry "$name" "$path"
-    done | fzf "${fzf_args[@]}" 2>/dev/null || true)
+    selected=$(echo "$fzf_input" | fzf \
+        --multi \
+        --prompt="Select skills: " \
+        --header="[TAB] multi-select | [ENTER] confirm | [ESC] quit" \
+        --height=~50% \
+        --layout=reverse \
+        --delimiter=$'\t' \
+        --with-nth=1,2,3 \
+        --preview='skill_path="{4}"; cat "$skill_path/SKILL.md" 2>/dev/null | head -40 || echo "No SKILL.md"' \
+        --preview-window=right:40%:wrap \
+        --bind 'tab:toggle+down' \
+        --color='fg+:bold,pointer:green' \
+        || true)
 
     echo "$selected"
 }
@@ -241,14 +225,18 @@ prompt_for_action() {
     echo "Selected $count skill(s)"
     echo ""
     echo "Choose action:"
-    echo "  [e] Enable selected skills"
-    echo "  [d] Disable selected skills"
-    echo "  [t] Toggle selected skills"
-    echo "  [q] Quit without changes"
+    echo "  [e] Enable  - create symlinks in .claude/skills/ and/or .kilo/skills/"
+    echo "  [d] Disable - remove symlinks from .claude/skills/ and/or .kilo/skills/"
+    echo "  [t] Toggle  - enable if disabled, disable if enabled"
+    echo "  [q] Quit    - abort without making changes"
     echo ""
 
     local response
-    read -p "Action [e/d/t/q]: " response
+    if [ -e /dev/tty ]; then
+        read -p "Action (enable/disable/toggle/quit) [e/d/t/q]: " response </dev/tty
+    else
+        read -p "Action (enable/disable/toggle/quit) [e/d/t/q]: " response
+    fi
 
     case "$response" in
         [Ee]|[Ee]nable)
@@ -271,14 +259,9 @@ prompt_for_action() {
 
 extract_skill_names() {
     local selection="$1"
-    local skill_names=""
 
-    # Extract skill names from selection (first word after status indicator)
-    echo "$selection" | while read -r line; do
-        # Extract skill name (after status indicator)
-        local skill_name
-        skill_name=$(echo "$line" | awk '{print $2}')
-        echo "$skill_name"
+    echo "$selection" | while IFS=$'\t' read -r _ name _ _; do
+        [ -n "$name" ] && echo "$name"
     done
 }
 
