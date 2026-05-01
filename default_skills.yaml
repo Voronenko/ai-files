@@ -1,0 +1,15 @@
+# Default skills to link to .claude/ and .kilo/ directories
+# Skills not listed here will not be linked automatically
+default_skills:
+  # Core skills
+  - adr-tools
+  - graphify
+  - humble-pr-review
+  - lnav
+  - lnav-unattended
+  - mermaid
+  - obsidian
+  - plantuml
+  - pyenv-poetry-virtual-env
+  - zellij
+  # Note: a-template is excluded (it's a template, not meant for production use)

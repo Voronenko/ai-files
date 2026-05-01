@@ -214,9 +214,9 @@ select_skills() {
         --layout=reverse \
         --delimiter=$'\t' \
         --with-nth=1,2,3 \
-        --preview='skill_path="{4}"; cat "$skill_path/SKILL.md" 2>/dev/null | head -40 || echo "No SKILL.md"' \
+        --preview='skill_path={4}; sed -e 1d -e /^---$/q "$skill_path/SKILL.md" 2>/dev/null | head -40 || echo "No SKILL.md"' \
         --preview-window=right:40%:wrap \
-        --bind 'tab:toggle+down' \
+        --bind='enter:accept' \
         --color='fg+:bold,pointer:green' \
         || true)
 
@@ -225,10 +225,12 @@ select_skills() {
 
 prompt_for_action() {
     local count="$1"
+    local names="$2"
 
     cat >&2 <<EOF
 
-Selected $count skill(s)
+Selected $count skill(s):
+$(echo "$names" | sed 's/^/  - /')
 
 Choose action:
   [e] Enable  - create symlinks in .claude/skills/ and/or .kilo/skills/
@@ -267,7 +269,9 @@ EOF
 extract_skill_names() {
     local selection="$1"
 
-    echo "$selection" | while IFS=$'\t' read -r _ name _ _; do
+    echo "$selection" | while IFS=$'\t' read -r prefix name _ _; do
+        # Remove fzf selection marker (> ) from prefix if present
+        local clean_prefix="${prefix#\> }"
         [ -n "$name" ] && echo "$name"
     done
 }
@@ -332,6 +336,11 @@ execute_toggle() {
 process_selection() {
     local selection="$1"
     local action="$2"
+
+    # Debug: show what we received from fzf
+    echo "DEBUG: Raw selection:" >&2
+    echo "$selection" >&2
+    echo "" >&2
 
     local count
     count=$(echo "$selection" | grep -c '^[^[:space:]]' || true)
@@ -458,8 +467,10 @@ main() {
     fi
 
     # Prompt for action
+    local skill_names
+    skill_names=$(extract_skill_names "$selection")
     local action
-    action=$(prompt_for_action "$(echo "$selection" | grep -c '^[^[:space:]]' || true)")
+    action=$(prompt_for_action "$(echo "$skill_names" | grep -c '^[^[:space:]]' || true)" "$skill_names")
 
     if [[ "$action" == "quit" ]]; then
         echo "Cancelled"
