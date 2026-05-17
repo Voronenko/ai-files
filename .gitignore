@@ -6,6 +6,7 @@ dist/*
 docs/plans/
 .env
 .kilo
+.opencode
 .roomodes
 .specify
 vendor/

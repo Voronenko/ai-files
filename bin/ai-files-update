@@ -43,13 +43,15 @@ SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 SOURCE_DIR="${SELF_DIR}/../dist"
 
 # Target directories to update (for files subcommand)
-TARGET_DIRS=(".ai-files" ".claude" ".kilo")
+TARGET_DIRS=(".ai-files" ".claude" ".kilo" ".opencode")
 
 # Folders that should be merged (not fully replaced) within target directories
-MERGE_FOLDERS=("commands" "hooks" "skills")
+MERGE_FOLDERS=("commands" "hooks" "skills" "rules")
 
 # Directories that should never be deleted (user's local data)
 PROTECTED_DIRS=(".ai-files/sessions" ".ai-files/memory" ".ai-files/memory-bank")
+# File patterns that should never be deleted
+PROTECTED_PATTERNS=("memory.db*")
 
 # Tracking arrays
 declare -a COPIED_FILES=()
@@ -60,6 +62,9 @@ declare -a PRESERVED_SYMLINKS=()
 declare -a TARGET_ONLY_TO_KEEP=()
 declare -a TARGET_ONLY_TO_DELETE=()
 
+# Rsync operations counter
+TOTAL_RSYNC_CALLS=0
+
 # Global options
 AUTO_YES=false
 DRY_RUN=false
@@ -67,6 +72,22 @@ VERBOSE=false
 
 # Source directory override
 SOURCE_DIR_OVERRIDE=""
+
+# Read default skills from default_skills.yaml (or return hardcoded fallback)
+get_default_skills() {
+    local -n _result=$1
+    if [[ -f "$GIT_ROOT/default_skills.yaml" ]]; then
+        if command -v yq >/dev/null 2>&1; then
+            mapfile -t _result < <(yq eval '.default_skills[]' "$GIT_ROOT/default_skills.yaml" 2>/dev/null)
+        else
+            mapfile -t _result < <(grep -E '^\s+-\s+[a-zA-Z0-9_-]+' "$GIT_ROOT/default_skills.yaml" 2>/dev/null | sed 's/^\s*-\s*//')
+        fi
+    fi
+    if [[ ${#_result[@]} -eq 0 ]]; then
+        # Fallback hardcoded list (matches default_skills.yaml)
+        _result=("humble-pr-review" "mermaid" "obsidian" "plantuml" "pyenv-poetry-virtual-env" "playwright-cli")
+    fi
+}
 
 # Functions for colored output
 print_info() {
@@ -114,6 +135,17 @@ is_protected_path() {
             return 0  # Protected
         fi
     done
+
+    # Check protected file patterns
+    local filename
+    filename="$(basename "$filepath")"
+    for protected_pattern in "${PROTECTED_PATTERNS[@]}"; do
+        # Convert glob pattern to regex for matching
+        if [[ "$filename" == $protected_pattern ]]; then
+            return 0  # Protected
+        fi
+    done
+
     return 1  # Not protected
 }
 
@@ -342,7 +374,7 @@ process_directory() {
     local dest_dir="$2"
     local base_path="$3"
 
-    # Check if this is a merge folder (commands, hooks, or skills)
+    # Check if this is a merge folder (commands, hooks, skills, or rules)
     local is_merge_folder=false
     for merge_folder in "${MERGE_FOLDERS[@]}"; do
         if [[ "$base_path" == *"/$merge_folder" || "$base_path" == "$merge_folder" ]]; then
@@ -409,6 +441,14 @@ process_directory() {
         for merge_folder in "${MERGE_FOLDERS[@]}"; do
             rsync_opts="$rsync_opts --exclude=$merge_folder/"
         done
+        # Exclude protected directories from deletion
+        for protected_dir in "${PROTECTED_DIRS[@]}"; do
+            rsync_opts="$rsync_opts --exclude=${protected_dir#.ai-files/}"
+        done
+        # Exclude protected file patterns from deletion
+        for protected_pattern in "${PROTECTED_PATTERNS[@]}"; do
+            rsync_opts="$rsync_opts --exclude=$protected_pattern"
+        done
         rsync_opts="$rsync_opts --delete"
     fi
     if [[ "$DRY_RUN" == "true" ]]; then
@@ -421,6 +461,9 @@ process_directory() {
     # Run rsync and capture output
     local rsync_output
     rsync_output=$(rsync $rsync_opts "$src_dir/" "$dest_dir/" 2>&1 || true)
+
+    # Track rsync operation
+    TOTAL_RSYNC_CALLS=$((TOTAL_RSYNC_CALLS + 1))
 
     # Parse rsync output to track changes
     local modified_files=()
@@ -645,6 +688,9 @@ show_final_summary() {
         echo ""
     fi
 
+    echo "📊 Rsync Operations: $TOTAL_RSYNC_CALLS"
+    echo ""
+
     echo "📂 Source: $SOURCE_DIR"
     echo "📂 Target: $GIT_ROOT"
     echo ""
@@ -801,7 +847,7 @@ cmd_files() {
             process_directory "$src_path" "$dest_path" "$target_dir"
         fi
 
-        # Also process merge subdirectories separately (commands, hooks, skills)
+        # Also process merge subdirectories separately (commands, hooks, skills, rules)
         for merge_folder in "${MERGE_FOLDERS[@]}"; do
             merge_src="$src_path/$merge_folder"
             merge_dest="$dest_path/$merge_folder"
@@ -815,11 +861,19 @@ cmd_files() {
                     src_link_target="$(readlink "$merge_src")"
 
                     # Check if it's a managed symlink (points to .ai-files/*)
-                    if [[ "$src_link_target" == *".ai-files/"* ]] || [[ "$src_link_target" == "../*" ]]; then
+                    if [[ "$src_link_target" == *".ai-files/"* ]] || [[ "$src_link_target" == "../*" ]] || [[ "$src_link_target" == "dist/"* ]]; then
                         # Resolve the symlink target to get absolute .ai-files path
-                        local link_dir="$(dirname "$merge_src")"
+                        local link_dir
                         local resolved_target
-                        resolved_target="$(cd "$link_dir" 2>/dev/null && pwd)/${src_link_target}"
+                        # Handle symlinks that start with "dist/" (relative to source_dir root)
+                        if [[ "$src_link_target" == "dist/"* ]]; then
+                            # Resolve from source directory, not from symlink location
+                            resolved_target="$source_dir/${src_link_target#dist/}"
+                        else
+                            # Resolve relative to symlink location
+                            link_dir="$(dirname "$merge_src")"
+                            resolved_target="$(cd "$link_dir" 2>/dev/null && pwd)/${src_link_target}"
+                        fi
 
                         # Convert to path relative to git root
                         resolved_target="${resolved_target#$GIT_ROOT/}"
@@ -963,7 +1017,7 @@ cmd_files() {
 
         # Also process symlinks in dot* subdirectories (dotclaude, dotkilo)
         # These contain symlinks that need to be preserved
-        for dotdir in dotclaude dotkilo; do
+        for dotdir in dotclaude dotkilo dotopencode; do
             local dotdir_src="$src_path/$dotdir"
             local dotdir_dest="$dest_path/$dotdir"
 
@@ -1036,19 +1090,11 @@ cmd_files() {
             # These are regular directories that need to be synced to target
             for merge_folder in "${MERGE_FOLDERS[@]}"; do
                 local dot_merge_src="$dotdir_src/$merge_folder"
-                local dot_merge_dest="$dest_path/$merge_folder"
-                local dot_merge_base="$target_dir/$merge_folder"
+                local dot_merge_dest="$dotdir_dest/$merge_folder"
+                local dot_merge_base="$target_dir/$dotdir/$merge_folder"
 
                 # Only process if the merge folder exists in dotdir
                 [[ -d "$dot_merge_src" ]] || continue
-
-                # Check if this merge folder was already processed in the main target directory
-                # If it was, skip it to avoid duplicate processing
-                local main_merge_src="$src_path/$merge_folder"
-                if [[ -e "$main_merge_src" || -L "$main_merge_src" ]]; then
-                    # Already processed in main loop, skip here
-                    continue
-                fi
 
                 if [[ "$VERBOSE" == "true" ]]; then
                     echo "  ↳ Processing merge folder from $target_dir/$dotdir/$merge_folder to $dot_merge_base"
@@ -1060,6 +1106,52 @@ cmd_files() {
         done
         echo ""
     done
+
+    # Check for missing link directories and suggest running link commands
+    local -a missing_dirs=()
+    local -a suggested_commands=()
+
+    # Check if .claude exists
+    if [[ ! -e "$GIT_ROOT/.claude" && ! -L "$GIT_ROOT/.claude" ]]; then
+        if [[ -d "$GIT_ROOT/.ai-files/dotclaude" ]]; then
+            missing_dirs+=(".claude")
+            suggested_commands+=("ai-files update link-claude")
+        fi
+    fi
+
+    # Check if .kilo exists
+    if [[ ! -e "$GIT_ROOT/.kilo" && ! -L "$GIT_ROOT/.kilo" ]]; then
+        if [[ -d "$GIT_ROOT/.ai-files/dotkilo" ]]; then
+            missing_dirs+=(".kilo")
+            suggested_commands+=("ai-files update link-kilo")
+        fi
+    fi
+
+    # Check if .opencode exists
+    if [[ ! -e "$GIT_ROOT/.opencode" && ! -L "$GIT_ROOT/.opencode" ]]; then
+        if [[ -d "$GIT_ROOT/.ai-files/dotopencode" ]]; then
+            missing_dirs+=(".opencode")
+            suggested_commands+=("ai-files update link-opencode")
+        fi
+    fi
+
+    # Show suggestions if any directories are missing
+    if [[ ${#missing_dirs[@]} -gt 0 ]]; then
+        echo ""
+        print_info "The following directories are not present in your repository:"
+        for dir in "${missing_dirs[@]}"; do
+            echo "   • $dir"
+        done
+        echo ""
+        print_info "To create them, run the following command(s):"
+        for cmd in "${suggested_commands[@]}"; do
+            echo "   $cmd"
+        done
+        echo ""
+        print_info "Or run all at once:"
+        echo "   ${suggested_commands[*]}"
+        echo ""
+    fi
 
     show_final_summary
 }
@@ -1137,19 +1229,34 @@ process_dotclaude_entry() {
         local link_target
         link_target="$(readlink "$source_file")"
 
-        # Resolve relative symlink target
-        local resolved_target
-        if [[ "$link_target" == ../* ]]; then
-            # Calculate resolved target relative to .ai-files/
-            local link_dir="$(dirname "$source_file")"
-            local link_file="$(basename "$link_target")"
-            local link_parent_dir="$(dirname "$link_target")"
-            # Get absolute path of the resolved symlink
-            resolved_target="$(cd "$link_dir/$link_parent_dir" && pwd)/$link_file"
-            # Make it relative to git root
-            resolved_target="${resolved_target#$GIT_ROOT/}"
+        # Skip directory symlinks that point to .ai-files/ - these are handled
+        # by the separate agents/skills/rules processing code
+        if [[ -d "$source_file" && "$link_target" == *".ai-files/"* ]]; then
+            return
+        fi
+
+        # Resolve relative symlink target to absolute path
+        local resolved_target_abs
+        if [[ "$link_target" == ../* ]] || [[ "$link_target" == ./* ]]; then
+            # Use readlink -m to resolve the relative path absolutely
+            resolved_target_abs="$(readlink -m "$source_file")"
         else
-            resolved_target="$link_target"
+            resolved_target_abs="$link_target"
+            # If not absolute, make it absolute relative to source file's dir
+            if [[ "$resolved_target_abs" != /* ]]; then
+                local source_dir_abs="$(cd "$(dirname "$source_file")" 2>/dev/null && pwd)"
+                resolved_target_abs="$source_dir_abs/$(basename "$resolved_target_abs")"
+            fi
+        fi
+
+        # For display purposes, calculate relative path from target to source
+        local target_dir_abs="$(cd "$(dirname "$target_file")" 2>/dev/null && pwd)"
+        local display_target=""
+        if [[ -n "$target_dir_abs" ]]; then
+            # Calculate relative path for display
+            display_target=$(python3 -c "import os; print(os.path.relpath('$resolved_target_abs', '$target_dir_abs'))" 2>/dev/null || echo "$resolved_target_abs")
+        else
+            display_target="$resolved_target_abs"
         fi
 
         # Check what already exists at target
@@ -1157,7 +1264,15 @@ process_dotclaude_entry() {
             if [[ -L "$target_file" ]]; then
                 local existing_target
                 existing_target="$(readlink "$target_file")"
-                if [[ "$existing_target" == "$resolved_target" ]]; then
+                # Resolve existing target to absolute for comparison
+                local existing_abs
+                if [[ "$existing_target" == /* ]]; then
+                    existing_abs="$existing_target"
+                else
+                    # Resolve relative symlink
+                    existing_abs="$(readlink -m "$target_file")"
+                fi
+                if [[ "$existing_abs" == "$resolved_target_abs" ]]; then
                     # Correct symlink already exists
                     if [[ "$VERBOSE" == "true" ]]; then
                         echo "  ✓ Symlink correct: $target_display/$relative_path"
@@ -1172,36 +1287,36 @@ process_dotclaude_entry() {
                 print_info "Auto-replacing (yes flag set)"
                 if [[ "$DRY_RUN" == "false" ]]; then
                     rm -rf "$target_file"
-                    ln -sf "$resolved_target" "$target_file"
-                    PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $resolved_target")
-                    echo "  🔗 Replaced: $target_display/$relative_path -> $resolved_target"
+                    ln -sfr "$resolved_target_abs" "$target_file" 2>/dev/null || ln -sf "$resolved_target_abs" "$target_file"
+                    PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $display_target")
+                    echo "  🔗 Replaced: $target_display/$relative_path -> $display_target"
                 else
-                    PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $resolved_target")
-                    echo "  🔗 Would replace: $target_display/$relative_path -> $resolved_target"
+                    PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $display_target")
+                    echo "  🔗 Would replace: $target_display/$relative_path -> $display_target"
                 fi
             else
-                echo -n "Replace $target_display/$relative_path with symlink to $resolved_target? [y/N/a/q]: "
+                echo -n "Replace $target_display/$relative_path with symlink to $display_target? [y/N/a/q]: "
                 read -r response
                 case "$response" in
                     [Yy]*)
                         if [[ "$DRY_RUN" == "false" ]]; then
                             rm -rf "$target_file"
-                            ln -sf "$resolved_target" "$target_file"
-                            PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $resolved_target")
-                            echo "  🔗 Replaced: $target_display/$relative_path -> $resolved_target"
+                            ln -sfr "$resolved_target_abs" "$target_file" 2>/dev/null || ln -sf "$resolved_target_abs" "$target_file"
+                            PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $display_target")
+                            echo "  🔗 Replaced: $target_display/$relative_path -> $display_target"
                         else
-                            echo "  🔗 Would replace: $target_display/$relative_path -> $resolved_target"
+                            echo "  🔗 Would replace: $target_display/$relative_path -> $display_target"
                         fi
                         ;;
                     [Aa]*)
                         AUTO_YES=true
                         if [[ "$DRY_RUN" == "false" ]]; then
                             rm -rf "$target_file"
-                            ln -sf "$resolved_target" "$target_file"
-                            PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $resolved_target")
-                            echo "  🔗 Replaced: $target_display/$relative_path -> $resolved_target"
+                            ln -sfr "$resolved_target_abs" "$target_file" 2>/dev/null || ln -sf "$resolved_target_abs" "$target_file"
+                            PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $display_target")
+                            echo "  🔗 Replaced: $target_display/$relative_path -> $display_target"
                         else
-                            echo "  🔗 Would replace: $target_display/$relative_path -> $resolved_target"
+                            echo "  🔗 Would replace: $target_display/$relative_path -> $display_target"
                         fi
                         ;;
                     [Qq]*)
@@ -1217,14 +1332,14 @@ process_dotclaude_entry() {
         else
             # Create new symlink
             if [[ "$DRY_RUN" == "false" ]]; then
-                ln -sf "$resolved_target" "$target_file"
-                PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $resolved_target")
+                ln -sfr "$resolved_target_abs" "$target_file" 2>/dev/null || ln -sf "$resolved_target_abs" "$target_file"
+                PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $display_target")
                 if [[ "$VERBOSE" == "true" ]]; then
-                    echo "  🔗 Created symlink: $target_display/$relative_path -> $resolved_target"
+                    echo "  🔗 Created symlink: $target_display/$relative_path -> $display_target"
                 fi
             else
-                PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $resolved_target")
-                echo "  🔗 Would create symlink: $target_display/$relative_path -> $resolved_target"
+                PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $display_target")
+                echo "  🔗 Would create symlink: $target_display/$relative_path -> $display_target"
             fi
         fi
     else
@@ -1233,12 +1348,34 @@ process_dotclaude_entry() {
         local source_rel="${source_root#$GIT_ROOT/}"
         local link_target="$source_rel/$relative_path"
 
+        # Get absolute path of the source file for ln -sfr
+        local source_abs="$(cd "$(dirname "$source_file")" 2>/dev/null && pwd)/$(basename "$source_file")"
+
+        # Calculate relative path for display
+        local target_dir_abs="$(cd "$(dirname "$target_file")" 2>/dev/null && pwd)"
+        local display_target=""
+        if [[ -n "$target_dir_abs" ]]; then
+            display_target=$(python3 -c "import os; print(os.path.relpath('$source_abs', '$target_dir_abs'))" 2>/dev/null || echo "$link_target")
+        else
+            display_target="$link_target"
+        fi
+
         # Check what already exists at target
         if [[ -e "$target_file" || -L "$target_file" ]]; then
             if [[ -L "$target_file" ]]; then
                 local existing_target
                 existing_target="$(readlink "$target_file")"
-                if [[ "$existing_target" == "$link_target" ]]; then
+                # Resolve existing target to absolute for comparison
+                local existing_abs
+                if [[ "$existing_target" == /* ]]; then
+                    existing_abs="$existing_target"
+                else
+                    # Resolve relative symlink
+                    existing_abs="$(readlink -m "$target_file")"
+                fi
+                # Get absolute path of source file
+                local source_abs="$(cd "$(dirname "$source_file")" 2>/dev/null && pwd)/$(basename "$source_file")"
+                if [[ "$existing_abs" == "$source_abs" ]]; then
                     # Correct symlink already exists
                     if [[ "$VERBOSE" == "true" ]]; then
                         echo "  ✓ Symlink correct: $target_display/$relative_path"
@@ -1253,36 +1390,36 @@ process_dotclaude_entry() {
                 print_info "Auto-replacing (yes flag set)"
                 if [[ "$DRY_RUN" == "false" ]]; then
                     rm -rf "$target_file"
-                    ln -sf "$link_target" "$target_file"
-                    PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $link_target")
-                    echo "  🔗 Replaced: $target_display/$relative_path -> $link_target"
+                    ln -sfr "$source_abs" "$target_file" 2>/dev/null || ln -sf "$source_abs" "$target_file"
+                    PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $display_target")
+                    echo "  🔗 Replaced: $target_display/$relative_path -> $display_target"
                 else
-                    PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $link_target")
-                    echo "  🔗 Would replace: $target_display/$relative_path -> $link_target"
+                    PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $display_target")
+                    echo "  🔗 Would replace: $target_display/$relative_path -> $display_target"
                 fi
             else
-                echo -n "Replace $target_display/$relative_path with symlink to $link_target? [y/N/a/q]: "
+                echo -n "Replace $target_display/$relative_path with symlink to $display_target? [y/N/a/q]: "
                 read -r response
                 case "$response" in
                     [Yy]*)
                         if [[ "$DRY_RUN" == "false" ]]; then
                             rm -rf "$target_file"
-                            ln -sf "$link_target" "$target_file"
-                            PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $link_target")
-                            echo "  🔗 Replaced: $target_display/$relative_path -> $link_target"
+                            ln -sfr "$source_abs" "$target_file" 2>/dev/null || ln -sf "$source_abs" "$target_file"
+                            PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $display_target")
+                            echo "  🔗 Replaced: $target_display/$relative_path -> $display_target"
                         else
-                            echo "  🔗 Would replace: $target_display/$relative_path -> $link_target"
+                            echo "  🔗 Would replace: $target_display/$relative_path -> $display_target"
                         fi
                         ;;
                     [Aa]*)
                         AUTO_YES=true
                         if [[ "$DRY_RUN" == "false" ]]; then
                             rm -rf "$target_file"
-                            ln -sf "$link_target" "$target_file"
-                            PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $link_target")
-                            echo "  🔗 Replaced: $target_display/$relative_path -> $link_target"
+                            ln -sfr "$source_abs" "$target_file" 2>/dev/null || ln -sf "$source_abs" "$target_file"
+                            PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $display_target")
+                            echo "  🔗 Replaced: $target_display/$relative_path -> $display_target"
                         else
-                            echo "  🔗 Would replace: $target_display/$relative_path -> $link_target"
+                            echo "  🔗 Would replace: $target_display/$relative_path -> $display_target"
                         fi
                         ;;
                     [Qq]*)
@@ -1298,14 +1435,14 @@ process_dotclaude_entry() {
         else
             # Create new symlink
             if [[ "$DRY_RUN" == "false" ]]; then
-                ln -sf "$link_target" "$target_file"
-                PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $link_target")
+                ln -sfr "$source_abs" "$target_file" 2>/dev/null || ln -sf "$source_abs" "$target_file"
+                PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $display_target")
                 if [[ "$VERBOSE" == "true" ]]; then
-                    echo "  🔗 Created symlink: $target_display/$relative_path -> $link_target"
+                    echo "  🔗 Created symlink: $target_display/$relative_path -> $display_target"
                 fi
             else
-                PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $link_target")
-                echo "  🔗 Would create symlink: $target_display/$relative_path -> $link_target"
+                PRESERVED_SYMLINKS+=("$target_display/$relative_path -> $display_target")
+                echo "  🔗 Would create symlink: $target_display/$relative_path -> $display_target"
             fi
         fi
     fi
@@ -1388,11 +1525,66 @@ cmd_link_claude() {
         process_dotclaude_entry "$dotclaude_source" "$claude_target" "$relative_path"
     done < <(find "$dotclaude_source" -mindepth 1 -print0 | sort -z)
 
+    # Also create symlinks from .ai-files/agents/, .ai-files/skills/ to .claude/
+    # Process agents
+    if [[ -d "$GIT_ROOT/.ai-files/agents" ]]; then
+        while IFS= read -r -d '' entry; do
+            local basename_entry="$(basename "$entry")"
+            local target_file="$claude_target/agents/$basename_entry"
+            local target_dir="$(dirname "$target_file")"
+            mkdir -p "$target_dir"
+            # Check if symlink already exists and points to the same target
+            if [[ -L "$target_file" ]]; then
+                local existing_abs="$(readlink -m "$target_file")"
+                local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                if [[ "$existing_abs" == "$entry_abs" ]]; then
+                    continue
+                fi
+            fi
+            # Create symlink if it doesn't exist or AUTO_YES is set
+            if [[ "$AUTO_YES" == "true" || ! -L "$target_file" ]]; then
+                rm -rf "$target_file" 2>/dev/null
+                ln -sfr "$entry" "$target_file" 2>/dev/null || ln -sf "$entry" "$target_file"
+            fi
+        done < <(find "$GIT_ROOT/.ai-files/agents" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+    fi
+
+    # Process skills from .ai-files/skills/ (only default skills)
+    if [[ -d "$GIT_ROOT/.ai-files/skills" ]]; then
+        mkdir -p "$claude_target/skills"
+        # Default skills to link (from default_skills.yaml or fallback)
+        local -a default_skills=()
+        get_default_skills default_skills
+        for skill in "${default_skills[@]}"; do
+            if [[ -e "$GIT_ROOT/.ai-files/skills/$skill" ]]; then
+                local entry="$GIT_ROOT/.ai-files/skills/$skill"
+                local target_file="$claude_target/skills/$skill"
+                # Check if symlink already exists and points to the same target
+                if [[ -L "$target_file" ]]; then
+                    local existing_abs="$(readlink -m "$target_file")"
+                    local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                    if [[ "$existing_abs" == "$entry_abs" ]]; then
+                        continue
+                    fi
+                fi
+                # Create symlink if it doesn't exist or AUTO_YES is set
+                if [[ "$AUTO_YES" == "true" || ! -L "$target_file" ]]; then
+                    rm -rf "$target_file" 2>/dev/null
+                    ln -sfr "$entry" "$target_file" 2>/dev/null || ln -sf "$entry" "$target_file"
+                fi
+            fi
+        done
+    fi
+
     # Handle target-only files (files in .claude not in dotclaude)
     if [[ -d "$claude_target" ]]; then
         local -a target_only_files=()
         while IFS= read -r -d '' entry; do
             local relative_path="${entry#$claude_target/}"
+            # Skip agents/, skills/, rules/ directories as they are managed separately
+            if [[ "$relative_path" == agents ]] || [[ "$relative_path" == agents/* ]] || [[ "$relative_path" == skills ]] || [[ "$relative_path" == skills/* ]] || [[ "$relative_path" == rules ]] || [[ "$relative_path" == rules/* ]]; then
+                continue
+            fi
             local source_file="$dotclaude_source/$relative_path"
             if [[ ! -e "$source_file" && ! -L "$source_file" ]]; then
                 target_only_files+=(".claude/$relative_path")
@@ -1572,11 +1764,90 @@ cmd_link_kilo() {
         process_dotclaude_entry "$dotkilo_source" "$kilo_target" "$relative_path"
     done < <(find "$dotkilo_source" -mindepth 1 -print0 | sort -z)
 
+    # Also create symlinks from .ai-files/agents/, .ai-files/skills/, .ai-files/rules/ to .kilo/
+    # Process agents
+    if [[ -d "$GIT_ROOT/.ai-files/agents" ]]; then
+        while IFS= read -r -d '' entry; do
+            local basename_entry="$(basename "$entry")"
+            local target_file="$kilo_target/agents/$basename_entry"
+            local target_dir="$(dirname "$target_file")"
+            mkdir -p "$target_dir"
+            # Check if symlink already exists and points to the same target
+            if [[ -L "$target_file" ]]; then
+                local existing_abs="$(readlink -m "$target_file")"
+                local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                if [[ "$existing_abs" == "$entry_abs" ]]; then
+                    continue
+                fi
+            fi
+            # Create symlink if it doesn't exist or AUTO_YES is set
+            if [[ "$AUTO_YES" == "true" || ! -L "$target_file" ]]; then
+                rm -rf "$target_file" 2>/dev/null
+                ln -sfr "$entry" "$target_file" 2>/dev/null || ln -sf "$entry" "$target_file"
+            fi
+        done < <(find "$GIT_ROOT/.ai-files/agents" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+    fi
+
+    # Process skills (only if not already symlinked from dotkilo)
+    if [[ -d "$GIT_ROOT/.ai-files/skills" && ! -L "$kilo_target/skills" ]]; then
+        mkdir -p "$kilo_target/skills"
+        # Only link default skills (from default_skills.yaml or fallback)
+        local -a default_skills=()
+        get_default_skills default_skills
+        for skill in "${default_skills[@]}"; do
+            local entry="$GIT_ROOT/.ai-files/skills/$skill"
+            [[ -e "$entry" ]] || continue
+            local target_file="$kilo_target/skills/$skill"
+            # Check if symlink already exists and points to the same target
+            if [[ -L "$target_file" ]]; then
+                local existing_abs
+                existing_abs="$(readlink -m "$target_file")"
+                local entry_abs
+                entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                if [[ "$existing_abs" == "$entry_abs" ]]; then
+                    continue
+                fi
+            fi
+            # Create symlink if it doesn't exist or AUTO_YES is set
+            if [[ "$AUTO_YES" == "true" || ! -L "$target_file" ]]; then
+                rm -rf "$target_file" 2>/dev/null
+                ln -sfr "$entry" "$target_file" 2>/dev/null || ln -sf "$entry" "$target_file"
+            fi
+        done
+    fi
+
+    # Process rules
+    if [[ -d "$GIT_ROOT/.ai-files/rules" ]]; then
+        while IFS= read -r -d '' entry; do
+            local basename_entry="$(basename "$entry")"
+            local target_file="$kilo_target/rules/$basename_entry"
+            local target_dir="$(dirname "$target_file")"
+            mkdir -p "$target_dir"
+            # Check if symlink already exists and points to the same target
+            if [[ -L "$target_file" ]]; then
+                local existing_abs="$(readlink -m "$target_file")"
+                local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                if [[ "$existing_abs" == "$entry_abs" ]]; then
+                    continue
+                fi
+            fi
+            # Create symlink if it doesn't exist or AUTO_YES is set
+            if [[ "$AUTO_YES" == "true" || ! -L "$target_file" ]]; then
+                rm -rf "$target_file" 2>/dev/null
+                ln -sfr "$entry" "$target_file" 2>/dev/null || ln -sf "$entry" "$target_file"
+            fi
+        done < <(find "$GIT_ROOT/.ai-files/rules" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+    fi
+
     # Handle target-only files (files in .kilo not in dotkilo)
     if [[ -d "$kilo_target" ]]; then
         local -a target_only_files=()
         while IFS= read -r -d '' entry; do
             local relative_path="${entry#$kilo_target/}"
+            # Skip agents/, skills/, rules/ directories as they are managed separately
+            if [[ "$relative_path" == agents ]] || [[ "$relative_path" == agents/* ]] || [[ "$relative_path" == skills ]] || [[ "$relative_path" == skills/* ]] || [[ "$relative_path" == rules ]] || [[ "$relative_path" == rules/* ]]; then
+                continue
+            fi
             local source_file="$dotkilo_source/$relative_path"
             if [[ ! -e "$source_file" && ! -L "$source_file" ]]; then
                 target_only_files+=(".kilo/$relative_path")
@@ -1600,6 +1871,293 @@ cmd_link_kilo() {
                 # Interactive mode
                 echo ""
                 print_warning "Found ${#target_only_files[@]} file(s) in .kilo/ that don't exist in dotkilo:"
+                for filepath in "${target_only_files[@]}"; do
+                    echo ""
+                    echo -n "Delete $filepath? [y/N/a/q]: "
+                    read -r response
+                    case "$response" in
+                        [Yy]*)
+                            local full_path="$GIT_ROOT/$filepath"
+                            if [[ "$DRY_RUN" == "false" ]]; then
+                                rm -rf "$full_path"
+                                DELETED_FILES+=("$filepath")
+                                echo "  🗑️  Deleted: $filepath"
+                            else
+                                echo "  🗑️  Would delete: $filepath"
+                            fi
+                            ;;
+                        [Aa]*)
+                            AUTO_YES=true
+                            for remaining in "${target_only_files[@]}"; do
+                                local full_path="$GIT_ROOT/$remaining"
+                                if [[ "$DRY_RUN" == "false" ]]; then
+                                    rm -rf "$full_path"
+                                    DELETED_FILES+=("$remaining")
+                                    echo "  🗑️  Deleted: $remaining"
+                                else
+                                    echo "  🗑️  Would delete: $remaining"
+                                fi
+                            done
+                            break
+                            ;;
+                        [Qq]*)
+                            print_info "Quitting"
+                            exit 0
+                            ;;
+                        *)
+                            TARGET_ONLY_TO_KEEP+=("$filepath")
+                            echo "  ⏭️  Kept: $filepath"
+                            ;;
+                    esac
+                done
+            fi
+        fi
+    fi
+
+    show_final_summary
+}
+
+# =============================================================================
+# Subcommand: link-opencode
+# =============================================================================
+
+show_link_opencode_help() {
+    cat << EOF
+Usage: $(basename "$0") link-opencode [OPTIONS]
+
+Create .opencode/ folder in repository root with symlinks to .ai-files/
+
+This command analyzes .ai-files/dotopencode/ structure and creates an identical
+structure under .opencode/ where symlinks point to the resolved targets in
+.ai-files/.
+
+For example:
+  .ai-files/dotopencode/skills -> ../skills
+  Becomes:
+  .opencode/skills -> .ai-files/skills
+
+Options:
+    -d, --dry-run       Show what would be done without making changes
+    -v, --verbose       Enable verbose output
+    -y, --yes           Auto-confirm all prompts
+    -h, --help          Show this help message
+
+Examples:
+    $(basename "$0") link-opencode              # Interactive mode
+    $(basename "$0") link-opencode --dry-run    # Preview changes
+    $(basename "$0") link-opencode -y           # Auto-confirm all
+
+EOF
+}
+
+cmd_link_opencode() {
+    # Parse link-opencode-specific options (and process global options if not already)
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_link_opencode_help
+                exit 0
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            -d|--dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            -y|--yes)
+                AUTO_YES=true
+                shift
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_link_opencode_help
+                exit 1
+                ;;
+        esac
+    done
+
+    # Get git repository root
+    GIT_ROOT=$(detect_git_root)
+    if [[ $? -ne 0 ]]; then
+        print_error "Not in a git repository!"
+        exit 1
+    fi
+
+    local dotopencode_source="$GIT_ROOT/.ai-files/dotopencode"
+    local opencode_target="$GIT_ROOT/.opencode"
+
+    # Check if .ai-files/dotopencode exists
+    if [[ ! -d "$dotopencode_source" ]]; then
+        print_error ".ai-files/dotopencode not found!"
+        print_info "Run 'ai-files update files' first to sync .ai-files/ from dist/"
+        exit 1
+    fi
+
+    # Check if .opencode exists but is a file
+    if [[ -e "$opencode_target" && ! -d "$opencode_target" && ! -L "$opencode_target" ]]; then
+        print_error ".opencode exists but is not a directory or symlink!"
+        exit 1
+    fi
+
+    print_info "Git repository root: $GIT_ROOT"
+    print_info "Source: $dotopencode_source"
+    print_info "Target: $opencode_target"
+
+    # Main process
+    echo ""
+    echo "🔄 Creating .opencode/ symlinks..."
+    echo ""
+
+    # Create .opencode directory if it doesn't exist
+    if [[ ! -e "$opencode_target" ]]; then
+        if [[ "$DRY_RUN" == "false" ]]; then
+            mkdir -p "$opencode_target"
+            CREATED_DIRS+=(".opencode")
+            echo "  📁 Created directory: .opencode"
+        else
+            echo "  📁 Would create directory: .opencode"
+        fi
+    fi
+
+    # Traverse dotopencode and create symlinks
+    while IFS= read -r -d '' entry; do
+        local relative_path="${entry#$dotopencode_source/}"
+        process_dotclaude_entry "$dotopencode_source" "$opencode_target" "$relative_path"
+    done < <(find "$dotopencode_source" -mindepth 1 -print0 | sort -z)
+
+    # Also create symlinks from .ai-files/agents/, .ai-files/skills/, .ai-files/rules/ to .opencode/
+    # Process agents
+    if [[ -d "$GIT_ROOT/.ai-files/agents" ]]; then
+        while IFS= read -r -d '' entry; do
+            local basename_entry="$(basename "$entry")"
+            local target_file="$opencode_target/agents/$basename_entry"
+            local target_dir="$(dirname "$target_file")"
+            mkdir -p "$target_dir"
+            # Check if symlink already exists and points to the same target
+            if [[ -L "$target_file" ]]; then
+                local existing_abs="$(readlink -m "$target_file")"
+                local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                if [[ "$existing_abs" == "$entry_abs" ]]; then
+                    continue
+                fi
+            fi
+            # Create symlink if it doesn't exist or AUTO_YES is set
+            if [[ "$AUTO_YES" == "true" || ! -L "$target_file" ]]; then
+                rm -rf "$target_file" 2>/dev/null
+                ln -sfr "$entry" "$target_file" 2>/dev/null || ln -sf "$entry" "$target_file"
+            fi
+        done < <(find "$GIT_ROOT/.ai-files/agents" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+    fi
+
+    # Process skills (only if not already symlinked from dotopencode)
+    if [[ -d "$GIT_ROOT/.ai-files/skills" && ! -L "$opencode_target/skills" ]]; then
+        mkdir -p "$opencode_target/skills"
+        # Only link default skills (from default_skills.yaml or fallback)
+        local -a default_skills=()
+        get_default_skills default_skills
+        for skill in "${default_skills[@]}"; do
+            local entry="$GIT_ROOT/.ai-files/skills/$skill"
+            [[ -e "$entry" ]] || continue
+            local target_file="$opencode_target/skills/$skill"
+            # Check if symlink already exists and points to the same target
+            if [[ -L "$target_file" ]]; then
+                local existing_abs
+                existing_abs="$(readlink -m "$target_file")"
+                local entry_abs
+                entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                if [[ "$existing_abs" == "$entry_abs" ]]; then
+                    continue
+                fi
+            fi
+            # Create symlink if it doesn't exist or AUTO_YES is set
+            if [[ "$AUTO_YES" == "true" || ! -L "$target_file" ]]; then
+                rm -rf "$target_file" 2>/dev/null
+                ln -sfr "$entry" "$target_file" 2>/dev/null || ln -sf "$entry" "$target_file"
+            fi
+        done
+    fi
+
+    # Process rules
+    if [[ -d "$GIT_ROOT/.ai-files/rules" ]]; then
+        while IFS= read -r -d '' entry; do
+            local basename_entry="$(basename "$entry")"
+            local target_file="$opencode_target/rules/$basename_entry"
+            local target_dir="$(dirname "$target_file")"
+            mkdir -p "$target_dir"
+            # Check if symlink already exists and points to the same target
+            if [[ -L "$target_file" ]]; then
+                local existing_abs="$(readlink -m "$target_file")"
+                local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                if [[ "$existing_abs" == "$entry_abs" ]]; then
+                    continue
+                fi
+            fi
+            # Create symlink if it doesn't exist or AUTO_YES is set
+            if [[ "$AUTO_YES" == "true" || ! -L "$target_file" ]]; then
+                rm -rf "$target_file" 2>/dev/null
+                ln -sfr "$entry" "$target_file" 2>/dev/null || ln -sf "$entry" "$target_file"
+            fi
+        done < <(find "$GIT_ROOT/.ai-files/rules" -mindepth 1 -maxdepth 1 -print0 | sort -z)
+    fi
+
+    # Process commands (for opencode which doesn't have dotopencode/commands/)
+    if [[ -d "$GIT_ROOT/.ai-files/commands" ]]; then
+        mkdir -p "$opencode_target/commands"
+        while IFS= read -r -d '' entry; do
+            # Skip directories, only process files
+            [[ -d "$entry" && ! -L "$entry" ]] && continue
+            local basename_entry="$(basename "$entry")"
+            local target_file="$opencode_target/commands/$basename_entry"
+            # Check if symlink already exists and points to the same target
+            if [[ -L "$target_file" ]]; then
+                local existing_abs="$(readlink -m "$target_file")"
+                local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                if [[ "$existing_abs" == "$entry_abs" ]]; then
+                    continue
+                fi
+            fi
+            # Create symlink if it doesn't exist or AUTO_YES is set
+            if [[ "$AUTO_YES" == "true" || ! -L "$target_file" ]]; then
+                rm -rf "$target_file" 2>/dev/null
+                ln -sfr "$entry" "$target_file" 2>/dev/null || ln -sf "$entry" "$target_file"
+            fi
+        done < <(find "$GIT_ROOT/.ai-files/commands" -mindepth 1 -print0 | sort -z)
+    fi
+
+    # Handle target-only files (files in .opencode not in dotopencode)
+    if [[ -d "$opencode_target" ]]; then
+        local -a target_only_files=()
+        while IFS= read -r -d '' entry; do
+            local relative_path="${entry#$opencode_target/}"
+            # Skip agents/, skills/, rules/, commands/ directories as they are managed separately
+            if [[ "$relative_path" == agents ]] || [[ "$relative_path" == agents/* ]] || [[ "$relative_path" == skills ]] || [[ "$relative_path" == skills/* ]] || [[ "$relative_path" == rules ]] || [[ "$relative_path" == rules/* ]] || [[ "$relative_path" == commands ]] || [[ "$relative_path" == commands/* ]]; then
+                continue
+            fi
+            local source_file="$dotopencode_source/$relative_path"
+            if [[ ! -e "$source_file" && ! -L "$source_file" ]]; then
+                target_only_files+=(".opencode/$relative_path")
+            fi
+        done < <(find "$opencode_target" -mindepth 1 -print0 | sort -z)
+
+        if [[ ${#target_only_files[@]} -gt 0 ]]; then
+            if [[ "$AUTO_YES" == "true" ]]; then
+                # Auto-delete target-only files
+                for filepath in "${target_only_files[@]}"; do
+                    local full_path="$GIT_ROOT/$filepath"
+                    if [[ "$DRY_RUN" == "false" ]]; then
+                        rm -rf "$full_path"
+                        DELETED_FILES+=("$filepath")
+                        echo "  🗑️  Deleted: $filepath"
+                    else
+                        echo "  🗑️  Would delete: $filepath"
+                    fi
+                done
+            else
+                # Interactive mode
+                echo ""
+                print_warning "Found ${#target_only_files[@]} file(s) in .opencode/ that don't exist in dotopencode:"
                 for filepath in "${target_only_files[@]}"; do
                     echo ""
                     echo -n "Delete $filepath? [y/N/a/q]: "
@@ -1815,11 +2373,12 @@ Usage: $(basename "$0") <subcommand> [options]
 Update ai-files utilities with subcommands.
 
 Subcommands:
-  files       Update .ai-files/ content from dist/
-  link-claude Create .claude/ folder with symlinks to .ai-files/
-  link-kilo   Create .kilo/ folder with symlinks to .ai-files/
-  link-specify Create .specify symlink to .ai-files/dotspecify/
-  help        Show this help message
+  files         Update .ai-files/ content from dist/
+  link-claude   Create .claude/ folder with symlinks to .ai-files/
+  link-kilo     Create .kilo/ folder with symlinks to .ai-files/
+  link-opencode Create .opencode/ folder with symlinks to .ai-files/
+  link-specify  Create .specify symlink to .ai-files/dotspecify/
+  help          Show this help message
 
 Global options (apply to all subcommands):
   -v, --verbose       Enable verbose output
@@ -1837,6 +2396,8 @@ Examples:
   $(basename "$0") link-claude -y         # Auto-confirm all
   $(basename "$0") link-kilo             # Create .kilo/ interactively
   $(basename "$0") link-kilo -y          # Auto-confirm all
+  $(basename "$0") link-opencode          # Create .opencode/ interactively
+  $(basename "$0") link-opencode -y       # Auto-confirm all
   $(basename "$0") link-specify          # Create .specify symlink interactively
   $(basename "$0") link-specify -y       # Auto-confirm all
 
@@ -1862,7 +2423,7 @@ while [[ $# -gt 0 ]]; do
             AUTO_YES=true
             shift
             ;;
-        files|link-claude|link-kilo|link-specify|help)
+        files|link-claude|link-kilo|link-opencode|link-specify|help)
             SUBCOMMAND="$1"
             shift
             # Rest are subcommand args
@@ -1898,6 +2459,9 @@ case "$SUBCOMMAND" in
         ;;
     link-kilo)
         cmd_link_kilo "${SUBCOMMAND_ARGS[@]}"
+        ;;
+    link-opencode)
+        cmd_link_opencode "${SUBCOMMAND_ARGS[@]}"
         ;;
     link-specify)
         cmd_link_specify "${SUBCOMMAND_ARGS[@]}"

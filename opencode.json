@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "repo-memory": {
+      "type": "local",
+      "command": [
+        "memory",
+        "server"
+      ],
+      "enabled": true,
+      "environment": {
+        "MCP_MEMORY_SQLITE_PATH": ".ai-files/memory.db",
+        "MCP_MEMORY_STORAGE_BACKEND": "sqlite_vec",
+        "MCP_ALLOW_ANONYMOUS_ACCESS": "true",
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}
