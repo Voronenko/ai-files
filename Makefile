@@ -14,24 +14,32 @@ clean:
 	mkdir -p ./dist/.ai-files/dotkilo/commands
 	# claude supports resolving symlinks, only one source
 	mkdir -p ./dist/.ai-files/dotclaude/commands
-	# skill directories are shared (symlinks within dot* dirs point to ../skills/ which is dist/.ai-files/skills/)
-	ln -sfn ../skills dist/.ai-files/dotkilo/skills
-	ln -sfn ../skills dist/.ai-files/dotclaude/skills
+	# opencode support
+	mkdir -p ./dist/.ai-files/dotopencode/commands
+	# Create empty skills directories (will be populated with individual symlinks later)
+	# dotclaude/skills is populated by publish-spec-kit-claude
+	mkdir -p dist/.ai-files/dotkilo/skills
+	mkdir -p dist/.ai-files/dotclaude/skills
+	mkdir -p dist/.ai-files/dotopencode/skills
 	# create symlinks from hidden names to visible directories (relative symlinks)
 	ln -sfn .ai-files/dotkilo dist/.kilo
 	ln -sfn .ai-files/dotclaude dist/.claude
 	ln -sfn .ai-files/dotspecify dist/.specify
+	ln -sfn .ai-files/dotopencode dist/.opencode
 	# ai-files repo uses own dist
 	ln -sfn dist/.kilo .kilo
 	ln -sfn dist/.claude   .claude
+	ln -sfn dist/.opencode .opencode
 relink-from-dist:
 	# create symlinks from hidden names to visible directories (relative symlinks)
 	ln -sfn .ai-files/dotkilo dist/.kilo
 	ln -sfn .ai-files/dotclaude dist/.claude
 	ln -sfn .ai-files/dotspecify dist/.specify
+	ln -sfn .ai-files/dotopencode dist/.opencode
 	# ai-files repo uses own dist
 	ln -sfn dist/.kilo .kilo
 	ln -sfn dist/.claude   .claude
+	ln -sfn dist/.opencode .opencode
 
 
 prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prompts
@@ -46,6 +54,10 @@ prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prom
 	cp COMMON_CODE_TASKS.md ./dist/.ai-files/
 	# clause specific configs
 	cp -r config/claude/* ./dist/.ai-files/dotclaude/
+	# opencode specific configs
+	@if [ -d "config/opencode" ]; then \
+		cp -r config/opencode/* ./dist/.ai-files/dotopencode/; \
+	fi
 	cp -r rules ./dist/.ai-files/
 	# unified skills
 	cp -r skills ./dist/.ai-files/
@@ -80,7 +92,7 @@ prepare-claude:
 	@find ./dist/.ai-files/dotclaude/commands -type l -name 'speckit*.md' -delete
 	@echo "✅ Removed speckit command symlinks (available as skills)"
 
-build: prepare-dist prepare-claude create-default-symlinks
+build: prepare-dist prepare-claude _link-dot-dir-skills create-default-symlinks
 	echo build completed
 
 # Helper: Read default skills from YAML, output space-separated list
@@ -113,6 +125,24 @@ _link-default-skills:
 	done; \
 	echo "  ✅ Linked $$(echo $$DEFAULT_SKILLS | wc -w) skills"
 
+# Populate dotkilo/skills/ and dotopencode/skills/ with individual symlinks
+# to dist/.ai-files/skills/, filtered by default_skills.yaml
+_link-dot-dir-skills:
+	@echo "Linking skills to dotkilo/skills/ and dotopencode/skills/..."
+	@DEFAULT_SKILLS=$$(make --no-print-directory get-default-skills 2>/dev/null); \
+	if [ -z "$$DEFAULT_SKILLS" ]; then \
+		echo "  ⚠️  No default_skills.yaml, using all skills"; \
+		DEFAULT_SKILLS=$$(find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -exec basename {} \;); \
+	fi; \
+	for dir in dotkilo dotopencode; do \
+		for skill in $$DEFAULT_SKILLS; do \
+			if [ -e "dist/.ai-files/skills/$$skill" ]; then \
+				ln -sfr "dist/.ai-files/skills/$$skill" "dist/.ai-files/$$dir/skills/$$skill" 2>/dev/null; \
+			fi; \
+		done; \
+		echo "  ✅ $$dir/skills populated"; \
+	done
+
 # Create symlinks with default skills filter
 # Runs create-symlinks first, then removes skills not in default_skills.yaml
 create-default-symlinks:
@@ -142,17 +172,28 @@ create-default-symlinks:
 			fi; \
 		done; \
 		cd - >/dev/null; \
+		cd dist/.opencode/skills && \
+		for item in *; do \
+			if [ "$$item" != "*" ] && [ -e "$$item" ]; then \
+				if ! echo "$$DEFAULT_SKILLS" | grep -q "$$item"; then \
+					rm -rf "$$item" 2>/dev/null; \
+				fi; \
+			fi; \
+		done; \
+		cd - >/dev/null; \
 		echo "  ✅ Filtered to default skills"; \
 	fi
 
 create-symlinks:
-	@echo "Creating .claude/ and .kilo/ directories with symlinks..."
+	@echo "Creating .claude/, .kilo/, and .opencode directories with symlinks..."
 	# Create directories (remove symlinks if they exist)
 	@if [ -L "dist/.claude" ]; then rm "dist/.claude"; fi
 	@if [ -L "dist/.kilo" ]; then rm "dist/.kilo"; fi
 	@if [ -L "dist/.specify" ]; then rm "dist/.specify"; fi
+	@if [ -L "dist/.opencode" ]; then rm "dist/.opencode"; fi
 	@mkdir -p dist/.claude/commands dist/.claude/skills dist/.claude/agents
 	@mkdir -p dist/.kilo/commands dist/.kilo/skills dist/.kilo/agents dist/.kilo/rules
+	@mkdir -p dist/.opencode/commands dist/.opencode/skills dist/.opencode/agents dist/.opencode/rules
 	# Create file-level symlinks for .claude/commands/
 	@find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
 		for f do \
@@ -268,8 +309,61 @@ create-symlinks:
 			done \
 		' sh {} +; \
 	fi
+	# Same for .opencode/
+	@find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.opencode/commands/$$base"; \
+		done \
+	' sh {} +
+	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.opencode/skills/$$base"; \
+		done \
+	' sh {} +
+	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type d -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.opencode/skills/$$base"; \
+		done \
+	' sh {} +
+	# Create file-level symlinks for .opencode/agents/
+	@if [ -d "dist/.ai-files/agents" ]; then \
+		find dist/.ai-files/agents -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.opencode/agents/$$base"; \
+			done \
+		' sh {} +; \
+	fi
+	# Create dir-level symlinks for .opencode/agents/
+	@if [ -d "dist/.ai-files/agents" ]; then \
+		find dist/.ai-files/agents -mindepth 1 -maxdepth 1 -type d -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.opencode/agents/$$base"; \
+			done \
+		' sh {} +; \
+	fi
+	@find dist/.ai-files/rules -mindepth 1 -maxdepth 1 -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.opencode/rules/$$base"; \
+		done \
+	' sh {} +
+	# Link everything from dist/.ai-files/dotopencode/ to dist/.opencode/
+	@if [ -d "dist/.ai-files/dotopencode" ]; then \
+		find dist/.ai-files/dotopencode -mindepth 1 -maxdepth 1 ! -name "skills" ! -name "commands" ! -name "rules" ! -name "agents" -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfn "$$f" "dist/.opencode/$$base"; \
+			done \
+		' sh {} +; \
+	fi
 	@ln -sfn dist/.kilo .kilo
 	@ln -sfn dist/.claude .claude
+	@ln -sfn dist/.opencode .opencode
 	@ln -sfn dist/.specify .specify
 	# Recreate dist/.specify symlink (removed at start of create-symlinks)
 	@ln -sfn .ai-files/dotspecify dist/.specify
@@ -423,10 +517,13 @@ publish-memory-bank:
 	fi
 	@echo "Creating memory bank directories for each agent..."
 	@mkdir -p ./dist/.ai-files/dotkilo/rules/memory-bank
+	@mkdir -p ./dist/.ai-files/dotopencode/rules/memory-bank
 	@echo "Copying memory bank instructions to agent directories..."
 	@cp "prompts/memory-bank-instructions.md" "./dist/.ai-files/dotkilo/rules/memory-bank/"
+	@cp "prompts/memory-bank-instructions.md" "./dist/.ai-files/dotopencode/rules/memory-bank/"
 	@echo "✅ Memory bank successfully published to all agent directories:"
 	@echo "   • ./dist/.ai-files/dotkilo/rules/memory-bank/"
+	@echo "   • ./dist/.ai-files/dotopencode/rules/memory-bank/"
 
 
 ## Common tools installation routines
@@ -566,18 +663,26 @@ install-opencode-desktop:
 	chmod +x "$$DEST";\
 	echo "opencode-desktop installed successfully"
 install-opencode-cli:
-	@INSTALL_DIR="$${INSTALL_DIR:-$$HOME/dotfiles/bin}" && \
-	mkdir -p "$$INSTALL_DIR" && \
-	rm -rf /tmp/opencode-install && \
-	mkdir -p /tmp/opencode-install && \
-	echo "Installing opencode into $$INSTALL_DIR" && \
-	curl -fsSL \
-	  https://github.com/anomalyco/opencode/releases/latest/download/opencode-linux-x64.tar.gz \
-	  -o /tmp/opencode-install/opencode.tar.gz && \
-	tar -xzf /tmp/opencode-install/opencode.tar.gz -C /tmp/opencode-install && \
-	install -m 755 /tmp/opencode-install/opencode "$$INSTALL_DIR/opencode" && \
-	rm -rf /tmp/opencode-install && \
-	echo "opencode installed successfully"
+	@set -euo pipefail; \
+	mkdir -p "$(CURDIR)/bin"; \
+	os="$$(uname -s | tr '[:upper:]' '[:lower:]')"; \
+	case "$$os" in \
+		darwin*) archive="opencode-darwin-x64.zip" ;; \
+		linux*)  archive="opencode-linux-x64.tar.gz" ;; \
+		*) echo "unsupported os: $$os"; exit 1 ;; \
+	esac; \
+	url="https://github.com/anomalyco/opencode/releases/latest/download/$$archive"; \
+	tmp="$$(mktemp -d)"; \
+	echo "Downloading $$url"; \
+	curl -fsSL "$$url" -o "$$tmp/$$archive"; \
+	case "$$archive" in \
+		*.tar.gz) tar -xzf "$$tmp/$$archive" -C "$$tmp" ;; \
+		*.zip) unzip -q "$$tmp/$$archive" -d "$$tmp" ;; \
+	esac; \
+	mv "$$tmp/opencode" "$(CURDIR)/bin/opencode"; \
+	chmod +x "$(CURDIR)/bin/opencode"; \
+	rm -rf "$$tmp"; \
+	echo "Installed to $(CURDIR)/bin/opencode"
 
 install-gemini-cli:
 	npm install -g @google/gemini-cli

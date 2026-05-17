@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CONFIG="${HOME}/.kilo/mcp.json"
+get_git_root() {
+    git rev-parse --show-toplevel 2>/dev/null || echo ""
+}
+
+GIT_ROOT="$(get_git_root)"
+if [[ -z "$GIT_ROOT" ]]; then
+    echo "Error: Not in a git repository" >&2
+    exit 1
+fi
+CONFIG="${GIT_ROOT}/.mcp.json"
 mkdir -p "$(dirname "$CONFIG")"
 
 ensure_config_exists() {
@@ -23,6 +32,7 @@ Commands:
   list                                   List configured MCP servers
   get <name>                             Get details about a server
   add-json <name> <json>                 Add server via JSON
+  opencode [src] [dst]                   Import to .opencode/opencode.json
   help                                   Show this help
 
 Options for 'add':
@@ -229,6 +239,75 @@ mcp_serve() {
 }
 
 ############################################
+# opencode (IMPORT TO OPENCODE CONFIG)
+############################################
+mcp_opencode() {
+    local SRC="${1:-${GIT_ROOT}/.mcp.json}"
+    local DST="${2:-${GIT_ROOT}/opencode.json}"
+
+    if [[ ! -f "$SRC" ]]; then
+        echo "Source file not found: $SRC" >&2
+        exit 1
+    fi
+
+    mkdir -p "$(dirname "$DST")"
+
+    # Initialize destination config if missing
+    if [[ ! -f "$DST" ]]; then
+        cat > "$DST" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {}
+}
+JSON
+    fi
+
+    local tmp
+    tmp="$(mktemp)"
+
+    jq '
+      # Convert Claude/Desktop MCP format
+      .mcpServers
+      | with_entries(
+          .value |= (
+            if .type == "stdio" or .transport == "stdio" then
+              {
+                type: "local",
+                command: ([.command] + (.args // [])),
+                enabled: true
+              }
+              +
+              (
+                if (.env // null) != null then
+                  { environment: .env }
+                else
+                  {}
+                end
+              )
+            else
+              .
+            end
+          )
+        )
+    ' "$SRC" > "$tmp"
+
+    local merged
+    merged="$(mktemp)"
+
+    jq --slurpfile imported "$tmp" '
+      .mcp = (
+        (.mcp // {})
+        + $imported[0]
+      )
+    ' "$DST" > "$merged"
+
+    mv "$merged" "$DST"
+    rm -f "$tmp"
+
+    echo "Imported MCP servers from $SRC into $DST"
+}
+
+############################################
 # MAIN DISPATCH
 ############################################
 SUB="${1:-help}"
@@ -258,6 +337,9 @@ case "$SUB" in
         ;;
     serve)
         mcp_serve "$@"
+        ;;
+    opencode)
+        mcp_opencode "$@"
         ;;
     *)
         echo "Unknown command: $SUB"
