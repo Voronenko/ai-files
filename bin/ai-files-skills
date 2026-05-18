@@ -233,8 +233,8 @@ Selected $count skill(s):
 $(echo "$names" | sed 's/^/  - /')
 
 Choose action:
-  [e] Enable  - create symlinks in .claude/skills/ and/or .kilo/skills/
-  [d] Disable - remove symlinks from .claude/skills/ and/or .kilo/skills/
+  [e] Enable  - create symlinks in .claude/skills/ and/or .kilo/skills/ or .opencode/skills/
+  [d] Disable - remove symlinks from .claude/skills/ and/or .kilo/skills/ or .opencode/skills/
   [t] Toggle  - enable if disabled, disable if enabled
   [q] Quit    - abort without making changes
 

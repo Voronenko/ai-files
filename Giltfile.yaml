@@ -2,6 +2,7 @@
 giltDir: ~/.gilt/clone
 debug: false
 parallel: true
+# check 
 
 repositories:
   # ai-files skills explore obra/superpowers
@@ -9,38 +10,222 @@ repositories:
     version: main
     sources:
       - src: skills/writing-plans
-        dstDir: vendor/skills/writing-plans
+        dstDir: vendor/skills/superpowers/superpowers/writing-plans
       - src: skills/systematic-debugging
-        dstDir: vendor/skills/systematic-debugging
+        dstDir: vendor/skills/superpowers/superpowers/systematic-debugging
       - src: skills/receiving-code-review
-        dstDir: vendor/skills/receiving-code-review
+        dstDir: vendor/skills/superpowers/receiving-code-review
       - src: skills/verification-before-completion
-        dstDir: vendor/skills/verification-before-completion
+        dstDir: vendor/skills/superpowers/verification-before-completion
       - src: skills/dispatching-parallel-agents
-        dstDir: vendor/skills/dispatching-parallel-agents
+        dstDir: vendor/skills/superpowers/dispatching-parallel-agents
       - src: skills/writing-skills
-        dstDir: vendor/skills/writing-skills
+        dstDir: vendor/skills/superpowers/writing-skills
       - src: skills/executing-plans
-        dstDir: vendor/skills/executing-plans
+        dstDir: vendor/skills/superpowers/executing-plans
       - src: skills/brainstorming
-        dstDir: vendor/skills/brainstorming
+        dstDir: vendor/skills/superpowers/brainstorming
       - src: skills/requesting-code-review
-        dstDir: vendor/skills/requesting-code-review
+        dstDir: vendor/skills/superpowers/requesting-code-review
       - src: skills/subagent-driven-development
-        dstDir: vendor/skills/subagent-driven-development
+        dstDir: vendor/skills/superpowers/subagent-driven-development
       - src: skills/using-git-worktrees
-        dstDir: vendor/skills/using-git-worktrees
+        dstDir: vendor/skills/superpowers/using-git-worktrees
       - src: skills/finishing-a-development-branch
-        dstDir: vendor/skills/finishing-a-development-branch
+        dstDir: vendor/skills/superpowers/finishing-a-development-branch
       - src: skills/using-superpowers
-        dstDir: vendor/skills/using-superpowers
+        dstDir: vendor/skills/superpowers/using-superpowers
       - src: skills/test-driven-development
-        dstDir: vendor/skills/test-driven-development
+        dstDir: vendor/skills/superpowers/test-driven-development
       - src: agents/code-reviewer.md
-        dstDir: vendor/agents/code-reviewer
+        dstDir: vendor/agents/superpowers/code-reviewer
       - src: commands/write-plan.md
-        dstDir: vendor/agents/write-plan
+        dstDir: vendor/agents/superpowers/write-plan
       - src: commands/execute-plan.md
-        dstDir: vendor/agents/execute-plan
+        dstDir: vendor/agents/superpowers/execute-plan
       - src: commands/brainstorm.md
-        dstDir: vendor/agents/brainstorm
+        dstDir: vendor/agents/superpowers/brainstorm
+
+  # ai-files skills explore vudovn/ag-kit
+  - git: https://github.com/vudovn/ag-kit.git
+    version: main
+    sources:
+      # Agents
+      - src: agents/seo-specialist.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/project-planner.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/documentation-writer.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/explorer-agent.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/penetration-tester.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/database-architect.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/performance-optimizer.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/game-developer.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/frontend-specialist.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/mobile-developer.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/orchestrator.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/qa-automation-engineer.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/devops-engineer.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/product-owner.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/backend-specialist.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/test-engineer.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/product-manager.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/debugger.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/code-archaeologist.md
+        dstDir: vendor/agents/ag-kit
+      - src: agents/security-auditor.md
+        dstDir: vendor/agents/ag-kit
+      # Rules
+      - src: rules/GEMINI.md
+        dstDir: vendor/rules/ag-kit
+      # Workflows
+      - src: workflows/remember.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/test.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/ui-ux-pro-max.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/verify.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/debug.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/deploy.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/plan.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/create.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/preview.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/orchestrate.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/status.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/enhance.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/coordinate.md
+        dstDir: vendor/workflows/ag-kit
+      - src: workflows/brainstorm.md
+        dstDir: vendor/workflows/ag-kit
+      # Skills
+      - src: skills/app-builder
+        dstDir: vendor/skills/ag-kit
+      - src: skills/api-patterns
+        dstDir: vendor/skills/ag-kit
+      - src: skills/architecture
+        dstDir: vendor/skills/ag-kit
+      - src: skills/bash-linux
+        dstDir: vendor/skills/ag-kit
+      - src: skills/batch-operations
+        dstDir: vendor/skills/ag-kit
+      - src: skills/behavioral-modes
+        dstDir: vendor/skills/ag-kit
+      - src: skills/brainstorming
+        dstDir: vendor/skills/ag-kit
+      - src: skills/clean-code
+        dstDir: vendor/skills/ag-kit
+      - src: skills/code-review-checklist
+        dstDir: vendor/skills/ag-kit
+      - src: skills/code-review-graph
+        dstDir: vendor/skills/ag-kit
+      - src: skills/context-compression
+        dstDir: vendor/skills/ag-kit
+      - src: skills/coordinator-mode
+        dstDir: vendor/skills/ag-kit
+      - src: skills/database-design
+        dstDir: vendor/skills/ag-kit
+      - src: skills/deployment-procedures
+        dstDir: vendor/skills/ag-kit
+      - src: skills/documentation-templates
+        dstDir: vendor/skills/ag-kit
+      - src: skills/frontend-design
+        dstDir: vendor/skills/ag-kit
+      - src: skills/game-development
+        dstDir: vendor/skills/ag-kit
+      - src: skills/geo-fundamentals
+        dstDir: vendor/skills/ag-kit
+      - src: skills/i18n-localization
+        dstDir: vendor/skills/ag-kit
+      - src: skills/intelligent-routing
+        dstDir: vendor/skills/ag-kit
+      - src: skills/lint-and-validate
+        dstDir: vendor/skills/ag-kit
+      - src: skills/mcp-builder
+        dstDir: vendor/skills/ag-kit
+      - src: skills/memory-system
+        dstDir: vendor/skills/ag-kit
+      - src: skills/mobile-design
+        dstDir: vendor/skills/ag-kit
+      - src: skills/nextjs-react-expert
+        dstDir: vendor/skills/ag-kit
+      - src: skills/nodejs-best-practices
+        dstDir: vendor/skills/ag-kit
+      - src: skills/parallel-agents
+        dstDir: vendor/skills/ag-kit
+      - src: skills/performance-profiling
+        dstDir: vendor/skills/ag-kit
+      - src: skills/plan-writing
+        dstDir: vendor/skills/ag-kit
+      - src: skills/powershell-windows
+        dstDir: vendor/skills/ag-kit
+      - src: skills/python-patterns
+        dstDir: vendor/skills/ag-kit
+      - src: skills/red-team-tactics
+        dstDir: vendor/skills/ag-kit
+      - src: skills/rust-pro
+        dstDir: vendor/skills/ag-kit
+      - src: skills/seo-fundamentals
+        dstDir: vendor/skills/ag-kit
+      - src: skills/server-management
+        dstDir: vendor/skills/ag-kit
+      - src: skills/simplify-code
+        dstDir: vendor/skills/ag-kit
+      - src: skills/skillify
+        dstDir: vendor/skills/ag-kit
+      - src: skills/systematic-debugging
+        dstDir: vendor/skills/ag-kit
+      - src: skills/tailwind-patterns
+        dstDir: vendor/skills/ag-kit
+      - src: skills/tdd-workflow
+        dstDir: vendor/skills/ag-kit
+      - src: skills/testing-patterns
+        dstDir: vendor/skills/ag-kit
+      - src: skills/verify-changes
+        dstDir: vendor/skills/ag-kit
+      - src: skills/vulnerability-scanner
+        dstDir: vendor/skills/ag-kit
+      - src: skills/webapp-testing
+        dstDir: vendor/skills/ag-kit
+      - src: skills/web-design-guidelines
+        dstDir: vendor/skills/ag-kit
+
+  # obsidian-skills
+  - git: git@github.com:kepano/obsidian-skills.git
+    version: main
+    sources:
+      - src: skills/obsidian-cli
+        dstDir: vendor/skills/obsidian
+      - src: skills/defuddle
+        dstDir: vendor/skills/obsidian
+      - src: skills/obsidian-bases
+        dstDir: vendor/skills/obsidian
+      - src: skills/obsidian-markdown
+        dstDir: vendor/skills/obsidian
+      - src: skills/json-canvas
+        dstDir: vendor/skills/obsidian

@@ -684,6 +684,24 @@ install-opencode-cli:
 	rm -rf "$$tmp"; \
 	echo "Installed to $(CURDIR)/bin/opencode"
 
+install-grok-amd64:
+	@set -e; \
+	VERSION="$${VERSION:-$$(curl -fsSL https://x.ai/cli/stable)}"; \
+	PLATFORM="linux-x86_64"; \
+	BIN_DIR="$$HOME/ai-files/bin"; \
+	mkdir -p "$$BIN_DIR"; \
+	URL="https://x.ai/cli/grok-$$VERSION-$$PLATFORM"; \
+	echo "Installing Grok $$VERSION ($$PLATFORM)..."; \
+	curl -fsSL "$$URL" -o "$$BIN_DIR/grok"; \
+	chmod +x "$$BIN_DIR/grok"; \
+	ln -sf grok "$$BIN_DIR/agent"; \
+	echo "Installed to $$BIN_DIR/grok"; \
+	if ! echo "$$PATH" | tr ':' '\n' | grep -qx "$$BIN_DIR"; then \
+		echo ''; \
+		echo 'Add to PATH:'; \
+		echo '  export PATH="$$HOME/dotfiles/bin:$$PATH"'; \
+	fi
+
 install-gemini-cli:
 	npm install -g @google/gemini-cli
 
