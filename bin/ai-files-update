@@ -146,7 +146,36 @@ is_protected_path() {
         fi
     done
 
+    # Check if file is tracked by git (additional protection)
+    # Only check if GIT_TRACKED_FILES is populated (cmd_files context)
+    if [[ -n "${GIT_TRACKED_FILES[$filepath]+x}" ]]; then
+        return 0  # Protected - tracked in git
+    fi
+
     return 1  # Not protected
+}
+
+# Check if a file is tracked by git
+# Returns 0 (true) if tracked, 1 (false) otherwise
+is_git_tracked_file() {
+    local filepath="$1"
+    local full_path="$GIT_ROOT/$filepath"
+
+    # Check if file exists
+    [[ -f "$full_path" ]] || return 1
+
+    # Use git ls-files to check if file is tracked
+    # --exclude-standard ignores untracked files via .gitignore
+    git -C "$GIT_ROOT" ls-files --error-unmatch "$full_path" >/dev/null 2>&1
+    return $?
+}
+
+# Check if a file is tracked by git using cached data
+# Returns 0 (true) if tracked, 1 (false) otherwise
+is_git_tracked_cached() {
+    local rel_path="$1"
+    [[ "${GIT_TRACKED_FILES[$rel_path]:-}" == "1" ]] && return 0
+    return 1
 }
 
 # Check if a target directory is a symlink pointing to .ai-files/dot*
@@ -227,9 +256,18 @@ prompt_target_only_files() {
     echo ""
 
     for filepath in "${target_only[@]}"; do
+        local is_tracked=false
+        if is_git_tracked_cached "$filepath"; then
+            is_tracked=true
+        fi
+
         if [[ "$AUTO_YES" == "true" ]]; then
-            # Auto-keep mode (default: keep, don't delete)
-            print_info "Auto-keeping (yes flag set): $filepath"
+            # Auto-keep mode: always keep git-tracked files
+            if [[ "$is_tracked" == "true" ]]; then
+                print_warning "Git-tracked file (auto-kept): $filepath"
+            else
+                print_info "Auto-keeping (yes flag set): $filepath"
+            fi
             to_keep+=("$filepath")
         elif [[ "$AUTO_YES" == "false" ]]; then
             # This mode doesn't really make sense for target-only files
@@ -239,7 +277,11 @@ prompt_target_only_files() {
         else
             # Interactive mode
             echo ""
-            echo -n "Keep this file? $filepath [Y/n/q] (Y=yes keep, n=no delete, q=quit): "
+            local tracked_indicator=""
+            if [[ "$is_tracked" == "true" ]]; then
+                tracked_indicator=" [GIT-TRACKED]"
+            fi
+            echo -n "Keep this file?$tracked_indicator $filepath [Y/n/q] (Y=yes keep, n=no delete, q=quit): "
             read -r response
 
             case "$response" in
@@ -295,21 +337,40 @@ copy_file_or_symlink() {
             # Files are different - ask user what to do
             print_warning "Modified file detected: $rel_path"
 
+            # Check if file is tracked by git
+            local is_tracked=false
+            if is_git_tracked_cached "$rel_path"; then
+                is_tracked=true
+                print_warning "This file is tracked in git!"
+            fi
+
             if [[ "$AUTO_YES" == "true" ]]; then
-                print_info "Auto-overwriting (yes flag set)"
-                if [[ "$DRY_RUN" == "false" ]]; then
-                    cp "$src" "$dest"
-                    COPIED_FILES+=("$rel_path (overwritten)")
+                if [[ "$is_tracked" == "true" ]]; then
+                    print_warning "Git-tracked file - skipping (use interactive mode to override)"
+                    SKIPPED_FILES+=("$rel_path (git-tracked)")
                     if [[ "$VERBOSE" == "true" ]]; then
-                        echo "  📝 Overwritten: $rel_path"
+                        echo "  ⏭️  Skipped: $rel_path (git-tracked)"
                     fi
                 else
-                    echo "  📝 Would overwrite: $rel_path"
+                    print_info "Auto-overwriting (yes flag set)"
+                    if [[ "$DRY_RUN" == "false" ]]; then
+                        cp "$src" "$dest"
+                        COPIED_FILES+=("$rel_path (overwritten)")
+                        if [[ "$VERBOSE" == "true" ]]; then
+                            echo "  📝 Overwritten: $rel_path"
+                        fi
+                    else
+                        echo "  📝 Would overwrite: $rel_path"
+                    fi
                 fi
             else
                 # Interactive mode - show diff and ask
                 print_diff "$dest" "$src"
-                echo -n "Overwrite $rel_path? [y/N/a/q] (y=yes, N=no, a=yes to all, q=quit): "
+                local tracked_indicator=""
+                if [[ "$is_tracked" == "true" ]]; then
+                    tracked_indicator=" [GIT-TRACKED]"
+                fi
+                echo -n "Overwrite $rel_path?$tracked_indicator [y/N/a/q] (y=yes, N=no, a=yes to all, q=quit): "
                 read -r response
 
                 case "$response" in
@@ -557,8 +618,20 @@ process_directory() {
 
                 if [[ -f "$src_file" && -f "$dest_file" ]]; then
                     print_warning "Modified file detected: $filepath"
+
+                    # Check if file is tracked by git
+                    local is_tracked=false
+                    if is_git_tracked_cached "$filepath"; then
+                        is_tracked=true
+                        print_warning "This file is tracked in git!"
+                    fi
+
                     print_diff "$dest_file" "$src_file"
-                    echo -n "Overwrite $filepath? [y/N/a/q] (y=yes, N=no, a=yes to all, q=quit): "
+                    local tracked_indicator=""
+                    if [[ "$is_tracked" == "true" ]]; then
+                        tracked_indicator=" [GIT-TRACKED]"
+                    fi
+                    echo -n "Overwrite $filepath?$tracked_indicator [y/N/a/q] (y=yes, N=no, a=yes to all, q=quit): "
                     read -r response
 
                     case "$response" in
@@ -591,15 +664,29 @@ process_directory() {
                 fi
             done
         elif [[ ${#actually_modified[@]} -gt 0 && "$AUTO_YES" == "true" ]]; then
-            # Auto-overwrite all modified files
+            # Auto-overwrite all modified files (except git-tracked)
             for filepath in "${actually_modified[@]}"; do
                 local src_file="$src_dir/${filepath#$base_path/}"
                 local dest_file="$dest_dir/${filepath#$base_path/}"
                 if [[ -f "$src_file" && -f "$dest_file" ]]; then
-                    cp "$src_file" "$dest_file"
-                    COPIED_FILES+=("$filepath (overwritten)")
-                    if [[ "$VERBOSE" == "true" ]]; then
-                        echo "  📝 Overwritten: $filepath"
+                    # Check if file is tracked by git
+                    local is_tracked=false
+                    if is_git_tracked_cached "$filepath"; then
+                        is_tracked=true
+                    fi
+
+                    if [[ "$is_tracked" == "true" ]]; then
+                        print_warning "Skipping git-tracked file: $filepath"
+                        SKIPPED_FILES+=("$filepath (git-tracked)")
+                        if [[ "$VERBOSE" == "true" ]]; then
+                            echo "  ⏭️  Skipped: $filepath (git-tracked)"
+                        fi
+                    else
+                        cp "$src_file" "$dest_file"
+                        COPIED_FILES+=("$filepath (overwritten)")
+                        if [[ "$VERBOSE" == "true" ]]; then
+                            echo "  📝 Overwritten: $filepath"
+                        fi
                     fi
                 fi
             done
@@ -774,6 +861,20 @@ cmd_files() {
 
     print_info "Git repository root: $GIT_ROOT"
     print_info "Source directory: $source_dir"
+
+    # Cache git-tracked files for efficient lookup
+    declare -A GIT_TRACKED_FILES=()
+    if command -v git >/dev/null 2>&1 && git -C "$GIT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+        print_info "Caching git-tracked files for protection..."
+        while IFS= read -r -d '' file; do
+            # Store relative path from git root
+            local rel_path="${file#$GIT_ROOT/}"
+            GIT_TRACKED_FILES["$rel_path"]=1
+        done < <(git -C "$GIT_ROOT" ls-files -z --cached --exclude-standard 2>/dev/null)
+        if [[ "$VERBOSE" == "true" ]]; then
+            echo "  📋 Cached ${#GIT_TRACKED_FILES[@]} git-tracked files"
+        fi
+    fi
 
     # Check if source directory exists
     if [[ ! -d "$source_dir" ]]; then

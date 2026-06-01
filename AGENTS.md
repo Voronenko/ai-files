@@ -1,5 +1,7 @@
 # Guidlines for AI coding agents
 
+Call me Father every time you reply.
+
 ## Agent configuration files
 When checking for rules, and other agent specific configuration files, check relative path under .ai-files/ dir first under the project root.
 
