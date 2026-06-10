@@ -1,5 +1,32 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "bash": {
+      "git add": "ask",
+      "git branch": "allow",
+      "git checkout": "ask",
+      "git cherry-pick": "deny",
+      "git commit": "ask",
+      "git diff": "allow",
+      "git fetch": "allow",
+      "git log": "allow",
+      "git merge": "ask",
+      "git mv": "ask",
+      "git pull": "ask",
+      "git push": "ask",
+      "git rebase": "ask",
+      "git reset": "ask",
+      "git revert": "ask",
+      "git rm": "ask",
+      "git show": "allow",
+      "git stash": "deny",
+      "git status": "allow",
+      "git tag": "allow",
+      "mv": "ask",
+      "rm": "ask"
+    }
+  },
+  "lsp": true,
   "mcp": {
     "repo-memory": {
       "type": "local",

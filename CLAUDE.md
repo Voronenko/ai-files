@@ -1,1 +1,1 @@
-/home/slavko/ai-files/AGENTS.md
+AGENTS.md
