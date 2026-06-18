@@ -178,6 +178,34 @@ is_git_tracked_cached() {
     return 1
 }
 
+# Check if destination has git-tracked files that would be deleted
+# Returns 0 (true) if protected files would be deleted, 1 (false) otherwise
+has_protected_files_to_delete() {
+    local src_dir="$1"
+    local dest_dir="$2"
+    local base_path="$3"
+
+    # Use rsync dry-run to find files that would be deleted
+    local rsync_output
+    rsync_output=$(rsync --archive --delete --itemize-changes --dry-run "$src_dir/" "$dest_dir/" 2>&1 || true)
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        [[ "$line" != *deleting* ]] && continue
+
+        local flags="${line:0:11}"
+        local filepath="${line:12}"
+        [[ "$filepath" == */ ]] && continue  # Skip directories
+
+        local full_path="$base_path/$filepath"
+        if is_git_tracked_cached "$full_path"; then
+            return 0  # Would delete git-tracked file
+        fi
+    done <<< "$rsync_output"
+
+    return 1  # No git-tracked files would be deleted
+}
+
 # Check if a target directory is a symlink pointing to .ai-files/dot*
 # Returns 0 (true) if it's a managed symlink, 1 (false) otherwise
 is_managed_symlink() {
@@ -510,7 +538,16 @@ process_directory() {
         for protected_pattern in "${PROTECTED_PATTERNS[@]}"; do
             rsync_opts="$rsync_opts --exclude=$protected_pattern"
         done
-        rsync_opts="$rsync_opts --delete"
+
+        # Check if git-tracked files would be deleted
+        if has_protected_files_to_delete "$src_dir" "$dest_dir" "$base_path"; then
+            print_warning "Skipping --delete for $base_path (would delete git-tracked files)"
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "  📋 Git-tracked files preserved in $base_path"
+            fi
+        else
+            rsync_opts="$rsync_opts --delete"
+        fi
     fi
     if [[ "$DRY_RUN" == "true" ]]; then
         rsync_opts="$rsync_opts --dry-run"
