@@ -25,4 +25,7 @@ Confirm the session has started and remind the user they can:
 - Update it with `/workout.update`
 - End it with `/workout.end`
 
+**In your final confirmation message, also inform the user:**
+> 💡 **Tip:** If this session relates to a ticket (JIRA, GitHub Issue, etc.), consider mentioning the ticket number (e.g., `#123`, `PROJ-456`) so it can be tagged in the session summary for better tracking.
+
 Do not proceed further with some thinking or generation, as user will provide additional instructions in chat first.

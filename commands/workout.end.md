@@ -28,19 +28,33 @@ End the current development session by:
    - What wasn't completed
    - Tips for future developers
 
-4. Basing on summary select three tags unique specifically for this session, and add it as #tag1 #tag2 #tag3 to the summary
+4. Extract tracking identifiers:
+   - **Ticket number**: Scan session file for ticket references (patterns like `#123`, `PROJ-456`, `JIRA-123`, `ABC-123`) or check if SESSION_SUBJECT contains a ticket. Store without `#` prefix for tag compatibility.
+   - **Git branch**: Run `git rev-parse --abbrev-ref HEAD` to get current branch name (strip `origin/` prefix if remote branch)
 
-5. Empty the `.ai-files/sessions/.current-session` file (don't remove it, just clear its contents)
+5. Basing on summary select three tags unique specifically for this session, and add it as #tag1 #tag2 #tag3 to the summary. Include ticket number as a tag if found (e.g., `PROJ-456`, `123`) — omit the `#` prefix for tag storage.
 
-6. Inform user the session has been documented
+6. Empty the `.ai-files/sessions/.current-session` file (don't remove it, just clear its contents)
+
+7. Inform user the session has been documented
 
 The summary should be thorough enough that another developer (or AI) can understand everything that happened without reading the entire session.
 
-7.  Add with repo-memory information mcp summary about this session with path to session file, tag it additionally with session tag, consider also tags to refer primary subsystems or main filenames touched in the session tags, plus three tags you consider useful.
+8. Store session metadata in repo-memory using `mcp__repo-memory__memory_store`:
+   - **content**: Full session summary with explicit statement of the session file path at the top (format: `## Session File: <path-to-session-md>`)
+   - **metadata.tags** (as array): `["session", "mcp-memory-service", "<branch-name>", "<ticket-tag-if-found>", "<tag1>", "<tag2>", "<tag3>", "<primary-subsystem-or-file>"]`
+     - Always include `session` and `mcp-memory-service` as first tags
+     - Add branch name as tag (e.g., `feature-auth`, `main`, `develop`)
+     - Add ticket tag if found (e.g., `PROJ-456`, `123`)
+     - Add the three unique tags from step 5
+     - Add tags for primary subsystems or key files touched
+   - **metadata.type**: "session"
 
-8. Ask if user wants to add this session into obsidian, if yes run command
+   The session file path MUST be stored both in the content body and as recoverable metadata for future lookup.
 
-ai-files obsidian-add <path to session markdown file> -t tag1,tag2,tag3
+9. Ask if user wants to add this session into obsidian, if yes run command
 
-where tag1 tag2 and tag3 are tags from summary
+ai-files obsidian-add <path to session markdown file> -t <branch-name>,<ticket-if-found>,tag1,tag2,tag3
+
+where tags include branch, ticket (if found), and the three summary tags
 

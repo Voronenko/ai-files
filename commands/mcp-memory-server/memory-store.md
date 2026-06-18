@@ -31,24 +31,44 @@ claude /memory-store --type "note" "Remember to update the Docker configuration 
 
 ## Implementation:
 
-I'll use a **hybrid remote-first approach** with local fallback for reliability:
+I'll use a **layered storage approach**: the local `repo-memory` MCP server is the source of truth, and the remote HTTP API is used only as a fallback when MCP is unavailable.
 
-### Primary: Remote API Storage
-- **Try remote first**: `https://narrowbox.local:8443/api/memories` 
+### Primary: MCP Protocol (`repo-memory` server)
+- **Try MCP first**: Call the `repo-memory` MCP server (configured in `.mcp.json` — stdio, SQLite-vec backend at `.ai-files/memory.db`) using its `memory_store` tool. **Tags MUST go inside `metadata`** — there is no top-level `tags` parameter (verified against the server's `tools/list`):
+  ```python
+  mcp__repo-memory__memory_store(
+      content="<memory content>",
+      metadata={"tags": "mcp-memory-service,<project-name>,<additional-tags>"}
+  )
+  ```
+  - ⚠️ **Correct shape**: `metadata={"tags": "comma,separated,string"}`. Passing `tags` at the top level silently saves an **untagged** memory and violates the tagging directive.
+- **Fast & local**: No network round-trip; the memory is immediately retrievable in the same session via `mcp__repo-memory__memory_search(query=...)` (semantic search). Tag-based deletion uses `mcp__repo-memory__memory_delete(tags=[...])`.
+- **Project tagging (mandatory)**: Per `directives/memory-tagging.md`, I ALWAYS pass `mcp-memory-service` as the **first** tag so session-start hooks and tag-based searches can find the memory.
+
+### If MCP Is Not Available — Inform the User First
+- **Detect the failure**: If the `repo-memory` MCP server is not registered or not running (no `mcp__repo-memory__*` tools are available in the current session, or a call errors out), I will **stop and inform the user** before doing anything else, for example:
+  > ⚠️ The `repo-memory` MCP server is unavailable in this session. I'll fall back to the remote HTTP API unless you'd rather fix MCP first.
+  >
+  > To enable local MCP storage:
+  > - The server is declared in **`zcode.json`** (ZCode-native: `mcp.servers[]` with `env:[{name,value}]`). **Note**: ZCode does *not* read `.mcp.json` or `opencode.json` for session MCP servers — those are for other agents.
+  > - MCP servers connect at **session startup** (`mcp.startup`), so after editing `zcode.json` you must **start a new session** for `repo-memory` to appear.
+  > - Verify the server itself works any time with: `memory server` (runs cleanly in stdio; `memory --version` → 10.73.0).
+- I will **not silently fall through** — the user must know that local MCP storage failed and why, so the decision to use the remote fallback is explicit.
+
+### Fallback: Remote HTTP API
+- **Only after informing the user**: `POST https://narrowbox.local:8443/api/memories`
 - **Real-time sync**: Changes immediately available across all clients
-- **Single source of truth**: Consolidated database on remote server
-
-### Fallback: Local Staging
-- **If remote fails**: Store locally in staging database for later sync
-- **Offline capability**: Continue working when remote is unreachable  
-- **Auto-sync**: Changes pushed to remote when connectivity returns
+- **Single source of truth**: Consolidated database on the remote server
+- **Local staging**: If the remote is also unreachable, stage locally for later sync
 
 ### Smart Sync Workflow
 ```
-1. Try remote API directly (fastest path)
-2. If offline/failed: Stage locally + notify user  
-3. On reconnect: ./sync/memory_sync.sh automatically syncs
-4. Conflict resolution: Remote wins, with user notification
+1. Try repo-memory MCP tool first (fastest, local, no network)
+2. If MCP unavailable: STOP → inform the user and explain how to start it
+3. Only then: fall back to remote HTTP API (https://narrowbox.local:8443/api/memories)
+4. If remote also fails: stage locally + notify user
+5. On reconnect: ./sync/memory_sync.sh automatically syncs
+6. Conflict resolution: Remote wins, with user notification
 ```
 
 The content will be stored with automatic context detection:
@@ -59,11 +79,12 @@ The content will be stored with automatic context detection:
 - **Temporal Context**: Date, time, and relationship to recent activities
 
 ### Service Endpoints:
-- **Primary API**: `https://narrowbox.local:8443/api/memories`
+- **Primary (MCP)**: `repo-memory` MCP server — `mcp__repo-memory__memory_store(content=..., metadata={"tags": ...})` (see `.mcp.json`)
+- **Fallback (HTTP)**: `https://narrowbox.local:8443/api/memories` — only after informing the user that MCP is unavailable
 - **Sync Status**: Use `./sync/memory_sync.sh status` to check pending changes
 - **Manual Sync**: Use `./sync/memory_sync.sh sync` for full synchronization
 
-I'll use the correct curl syntax with `-k` flag for HTTPS, proper JSON payload formatting, and automatic client hostname detection using the `X-Client-Hostname` header.
+For MCP storage I use the `repo-memory` tool directly with a JSON `metadata.tags` string. For the HTTP fallback I use curl with the `-k` flag for HTTPS, proper JSON payload formatting, and automatic client hostname detection via the `X-Client-Hostname` header.
 
 ## Arguments:
 

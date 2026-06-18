@@ -7,7 +7,7 @@ cwd=$(echo "$input" | jq -r '.workspace.current_dir // empty')
 
 # Extract values using jq
 MODEL_DISPLAY=$(echo "$input" | jq -r '.model.display_name')
-CURRENT_DIR=$(echo "$input" | jq -r '.workspace.current_dir')o
+CURRENT_DIR=$(echo "$input" | jq -r '.workspace.current_dir')
 
 # ── Check for repo-memory MCP and get memory count ──
 get_repo_memory_stats() {
