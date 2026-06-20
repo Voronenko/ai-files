@@ -52,6 +52,10 @@ MERGE_FOLDERS=("commands" "hooks" "skills" "rules")
 PROTECTED_DIRS=(".ai-files/sessions" ".ai-files/memory" ".ai-files/memory-bank")
 # File patterns that should never be deleted
 PROTECTED_PATTERNS=("memory.db*")
+# Runtime artifacts created by opencode itself (e.g. via npm install) inside .opencode/.
+# They are never part of the ai-files distribution and must be left untouched during
+# updates — never deleted, overwritten, or flagged as target-only.
+OPENCODE_RUNTIME_ARTIFACTS=("node_modules" "package.json" "package-lock.json" ".gitignore")
 
 # Tracking arrays
 declare -a COPIED_FILES=()
@@ -124,6 +128,19 @@ detect_git_root() {
     return 1
 }
 
+# Check if a path relative to .opencode/ is an opencode runtime artifact.
+# Matches the exact name (e.g. package.json) or anything nested under it
+# (e.g. node_modules/.package-lock.json).
+is_opencode_runtime_artifact() {
+    local rel="$1"
+    local artifact
+    for artifact in "${OPENCODE_RUNTIME_ARTIFACTS[@]}"; do
+        [[ "$rel" == "$artifact" ]] && return 0
+        [[ "$rel" == "$artifact"/* ]] && return 0
+    done
+    return 1
+}
+
 # Check if a path is protected (should not be deleted)
 is_protected_path() {
     local filepath="$1"
@@ -145,6 +162,14 @@ is_protected_path() {
             return 0  # Protected
         fi
     done
+
+    # Check opencode runtime artifacts (npm files created by opencode itself)
+    if [[ "$filepath" == ".opencode/"* ]]; then
+        local rel="${filepath#.opencode/}"
+        if is_opencode_runtime_artifact "$rel"; then
+            return 0  # Protected - opencode runtime artifact
+        fi
+    fi
 
     # Check if file is tracked by git (additional protection)
     # Only check if GIT_TRACKED_FILES is populated (cmd_files context)
@@ -538,6 +563,14 @@ process_directory() {
         for protected_pattern in "${PROTECTED_PATTERNS[@]}"; do
             rsync_opts="$rsync_opts --exclude=$protected_pattern"
         done
+
+        # Exclude opencode runtime artifacts (npm files created by opencode itself)
+        # so rsync --delete won't remove them — only applies when syncing .opencode
+        if [[ "$base_path" == ".opencode" || "$base_path" == ".opencode/"* ]]; then
+            for artifact in "${OPENCODE_RUNTIME_ARTIFACTS[@]}"; do
+                rsync_opts="$rsync_opts --exclude=$artifact"
+            done
+        fi
 
         # Check if git-tracked files would be deleted
         if has_protected_files_to_delete "$src_dir" "$dest_dir" "$base_path"; then
@@ -2271,6 +2304,13 @@ cmd_link_opencode() {
             local relative_path="${entry#$opencode_target/}"
             # Skip agents/, skills/, rules/, commands/ directories as they are managed separately
             if [[ "$relative_path" == agents ]] || [[ "$relative_path" == agents/* ]] || [[ "$relative_path" == skills ]] || [[ "$relative_path" == skills/* ]] || [[ "$relative_path" == rules ]] || [[ "$relative_path" == rules/* ]] || [[ "$relative_path" == commands ]] || [[ "$relative_path" == commands/* ]]; then
+                continue
+            fi
+            # Skip opencode runtime artifacts (npm files created by opencode itself)
+            if is_opencode_runtime_artifact "$relative_path"; then
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  🔒 Opencode runtime artifact (kept): .opencode/$relative_path"
+                fi
                 continue
             fi
             local source_file="$dotopencode_source/$relative_path"

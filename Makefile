@@ -79,6 +79,13 @@ prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prom
 	@echo ".mcp.json" > ./dist/.ai-files/roaming-files.txt
 	@echo "AGENTS.md" >> ./dist/.ai-files/roaming-files.txt
 	@echo "CLAUDE.md" >> ./dist/.ai-files/roaming-files.txt
+	# Build metadata: git snapshot + dist creation timestamp (read by `ai-files --version`)
+	@echo "Generating .ai-files/VERSION ..."
+	@printf 'VERSION=%s\nCOMMIT=%s\nBRANCH=%s\nBUILD_DATE=%s\n' \
+		"$$(git describe --tags --always --dirty 2>/dev/null || echo unknown)" \
+		"$$(git rev-parse --short=7 HEAD 2>/dev/null || echo unknown)" \
+		"$$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)" \
+		"$$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ./dist/.ai-files/VERSION
 
 prepare-claude:
 	@mkdir -p ./dist/.ai-files/dotclaude/commands

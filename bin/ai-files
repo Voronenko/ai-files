@@ -10,9 +10,46 @@ while [ -h "$SCRIPT_PATH" ]; do
 done
 SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 
+# Print build-baked version from .ai-files/VERSION if present, else fall back to git.
+# Resolution order: project .ai-files/VERSION (synced by 'ai-files update files'),
+# then the dev dist build, then git (dev HEAD), then "unknown".
+find_version_file() {
+    local d="$PWD"
+    while [[ "$d" != "/" ]]; do
+        if [[ -f "$d/.ai-files/VERSION" ]]; then
+            echo "$d/.ai-files/VERSION"
+            return 0
+        fi
+        d="$(dirname "$d")"
+    done
+    if [[ -f "${SELF_DIR}/../dist/.ai-files/VERSION" ]]; then
+        echo "${SELF_DIR}/../dist/.ai-files/VERSION"
+        return 0
+    fi
+    return 1
+}
+
 get_version() {
+    local vf
+    if vf="$(find_version_file 2>/dev/null)"; then
+        local v="" c="" bd=""
+        local key val
+        while IFS='=' read -r key val; do
+            case "$key" in
+                VERSION)    v="$val" ;;
+                COMMIT)     c="$val" ;;
+                BUILD_DATE) bd="$val" ;;
+            esac
+        done < "$vf"
+        if [[ -n "$bd" ]]; then
+            printf 'ai-files %s (commit %s, built %s)\n' "${v:-unknown}" "${c:-unknown}" "$bd"
+            return
+        fi
+    fi
+
+    # Fallback: derive from git (existing behavior), else unknown
     local git_dir="${SELF_DIR}/../.git"
-    if [ ! -d "$git_dir" ]; then
+    if [[ ! -d "$git_dir" ]]; then
         echo "unknown"
         return
     fi
@@ -20,7 +57,7 @@ get_version() {
     # Check if we're on a tag
     local tag
     tag=$(git -C "${SELF_DIR}/.." describe --tags --exact-match 2>/dev/null || true)
-    if [ -n "$tag" ]; then
+    if [[ -n "$tag" ]]; then
         echo "$tag"
         return
     fi
@@ -31,7 +68,7 @@ get_version() {
     branch=$(git -C "${SELF_DIR}/.." rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
     commit_hash=$(git -C "${SELF_DIR}/.." rev-parse --short=7 HEAD 2>/dev/null || echo "unknown")
 
-    if [ "$branch" = "HEAD" ]; then
+    if [[ "$branch" = "HEAD" ]]; then
         # Detached HEAD state
         echo "detached-${commit_hash}"
     else
@@ -56,7 +93,7 @@ Usage: ai-files <command> [options]
 Commands:
   mcp          Configure and manage MCP servers
   update       Update ai-files utilities (if ai-files-update exists)
-  version      Show version information
+  version      Show version information (also: --version / -V)
 
 Any command can be overridden by placing a file:
   ai-files-<command>
@@ -157,7 +194,7 @@ EOF
         echo "No builtin update command. Provide ai-files-update." >&2
         exit 1
         ;;
-    version)
+    version|--version|-V)
         get_version
         ;;
     *)
