@@ -9,6 +9,7 @@
 set -euo pipefail
 
 readonly EXIT_SUCCESS=0
+readonly EXIT_INVALID_SKILL=1
 readonly EXIT_NOT_LINKED=1
 readonly EXIT_PERMISSION=2
 readonly EXIT_ERROR=3
@@ -72,30 +73,84 @@ or .ai-files/dotclaude/skills/ are preserved.
 EOF
 }
 
-disable_skill_in_dir() {
-    local skill_name="$1"
-    local target_dir="$2"
-    local target_path="$target_dir/$skill_name"
+find_skill_source() {
+    local skill="$1"
 
-    # Check if symlink exists
-    if [ ! -e "$target_path" ] && [ ! -L "$target_path" ]; then
-        info "Not linked in $(basename "$target_dir")"
+    # Try exact qualified path under .ai-files/skills/ (handles top-level and nested)
+    if [ -d "$PROJECT_ROOT/.ai-files/skills/$skill" ] && [ -f "$PROJECT_ROOT/.ai-files/skills/$skill/SKILL.md" ]; then
+        echo "$PROJECT_ROOT/.ai-files/skills/$skill"
+        return
+    fi
+
+    # Try dotclaude
+    if [ -d "$PROJECT_ROOT/.ai-files/dotclaude/skills/$skill" ] && [ -f "$PROJECT_ROOT/.ai-files/dotclaude/skills/$skill/SKILL.md" ]; then
+        echo "$PROJECT_ROOT/.ai-files/dotclaude/skills/$skill"
+        return
+    fi
+
+    # Search recursively by leaf name (for backwards compatibility)
+    local matches=()
+    while IFS= read -r -d '' skill_md; do
+        local dir
+        dir=$(dirname "$skill_md")
+        local leaf
+        leaf=$(basename "$dir")
+        if [ "$leaf" = "$skill" ]; then
+            matches+=("$dir")
+        fi
+    done < <(find "$PROJECT_ROOT/.ai-files/skills" -name 'SKILL.md' -not -path '*/.git/*' -print0 2>/dev/null)
+
+    if [ ${#matches[@]} -eq 1 ]; then
+        echo "${matches[0]}"
+        return
+    elif [ ${#matches[@]} -gt 1 ]; then
+        error "Multiple matches for '$skill'. Use qualified path:"
+        for m in "${matches[@]}"; do
+            local rel="${m#$PROJECT_ROOT/.ai-files/skills/}"
+            echo "  - $rel" >&2
+        done
+        echo ""
+        return
+    fi
+
+    echo ""
+}
+
+disable_skill_in_dir() {
+    local source_path="$1"
+    local target_dir="$2"
+    local agent_name
+    agent_name=$(basename "$target_dir")
+
+    if [ ! -d "$target_dir" ]; then
+        info "No $agent_name skills directory"
         return 1
     fi
 
-    # Remove symlink (or file/directory, but warn)
-    if [ -L "$target_path" ]; then
-        rm -f "$target_path" 2>/dev/null || {
-            error "Failed to remove symlink from $(basename "$target_dir")"
-            return "$EXIT_ERROR"
-        }
-        local rel_path="${target_path#"$PROJECT_ROOT/"}"
-        success "Removed $rel_path"
-        return 0
-    else
-        error "Path exists but is not a symlink: $target_path"
-        return "$EXIT_ERROR"
+    # Find symlink whose resolved target matches source_path
+    local found=false
+    for link in "$target_dir"/*; do
+        [ -L "$link" ] || continue
+        local resolved
+        resolved=$(readlink -f "$link" 2>/dev/null || true)
+        if [ "$resolved" = "$source_path" ]; then
+            rm -f "$link" 2>/dev/null || {
+                error "Failed to remove symlink from $agent_name"
+                return "$EXIT_ERROR"
+            }
+            local rel_path="${link#"$PROJECT_ROOT/"}"
+            success "Removed $rel_path"
+            found=true
+            break
+        fi
+    done
+
+    if [[ "$found" == false ]]; then
+        info "Not linked in $agent_name"
+        return 1
     fi
+
+    return 0
 }
 
 parse_arguments() {
@@ -157,6 +212,15 @@ parse_arguments() {
 main() {
     parse_arguments "$@"
 
+    # Find skill source
+    local skill_source
+    skill_source=$(find_skill_source "$SKILL_NAME")
+
+    if [ -z "$skill_source" ]; then
+        error "Skill not found: $SKILL_NAME"
+        exit "$EXIT_INVALID_SKILL"
+    fi
+
     echo "Disabling skill: $SKILL_NAME"
 
     local claude_disabled=false
@@ -165,21 +229,21 @@ main() {
 
     # Disable in Claude
     if [[ "$KILO_ONLY" != true ]] && [[ "$OPENCODE_ONLY" != true ]]; then
-        if disable_skill_in_dir "$SKILL_NAME" "$PROJECT_ROOT/.claude/skills"; then
+        if disable_skill_in_dir "$skill_source" "$PROJECT_ROOT/.claude/skills"; then
             claude_disabled=true
         fi
     fi
 
     # Disable in Kilo
     if [[ "$CLAUDE_ONLY" != true ]] && [[ "$OPENCODE_ONLY" != true ]]; then
-        if disable_skill_in_dir "$SKILL_NAME" "$PROJECT_ROOT/.kilo/skills"; then
+        if disable_skill_in_dir "$skill_source" "$PROJECT_ROOT/.kilo/skills"; then
             kilo_disabled=true
         fi
     fi
 
     # Disable in OpenCode
     if [[ "$CLAUDE_ONLY" != true ]] && [[ "$KILO_ONLY" != true ]]; then
-        if disable_skill_in_dir "$SKILL_NAME" "$PROJECT_ROOT/.opencode/skills"; then
+        if disable_skill_in_dir "$skill_source" "$PROJECT_ROOT/.opencode/skills"; then
             opencode_disabled=true
         fi
     fi

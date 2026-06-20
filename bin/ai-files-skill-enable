@@ -76,48 +76,60 @@ EOF
 
 find_skill_source() {
     local skill="$1"
-    local skill_path=""
 
-    # Check .ai-files/skills/ first
-    if [ -d "$PROJECT_ROOT/.ai-files/skills/$skill" ]; then
-        skill_path="$PROJECT_ROOT/.ai-files/skills/$skill"
-    # Check .ai-files/dotclaude/skills/
-    elif [ -d "$PROJECT_ROOT/.ai-files/dotclaude/skills/$skill" ]; then
-        skill_path="$PROJECT_ROOT/.ai-files/dotclaude/skills/$skill"
+    # Try exact qualified path under .ai-files/skills/ (handles top-level and nested)
+    if [ -d "$PROJECT_ROOT/.ai-files/skills/$skill" ] && [ -f "$PROJECT_ROOT/.ai-files/skills/$skill/SKILL.md" ]; then
+        echo "$PROJECT_ROOT/.ai-files/skills/$skill"
+        return
     fi
 
-    echo "$skill_path"
+    # Try dotclaude
+    if [ -d "$PROJECT_ROOT/.ai-files/dotclaude/skills/$skill" ] && [ -f "$PROJECT_ROOT/.ai-files/dotclaude/skills/$skill/SKILL.md" ]; then
+        echo "$PROJECT_ROOT/.ai-files/dotclaude/skills/$skill"
+        return
+    fi
+
+    # Search recursively by leaf name (for backwards compatibility with plain names)
+    local matches=()
+    while IFS= read -r -d '' skill_md; do
+        local dir
+        dir=$(dirname "$skill_md")
+        local leaf
+        leaf=$(basename "$dir")
+        if [ "$leaf" = "$skill" ]; then
+            matches+=("$dir")
+        fi
+    done < <(find "$PROJECT_ROOT/.ai-files/skills" -name 'SKILL.md' -not -path '*/.git/*' -print0 2>/dev/null)
+
+    if [ ${#matches[@]} -eq 1 ]; then
+        echo "${matches[0]}"
+        return
+    elif [ ${#matches[@]} -gt 1 ]; then
+        error "Multiple matches for '$skill'. Use qualified path:"
+        for m in "${matches[@]}"; do
+            local rel="${m#$PROJECT_ROOT/.ai-files/skills/}"
+            echo "  - $rel" >&2
+        done
+        echo ""
+        return
+    fi
+
+    echo ""
 }
 
 get_symlink_target() {
     local source_path="$1"
     local target_dir="$2"
-    local skill_name="$3"
 
-    # Manual relative path calculation based on known directory structure
-    local relative_path="../../.ai-files/skills/$skill_name"
-
-    # Check if source is in dotclaude directory
-    if [[ "$source_path" == *"dotclaude"* ]]; then
-        relative_path="../../.ai-files/dotclaude/skills/$skill_name"
-    fi
-
-    # Adjust for .opencode/skills/ directory (one level up from root)
-    if [[ "$target_dir" == *".opencode"* ]]; then
-        relative_path="../.ai-files/skills/$skill_name"
-        if [[ "$source_path" == *"dotclaude"* ]]; then
-            relative_path="../.ai-files/dotclaude/skills/$skill_name"
-        fi
-    fi
-
-    echo "$relative_path"
+    realpath --relative-to="$target_dir" "$source_path"
 }
 
 enable_skill_in_dir() {
     local skill_name="$1"
     local source_path="$2"
     local target_dir="$3"
-    local target_path="$target_dir/$skill_name"
+    local leaf_name="${source_path##*/}"
+    local target_path="$target_dir/$leaf_name"
 
     # Create target directory if it doesn't exist
     if [ ! -d "$target_dir" ]; then
@@ -127,20 +139,30 @@ enable_skill_in_dir() {
         }
     fi
 
-    # Check if already enabled
+    # Check if symlink already exists
     if [ -L "$target_path" ]; then
         if [ -e "$target_path" ]; then
-            info "Already enabled: ${target_path#"$PROJECT_ROOT/"}"
-            return 0
+            local resolved
+            resolved=$(readlink -f "$target_path" 2>/dev/null || true)
+            if [ "$resolved" = "$source_path" ]; then
+                info "Already enabled: ${target_path#"$PROJECT_ROOT/"}"
+                return 0
+            else
+                info "Replacing: ${target_path#"$PROJECT_ROOT/"} was pointing to ${resolved#"$PROJECT_ROOT/"}"
+                rm -f "$target_path" 2>/dev/null || true
+            fi
         else
             # Broken symlink, remove it
             rm -f "$target_path" 2>/dev/null || true
         fi
+    elif [ -e "$target_path" ]; then
+        error "Path exists but is not a symlink: $target_path"
+        return "$EXIT_ERROR"
     fi
 
     # Get relative symlink target
     local relative_target
-    relative_target=$(get_symlink_target "$source_path" "$target_dir" "$skill_name")
+    relative_target=$(get_symlink_target "$source_path" "$target_dir")
 
     # Create symlink
     ln -s "$relative_target" "$target_path" 2>/dev/null || {
@@ -220,12 +242,15 @@ main() {
         error "Skill not found: $SKILL_NAME"
         echo "" >&2
         echo "Available skills:" >&2
-        find "$PROJECT_ROOT/.ai-files/skills" -mindepth 1 -maxdepth 1 -type d -not -name ".*" -exec basename {} \; 2>/dev/null | while read -r skill; do
+        find "$PROJECT_ROOT/.ai-files/skills" -name 'SKILL.md' -not -path '*/.git/*' -printf '%h\n' 2>/dev/null | sed "s|$PROJECT_ROOT/.ai-files/skills/||" | while read -r skill; do
+            [ -z "$skill" ] && continue
             echo "  - $skill" >&2
         done
         find "$PROJECT_ROOT/.ai-files/dotclaude/skills" -mindepth 1 -maxdepth 1 -type d -not -name ".*" -exec basename {} \; 2>/dev/null | while read -r skill; do
             echo "  - $skill" >&2
         done
+        echo "" >&2
+        echo "Tip: Use qualified path for nested skills (e.g. ag-kit/brainstorming)" >&2
         exit "$EXIT_INVALID_SKILL"
     fi
 

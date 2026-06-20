@@ -35,6 +35,7 @@ PROJECT_ROOT="$(cd "$SELF_DIR/.." && pwd)"
 # Command-line options
 CLAUDE_ONLY=false
 KILO_ONLY=false
+OPENCODE_ONLY=false
 
 error() {
     echo -e "${RED}Error:${NC} $1" >&2
@@ -61,18 +62,30 @@ Interactive skill management using fzf.
 Subcommands:
   add <REPO> [OPTIONS]    Install skills from a git repository
   explore <REPO> [OPTIONS] Explore a repo and generate gilt config
+  sync [OPTIONS]          Sync skills from agents.yaml to agent dirs
 
 Options:
   --claude-only           Show and manage only Claude skills (.claude/skills/)
   --kilo-only            Show and manage only Kilo skills (.kilo/skills/)
+  --opencode-only         Show and manage only OpenCode skills (.opencode/skills/)
   -h, --help             Show this help message
 
 The interface shows:
   Status indicators:
-    [✓✓]  Enabled in both Claude and Kilo
-    [✓ ]  Enabled only in Claude
-    [ ✓]  Enabled only in Kilo
-    [  ]  Disabled in both
+    [✓✓✓] Enabled in Claude, Kilo, and OpenCode
+    [✓✓ ] Enabled in Claude and Kilo
+    [✓ ✓] Enabled in Claude and OpenCode
+    [ ✓✓] Enabled in Kilo and OpenCode
+    [✓  ] Enabled only in Claude
+    [ ✓ ] Enabled only in Kilo
+    [  ✓] Enabled only in OpenCode
+    [   ] Disabled in all
+  When --claude-only is active:
+    [✓]   Enabled in Claude
+  When --kilo-only is active:
+    [✓]   Enabled in Kilo
+  When --opencode-only is active:
+    [✓]   Enabled in OpenCode
 
   Controls:
     [TAB]   Multi-select
@@ -98,17 +111,24 @@ EOF
 
 discover_skills() {
     local skills=""
+    local skills_dir="$PROJECT_ROOT/.ai-files/skills"
 
-    # Get skills from .ai-files/skills/
-    if [ -d "$PROJECT_ROOT/.ai-files/skills" ]; then
-        while IFS= read -r -d '' skill_dir; do
-            local skill_name
-            skill_name=$(basename "$skill_dir")
-            skills="$skills$skill_name\t$skill_dir\n"
-        done < <(find "$PROJECT_ROOT/.ai-files/skills" -mindepth 1 -maxdepth 1 -type d -not -name ".*" -print0 2>/dev/null)
+    # Recursively find all SKILL.md files under .ai-files/skills/
+    if [ -d "$skills_dir" ]; then
+        while IFS= read -r -d '' skill_md; do
+            local skill_dir
+            skill_dir=$(dirname "$skill_md")
+            local rel_path="${skill_dir#$skills_dir/}"
+
+            # Skip empty (root skills dir itself, unlikely)
+            [ -z "$rel_path" ] && continue
+
+            local qualified_name="$rel_path"
+            skills="$skills$qualified_name\t$skill_dir\n"
+        done < <(find "$skills_dir" -name 'SKILL.md' -not -path '*/.git/*' -print0 2>/dev/null)
     fi
 
-    # Get skills from .ai-files/dotclaude/skills/
+    # Get skills from .ai-files/dotclaude/skills/ (flat structure)
     if [ -d "$PROJECT_ROOT/.ai-files/dotclaude/skills" ]; then
         while IFS= read -r -d '' skill_dir; do
             local skill_name
@@ -120,23 +140,52 @@ discover_skills() {
     echo -e "$skills" | sort -u
 }
 
+get_source_path() {
+    local qualified_name="$1"
+
+    if [ -d "$PROJECT_ROOT/.ai-files/skills/$qualified_name" ] && [ -f "$PROJECT_ROOT/.ai-files/skills/$qualified_name/SKILL.md" ]; then
+        echo "$PROJECT_ROOT/.ai-files/skills/$qualified_name"
+        return
+    fi
+
+    if [ -d "$PROJECT_ROOT/.ai-files/dotclaude/skills/$qualified_name" ] && [ -f "$PROJECT_ROOT/.ai-files/dotclaude/skills/$qualified_name/SKILL.md" ]; then
+        echo "$PROJECT_ROOT/.ai-files/dotclaude/skills/$qualified_name"
+        return
+    fi
+}
+
 check_skill_status() {
-    local skill_name="$1"
-    local claude_path="$PROJECT_ROOT/.claude/skills/$skill_name"
-    local kilo_path="$PROJECT_ROOT/.kilo/skills/$skill_name"
+    local qualified_name="$1"
+    local leaf_name="${qualified_name##*/}"
+
+    local source_path
+    source_path=$(get_source_path "$qualified_name")
 
     local claude_enabled=false
     local kilo_enabled=false
+    local opencode_enabled=false
 
-    if [ -L "$claude_path" ] && [ -e "$claude_path" ]; then
-        claude_enabled=true
+    if [ -n "$source_path" ]; then
+        if [ -L "$PROJECT_ROOT/.claude/skills/$leaf_name" ]; then
+            local resolved
+            resolved=$(readlink -f "$PROJECT_ROOT/.claude/skills/$leaf_name" 2>/dev/null || true)
+            [ "$resolved" = "$source_path" ] && claude_enabled=true
+        fi
+
+        if [ -L "$PROJECT_ROOT/.kilo/skills/$leaf_name" ]; then
+            local resolved
+            resolved=$(readlink -f "$PROJECT_ROOT/.kilo/skills/$leaf_name" 2>/dev/null || true)
+            [ "$resolved" = "$source_path" ] && kilo_enabled=true
+        fi
+
+        if [ -L "$PROJECT_ROOT/.opencode/skills/$leaf_name" ]; then
+            local resolved
+            resolved=$(readlink -f "$PROJECT_ROOT/.opencode/skills/$leaf_name" 2>/dev/null || true)
+            [ "$resolved" = "$source_path" ] && opencode_enabled=true
+        fi
     fi
 
-    if [ -L "$kilo_path" ] && [ -e "$kilo_path" ]; then
-        kilo_enabled=true
-    fi
-
-    echo "$claude_enabled:$kilo_enabled"
+    echo "$claude_enabled:$kilo_enabled:$opencode_enabled"
 }
 
 get_skill_description() {
@@ -171,26 +220,23 @@ select_skills() {
         local status
         status=$(check_skill_status "$name")
         local claude_enabled="${status%%:*}"
-        local kilo_enabled="${status##*:}"
+        local rest="${status#*:}"
+        local kilo_enabled="${rest%%:*}"
+        local opencode_enabled="${status##*:}"
 
         local status_str
         if [[ "$CLAUDE_ONLY" == true ]]; then
-            if [[ "$claude_enabled" == true ]]; then
-                status_str="✓"
-            else
-                status_str=" "
-            fi
+            [[ "$claude_enabled" == true ]] && status_str="✓" || status_str=" "
         elif [[ "$KILO_ONLY" == true ]]; then
-            if [[ "$kilo_enabled" == true ]]; then
-                status_str="✓"
-            else
-                status_str=" "
-            fi
+            [[ "$kilo_enabled" == true ]] && status_str="✓" || status_str=" "
+        elif [[ "$OPENCODE_ONLY" == true ]]; then
+            [[ "$opencode_enabled" == true ]] && status_str="✓" || status_str=" "
         else
-            local c=" " k=" "
+            local c=" " k=" " o=" "
             [[ "$claude_enabled" == true ]] && c="✓"
             [[ "$kilo_enabled" == true ]] && k="✓"
-            status_str="${c}${k}"
+            [[ "$opencode_enabled" == true ]] && o="✓"
+            status_str="${c}${k}${o}"
         fi
 
         local description
@@ -285,6 +331,8 @@ execute_enable() {
         args+=(--claude-only)
     elif [[ "$KILO_ONLY" == true ]]; then
         args+=(--kilo-only)
+    elif [[ "$OPENCODE_ONLY" == true ]]; then
+        args+=(--opencode-only)
     fi
 
     if "$enable_script" "${args[@]}" 2>&1; then
@@ -304,6 +352,8 @@ execute_disable() {
         args+=(--claude-only)
     elif [[ "$KILO_ONLY" == true ]]; then
         args+=(--kilo-only)
+    elif [[ "$OPENCODE_ONLY" == true ]]; then
+        args+=(--opencode-only)
     fi
 
     if "$disable_script" "${args[@]}" 2>&1; then
@@ -319,10 +369,12 @@ execute_toggle() {
     local status
     status=$(check_skill_status "$skill_name")
     local claude_enabled="${status%%:*}"
-    local kilo_enabled="${status##*:}"
+    local rest="${status#*:}"
+    local kilo_enabled="${rest%%:*}"
+    local opencode_enabled="${status##*:}"
 
     local any_enabled=false
-    if [[ "$claude_enabled" == true ]] || [[ "$kilo_enabled" == true ]]; then
+    if [[ "$claude_enabled" == true ]] || [[ "$kilo_enabled" == true ]] || [[ "$opencode_enabled" == true ]]; then
         any_enabled=true
     fi
 
@@ -403,11 +455,14 @@ parse_arguments() {
             --kilo-only)
                 KILO_ONLY=true
                 ;;
+            --opencode-only)
+                OPENCODE_ONLY=true
+                ;;
             -h|--help)
                 show_help
                 exit "$EXIT_SUCCESS"
                 ;;
-            add|explore)
+            add|explore|sync)
                 dispatch_to_subcommand "$1" "${@:2}"
                 ;;
             *)
@@ -423,6 +478,14 @@ parse_arguments() {
 
     if [[ "$CLAUDE_ONLY" == true ]] && [[ "$KILO_ONLY" == true ]]; then
         error "Options --claude-only and --kilo-only are mutually exclusive"
+        exit "$EXIT_ERROR"
+    fi
+    if [[ "$CLAUDE_ONLY" == true ]] && [[ "$OPENCODE_ONLY" == true ]]; then
+        error "Options --claude-only and --opencode-only are mutually exclusive"
+        exit "$EXIT_ERROR"
+    fi
+    if [[ "$KILO_ONLY" == true ]] && [[ "$OPENCODE_ONLY" == true ]]; then
+        error "Options --kilo-only and --opencode-only are mutually exclusive"
         exit "$EXIT_ERROR"
     fi
 }

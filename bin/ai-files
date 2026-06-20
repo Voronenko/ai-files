@@ -126,6 +126,7 @@ Commands:
   disable <name>     Disable a specific skill
   add <REPO> [OPTS]  Install skills from a git repository
   explore <REPO>     Explore a repo and generate gilt config
+  sync [OPTS]        Sync skills from agents.yaml to agent dirs
 
 Examples:
   ai-files skill enable adr-tools
