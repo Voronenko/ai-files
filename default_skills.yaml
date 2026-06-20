@@ -8,7 +8,7 @@ default_skills:
   # - lnav
   # - lnav-unattended
   - mermaid
-  - obsidian
+  - obsidian-cli
   - plantuml
   - pyenv-poetry-virtual-env
   # - zellij

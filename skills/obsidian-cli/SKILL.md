@@ -1,6 +1,6 @@
 ---
-name: obsidian
-description: allows the agent to search, read, traverse links between notes, and extract tasks, tags, and daily journal information
+name: obsidian-cli
+description: Use, when asked to lookup information in obsidian. Allows the agent to search, read, traverse links between obsidian notes, and extract tasks, tags, and daily journal information in obsidian.
 ---
 
 Use the obsidian CLI to retrieve knowledge from an Obsidian vault.

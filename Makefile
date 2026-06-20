@@ -258,8 +258,9 @@ create-symlinks:
 		done \
 	' sh {} +
 	# Link everything from dist/.ai-files/dotclaude/ to dist/.claude/ (except commands and hooks, handled separately)
+	# settings.local.json is copied (not symlinked) so it stays a self-contained, locally-editable file
 	@if [ -d "dist/.ai-files/dotclaude" ]; then \
-		find dist/.ai-files/dotclaude -mindepth 1 -maxdepth 1 ! -name "commands" ! -name "hooks" -exec sh -c '\
+		find dist/.ai-files/dotclaude -mindepth 1 -maxdepth 1 ! -name "commands" ! -name "hooks" ! -name "settings.local.json" -exec sh -c '\
 			for f do \
 				base=$$(basename "$$f"); \
 				if [ -L "dist/.claude/$$base" ]; then \
@@ -269,6 +270,8 @@ create-symlinks:
 			done \
 		' sh {} +; \
 	fi
+	@rm -f dist/.claude/settings.local.json
+	@cp -f dist/.ai-files/dotclaude/settings.local.json dist/.claude/settings.local.json
 	# Link individual files from hooks/ directory
 	@if [ -d "dist/.ai-files/dotclaude/hooks" ]; then \
 		mkdir -p dist/.claude/hooks; \

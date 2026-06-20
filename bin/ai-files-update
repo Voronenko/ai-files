@@ -5,14 +5,14 @@
 # - files: Update .ai-files/ content from dist/
 # - link-claude: Create .claude/ folder with symlinks to .ai-files/
 # - link-kilo: Create .kilo/ folder with symlinks to .ai-files/
-# - link-specify: Create .specify symlink to .ai-files/dotspecify/
+# - link-specify: Create .specify/ real dir; link each child of .ai-files/dotspecify (memory local)
 #
 # Usage: ai-files-update <subcommand> [options]
 # Subcommands:
 #   files       Update .ai-files/ content from dist/
 #   link-claude Create .claude/ folder with symlinks to .ai-files/
 #   link-kilo   Create .kilo/ folder with symlinks to .ai-files/
-#   link-specify Create .specify symlink to .ai-files/dotspecify/
+#   link-specify Create .specify/ real dir; link children of .ai-files/dotspecify/ (memory copied locally)
 #   help        Show this help message
 #
 # Global options (apply to all subcommands):
@@ -2350,9 +2350,19 @@ show_link_specify_help() {
     cat << EOF
 Usage: $(basename "$0") link-specify [OPTIONS]
 
-Create .specify symlink in repository root pointing to .ai-files/dotspecify/
+Create .specify/ as a real directory in the repository root and link each
+top-level child of .ai-files/dotspecify/ into it.
 
-This creates a single symlink .specify -> .ai-files/dotspecify
+Each shared child (templates, scripts, integrations, *.json, ...) becomes a
+symlink: .specify/<child> -> .ai-files/dotspecify/<child>
+
+The memory/ child is LOCAL per-project state: it is copied once into
+.specify/memory if missing, and otherwise left strictly intact (never
+overwritten). This keeps project memory (e.g. memory/constitution.md) editable
+without touching the shared source.
+
+If .specify already exists as a single symlink (legacy layout), it is replaced
+by a real directory (prompts unless -y is given).
 
 Options:
     -d, --dry-run       Show what would be done without making changes
@@ -2405,7 +2415,8 @@ cmd_link_specify() {
 
     local dotspecify_source="$GIT_ROOT/.ai-files/dotspecify"
     local specify_target="$GIT_ROOT/.specify"
-    local link_target=".ai-files/dotspecify"
+    # Folders kept as LOCAL per-project state: copied once if missing, never symlinked/overwritten
+    local local_entry="memory"
 
     # Check if .ai-files/dotspecify exists
     if [[ ! -d "$dotspecify_source" ]]; then
@@ -2416,63 +2427,51 @@ cmd_link_specify() {
 
     print_info "Git repository root: $GIT_ROOT"
     print_info "Source: $dotspecify_source"
-    print_info "Target: .specify -> $link_target"
+    print_info "Target: .specify/ (real dir; children linked to .ai-files/dotspecify, '$local_entry' kept local)"
 
     # Main process
     echo ""
-    echo "🔄 Creating .specify symlink..."
+    echo "🔄 Creating .specify/ child links..."
     echo ""
 
-    # Check what already exists at target
-    if [[ -e "$specify_target" || -L "$specify_target" ]]; then
-        if [[ -L "$specify_target" ]]; then
-            local existing_target
-            existing_target="$(readlink "$specify_target")"
-            if [[ "$existing_target" == "$link_target" ]]; then
-                # Correct symlink already exists
-                print_success ".specify already points to $link_target"
-                return
-            fi
-        fi
-
-        # Something different exists
-        print_warning "Conflict at .specify"
+    # --- Ensure .specify is a REAL directory (migrate legacy single symlink if present) ---
+    if [[ -L "$specify_target" ]]; then
+        local legacy_target
+        legacy_target="$(readlink "$specify_target")"
+        print_warning ".specify is currently a symlink -> $legacy_target"
         if [[ "$AUTO_YES" == "true" ]]; then
-            print_info "Auto-replacing (yes flag set)"
+            print_info "Auto-replacing with real directory (yes flag set)"
             if [[ "$DRY_RUN" == "false" ]]; then
-                rm -rf "$specify_target"
-                ln -sf "$link_target" "$specify_target"
-                PRESERVED_SYMLINKS+=(".specify -> $link_target")
-                echo "  🔗 Replaced: .specify -> $link_target"
+                rm -f "$specify_target"
+                mkdir -p "$specify_target"
+                CREATED_DIRS+=(".specify")
+                echo "  📁 Replaced symlink with real directory: .specify"
             else
-                PRESERVED_SYMLINKS+=(".specify -> $link_target")
-                echo "  🔗 Would replace: .specify -> $link_target"
+                echo "  📁 Would replace symlink .specify with real directory"
             fi
         else
-            echo -n "Replace .specify with symlink to $link_target? [y/N/a/q]: "
+            echo -n "Replace .specify symlink with a real directory? [y/N/a/q]: "
             read -r response
             case "$response" in
                 [Yy]*)
                     if [[ "$DRY_RUN" == "false" ]]; then
-                        rm -rf "$specify_target"
-                        ln -sf "$link_target" "$specify_target"
-                        PRESERVED_SYMLINKS+=(".specify -> $link_target")
-                        echo "  🔗 Replaced: .specify -> $link_target"
+                        rm -f "$specify_target"
+                        mkdir -p "$specify_target"
+                        CREATED_DIRS+=(".specify")
+                        echo "  📁 Replaced symlink with real directory: .specify"
                     else
-                        PRESERVED_SYMLINKS+=(".specify -> $link_target")
-                        echo "  🔗 Would replace: .specify -> $link_target"
+                        echo "  📁 Would replace symlink .specify with real directory"
                     fi
                     ;;
                 [Aa]*)
                     AUTO_YES=true
                     if [[ "$DRY_RUN" == "false" ]]; then
-                        rm -rf "$specify_target"
-                        ln -sf "$link_target" "$specify_target"
-                        PRESERVED_SYMLINKS+=(".specify -> $link_target")
-                        echo "  🔗 Replaced: .specify -> $link_target"
+                        rm -f "$specify_target"
+                        mkdir -p "$specify_target"
+                        CREATED_DIRS+=(".specify")
+                        echo "  📁 Replaced symlink with real directory: .specify"
                     else
-                        PRESERVED_SYMLINKS+=(".specify -> $link_target")
-                        echo "  🔗 Would replace: .specify -> $link_target"
+                        echo "  📁 Would replace symlink .specify with real directory"
                     fi
                     ;;
                 [Qq]*)
@@ -2485,17 +2484,136 @@ cmd_link_specify() {
                     ;;
             esac
         fi
-    else
-        # Create new symlink
+    elif [[ -e "$specify_target" && ! -d "$specify_target" ]]; then
+        # Regular file (not a directory or symlink) at .specify - cannot proceed
+        print_error ".specify exists but is not a directory or symlink!"
+        exit 1
+    elif [[ ! -e "$specify_target" ]]; then
+        # Missing - create the real directory
         if [[ "$DRY_RUN" == "false" ]]; then
-            ln -sf "$link_target" "$specify_target"
-            PRESERVED_SYMLINKS+=(".specify -> $link_target")
-            echo "  🔗 Created symlink: .specify -> $link_target"
+            mkdir -p "$specify_target"
+            CREATED_DIRS+=(".specify")
+            echo "  📁 Created directory: .specify"
         else
-            PRESERVED_SYMLINKS+=(".specify -> $link_target")
-            echo "  🔗 Would create symlink: .specify -> $link_target"
+            echo "  📁 Would create directory: .specify"
+        fi
+    else
+        # Already a real directory
+        if [[ "$VERBOSE" == "true" ]]; then
+            echo "  ✓ Directory exists: .specify"
         fi
     fi
+
+    # If migration was skipped interactively (.specify still not a usable dir), stop here
+    if [[ ! -d "$specify_target" ]]; then
+        show_final_summary
+        return
+    fi
+
+    # --- Link each top-level child of dotspecify into .specify/ ---
+    while IFS= read -r -d '' entry; do
+        local child
+        child="$(basename "$entry")"
+        local child_src_abs
+        child_src_abs="$(cd "$dotspecify_source" 2>/dev/null && pwd)/$child"
+        local child_dest="$specify_target/$child"
+
+        # memory: per-project state - copy once if missing, otherwise leave intact
+        if [[ "$child" == "$local_entry" ]]; then
+            if [[ -e "$child_dest" || -L "$child_dest" ]]; then
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  🔒 Left intact (local data): .specify/$child"
+                fi
+            else
+                if [[ "$DRY_RUN" == "false" ]]; then
+                    cp -r "$entry" "$child_dest"
+                    COPIED_FILES+=(".specify/$child")
+                    echo "  📄 Copied (local, one-time): .specify/$child"
+                else
+                    echo "  📄 Would copy: .specify/$child"
+                fi
+            fi
+            continue
+        fi
+
+        # Shared child - ensure it is a symlink into .ai-files/dotspecify
+        # Idempotency: correct symlink already in place
+        if [[ -L "$child_dest" ]]; then
+            local existing_abs
+            existing_abs="$(readlink -m "$child_dest")"
+            if [[ "$existing_abs" == "$child_src_abs" ]]; then
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  ✓ Symlink correct: .specify/$child"
+                fi
+                continue
+            fi
+        fi
+
+        # Conflict (wrong symlink / real occupant) or create new
+        if [[ -e "$child_dest" || -L "$child_dest" ]]; then
+            print_warning "Conflict at .specify/$child"
+            if [[ "$AUTO_YES" == "true" ]]; then
+                print_info "Auto-replacing (yes flag set)"
+                if [[ "$DRY_RUN" == "false" ]]; then
+                    rm -rf "$child_dest"
+                    ln -sfr "$entry" "$child_dest" 2>/dev/null || ln -sf "$entry" "$child_dest"
+                    PRESERVED_SYMLINKS+=(".specify/$child -> .ai-files/dotspecify/$child")
+                    echo "  🔗 Replaced: .specify/$child -> .ai-files/dotspecify/$child"
+                else
+                    PRESERVED_SYMLINKS+=(".specify/$child -> .ai-files/dotspecify/$child")
+                    echo "  🔗 Would replace: .specify/$child -> .ai-files/dotspecify/$child"
+                fi
+            else
+                echo -n "Replace .specify/$child with symlink to .ai-files/dotspecify/$child? [y/N/a/q]: "
+                read -r response
+                case "$response" in
+                    [Yy]*)
+                        if [[ "$DRY_RUN" == "false" ]]; then
+                            rm -rf "$child_dest"
+                            ln -sfr "$entry" "$child_dest" 2>/dev/null || ln -sf "$entry" "$child_dest"
+                            PRESERVED_SYMLINKS+=(".specify/$child -> .ai-files/dotspecify/$child")
+                            echo "  🔗 Replaced: .specify/$child -> .ai-files/dotspecify/$child"
+                        else
+                            PRESERVED_SYMLINKS+=(".specify/$child -> .ai-files/dotspecify/$child")
+                            echo "  🔗 Would replace: .specify/$child -> .ai-files/dotspecify/$child"
+                        fi
+                        ;;
+                    [Aa]*)
+                        AUTO_YES=true
+                        if [[ "$DRY_RUN" == "false" ]]; then
+                            rm -rf "$child_dest"
+                            ln -sfr "$entry" "$child_dest" 2>/dev/null || ln -sf "$entry" "$child_dest"
+                            PRESERVED_SYMLINKS+=(".specify/$child -> .ai-files/dotspecify/$child")
+                            echo "  🔗 Replaced: .specify/$child -> .ai-files/dotspecify/$child"
+                        else
+                            PRESERVED_SYMLINKS+=(".specify/$child -> .ai-files/dotspecify/$child")
+                            echo "  🔗 Would replace: .specify/$child -> .ai-files/dotspecify/$child"
+                        fi
+                        ;;
+                    [Qq]*)
+                        print_info "Quitting"
+                        exit 0
+                        ;;
+                    *)
+                        SKIPPED_FILES+=(".specify/$child")
+                        echo "  ⏭️  Skipped: .specify/$child"
+                        ;;
+                esac
+            fi
+        else
+            # Create new symlink
+            if [[ "$DRY_RUN" == "false" ]]; then
+                ln -sfr "$entry" "$child_dest" 2>/dev/null || ln -sf "$entry" "$child_dest"
+                PRESERVED_SYMLINKS+=(".specify/$child -> .ai-files/dotspecify/$child")
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  🔗 Created symlink: .specify/$child -> .ai-files/dotspecify/$child"
+                fi
+            else
+                PRESERVED_SYMLINKS+=(".specify/$child -> .ai-files/dotspecify/$child")
+                echo "  🔗 Would create symlink: .specify/$child -> .ai-files/dotspecify/$child"
+            fi
+        fi
+    done < <(find "$dotspecify_source" -mindepth 1 -maxdepth 1 -print0 | sort -z)
 
     show_final_summary
 }
@@ -2515,7 +2633,7 @@ Subcommands:
   link-claude   Create .claude/ folder with symlinks to .ai-files/
   link-kilo     Create .kilo/ folder with symlinks to .ai-files/
   link-opencode Create .opencode/ folder with symlinks to .ai-files/
-  link-specify  Create .specify symlink to .ai-files/dotspecify/
+  link-specify  Create .specify/ dir; link each child of .ai-files/dotspecify/ (memory local)
   help          Show this help message
 
 Global options (apply to all subcommands):
@@ -2536,7 +2654,7 @@ Examples:
   $(basename "$0") link-kilo -y          # Auto-confirm all
   $(basename "$0") link-opencode          # Create .opencode/ interactively
   $(basename "$0") link-opencode -y       # Auto-confirm all
-  $(basename "$0") link-specify          # Create .specify symlink interactively
+  $(basename "$0") link-specify          # Create .specify/ child symlinks interactively
   $(basename "$0") link-specify -y       # Auto-confirm all
 
 EOF
