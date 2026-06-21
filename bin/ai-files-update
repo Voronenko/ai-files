@@ -59,12 +59,10 @@ OPENCODE_RUNTIME_ARTIFACTS=("node_modules" "package.json" "package-lock.json" ".
 
 # Tracking arrays
 declare -a COPIED_FILES=()
-declare -a DELETED_FILES=()
 declare -a SKIPPED_FILES=()
 declare -a CREATED_DIRS=()
 declare -a PRESERVED_SYMLINKS=()
-declare -a TARGET_ONLY_TO_KEEP=()
-declare -a TARGET_ONLY_TO_DELETE=()
+declare -a CANDIDATE_REMOVAL_FILES=()
 
 # Rsync operations counter
 TOTAL_RSYNC_CALLS=0
@@ -203,33 +201,7 @@ is_git_tracked_cached() {
     return 1
 }
 
-# Check if destination has git-tracked files that would be deleted
-# Returns 0 (true) if protected files would be deleted, 1 (false) otherwise
-has_protected_files_to_delete() {
-    local src_dir="$1"
-    local dest_dir="$2"
-    local base_path="$3"
 
-    # Use rsync dry-run to find files that would be deleted
-    local rsync_output
-    rsync_output=$(rsync --archive --delete --itemize-changes --dry-run "$src_dir/" "$dest_dir/" 2>&1 || true)
-
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        [[ "$line" != *deleting* ]] && continue
-
-        local flags="${line:0:11}"
-        local filepath="${line:12}"
-        [[ "$filepath" == */ ]] && continue  # Skip directories
-
-        local full_path="$base_path/$filepath"
-        if is_git_tracked_cached "$full_path"; then
-            return 0  # Would delete git-tracked file
-        fi
-    done <<< "$rsync_output"
-
-    return 1  # No git-tracked files would be deleted
-}
 
 # Check if a target directory is a symlink pointing to .ai-files/dot*
 # Returns 0 (true) if it's a managed symlink, 1 (false) otherwise
@@ -292,72 +264,7 @@ detect_target_only_files() {
     result_array=("${target_only[@]}")
 }
 
-# Prompt user about files that exist only in target
-# Returns arrays of files to keep and delete via global arrays
-prompt_target_only_files() {
-    local target_only=("$@")
 
-    local -a to_keep=()
-    local -a to_delete=()
-
-    if [[ ${#target_only[@]} -eq 0 ]]; then
-        return
-    fi
-
-    echo ""
-    print_warning "Found ${#target_only[@]} file(s) that exist only in your project:"
-    echo ""
-
-    for filepath in "${target_only[@]}"; do
-        local is_tracked=false
-        if is_git_tracked_cached "$filepath"; then
-            is_tracked=true
-        fi
-
-        if [[ "$AUTO_YES" == "true" ]]; then
-            # Auto-keep mode: always keep git-tracked files
-            if [[ "$is_tracked" == "true" ]]; then
-                print_warning "Git-tracked file (auto-kept): $filepath"
-            else
-                print_info "Auto-keeping (yes flag set): $filepath"
-            fi
-            to_keep+=("$filepath")
-        elif [[ "$AUTO_YES" == "false" ]]; then
-            # This mode doesn't really make sense for target-only files
-            # Treat same as auto-keep
-            print_info "Keeping: $filepath"
-            to_keep+=("$filepath")
-        else
-            # Interactive mode
-            echo ""
-            local tracked_indicator=""
-            if [[ "$is_tracked" == "true" ]]; then
-                tracked_indicator=" [GIT-TRACKED]"
-            fi
-            echo -n "Keep this file?$tracked_indicator $filepath [Y/n/q] (Y=yes keep, n=no delete, q=quit): "
-            read -r response
-
-            case "$response" in
-                [Nn]*)
-                    to_delete+=("$filepath")
-                    echo "  🗑️  Will delete: $filepath"
-                    ;;
-                [Qq]*)
-                    print_info "Quitting update process"
-                    exit 0
-                    ;;
-                *)
-                    to_keep+=("$filepath")
-                    echo "  ✓ Will keep: $filepath"
-                    ;;
-            esac
-        fi
-    done
-
-    # Export results via global arrays
-    TARGET_ONLY_TO_KEEP=("${to_keep[@]}")
-    TARGET_ONLY_TO_DELETE=("${to_delete[@]}")
-}
 
 # Function to copy file with symlink handling
 copy_file_or_symlink() {
@@ -510,78 +417,24 @@ process_directory() {
         fi
     fi
 
-    # For merge folders: detect target-only files before syncing
-    if [[ "$is_merge_folder" == "true" ]]; then
-        # Pass 1: Detect target-only files
-        local -a target_only_files=()
-        detect_target_only_files "$src_dir" "$dest_dir" "$base_path" target_only_files
+    # Detect target-only files for all folders (candidates for removal)
+    local -a target_only_files=()
+    detect_target_only_files "$src_dir" "$dest_dir" "$base_path" target_only_files
 
-        # Pass 2: Prompt user about target-only files
-        if [[ ${#target_only_files[@]} -gt 0 && "$DRY_RUN" == "false" ]]; then
-            prompt_target_only_files "${target_only_files[@]}"
-
-            # Delete files user chose to delete
-            for filepath in "${TARGET_ONLY_TO_DELETE[@]}"; do
-                # Skip protected paths
-                if is_protected_path "$filepath"; then
-                    if [[ "$VERBOSE" == "true" ]]; then
-                        echo "  🔒 Protected (not deleted): $filepath"
-                    fi
-                    continue
-                fi
-                local full_path="$GIT_ROOT/$filepath"
-                if [[ -e "$full_path" ]]; then
-                    rm -rf "$full_path"
-                    DELETED_FILES+=("$filepath")
-                    if [[ "$VERBOSE" == "true" ]]; then
-                        echo "  🗑️  Deleted: $filepath"
-                    fi
-                fi
-            done
-        elif [[ ${#target_only_files[@]} -gt 0 && "$DRY_RUN" == "true" ]]; then
-            echo ""
-            print_warning "Found ${#target_only_files[@]} file(s) that exist only in your project:"
+    if [[ ${#target_only_files[@]} -gt 0 ]]; then
+        for filepath in "${target_only_files[@]}"; do
+            CANDIDATE_REMOVAL_FILES+=("$filepath")
+        done
+        if [[ "$VERBOSE" == "true" ]]; then
+            print_warning "Found ${#target_only_files[@]} file(s) only in target (will suggest for removal):"
             for filepath in "${target_only_files[@]}"; do
                 echo "   • $filepath"
             done
         fi
     fi
 
-    # Use rsync to copy files and detect changes
+    # Use rsync to copy files (no --delete — stale files are suggested for manual removal)
     local rsync_opts="--archive --itemize-changes"
-    # Only add --delete for non-merge folders
-    if [[ "$is_merge_folder" == "false" ]]; then
-        # For parent directories, exclude merge folder contents from deletion
-        for merge_folder in "${MERGE_FOLDERS[@]}"; do
-            rsync_opts="$rsync_opts --exclude=$merge_folder/"
-        done
-        # Exclude protected directories from deletion
-        for protected_dir in "${PROTECTED_DIRS[@]}"; do
-            rsync_opts="$rsync_opts --exclude=${protected_dir#.ai-files/}"
-        done
-        # Exclude protected file patterns from deletion
-        for protected_pattern in "${PROTECTED_PATTERNS[@]}"; do
-            rsync_opts="$rsync_opts --exclude=$protected_pattern"
-        done
-
-        # Exclude opencode runtime artifacts (npm files created by opencode itself)
-        # so rsync --delete won't remove them — only applies when syncing .opencode
-        if [[ "$base_path" == ".opencode" || "$base_path" == ".opencode/"* ]]; then
-            for artifact in "${OPENCODE_RUNTIME_ARTIFACTS[@]}"; do
-                rsync_opts="$rsync_opts --exclude=$artifact"
-            done
-        fi
-
-        # Check if git-tracked files would be deleted
-        if has_protected_files_to_delete "$src_dir" "$dest_dir" "$base_path"; then
-            print_warning "Skipping --delete for $base_path (would delete git-tracked files)"
-            if [[ "$VERBOSE" == "true" ]]; then
-                echo "  📋 Git-tracked files preserved in $base_path"
-            fi
-        else
-            rsync_opts="$rsync_opts --delete"
-        fi
-    fi
     if [[ "$DRY_RUN" == "true" ]]; then
         rsync_opts="$rsync_opts --dry-run"
     fi
@@ -598,7 +451,6 @@ process_directory() {
 
     # Parse rsync output to track changes
     local modified_files=()
-    local deleted_files=()
     local new_files=()
 
     while IFS= read -r line; do
@@ -610,24 +462,6 @@ process_directory() {
 
         # Skip directories and symlinks for now
         [[ "$filepath" == */ ]] && continue
-
-        # Check if file was deleted
-        if [[ "$flags" == *deleting* ]]; then
-            local full_path="$base_path/$filepath"
-            # Skip protected paths
-            if is_protected_path "$full_path"; then
-                if [[ "$VERBOSE" == "true" ]]; then
-                    echo "  🔒 Protected (not deleted): $full_path"
-                fi
-                continue
-            fi
-            deleted_files+=("$full_path")
-            DELETED_FILES+=("$full_path")
-            if [[ "$VERBOSE" == "true" ]]; then
-                echo "  🗑️  Deleted: $full_path"
-            fi
-            continue
-        fi
 
         # Check if file was modified
         if [[ "$flags" == *f* ]] && [[ "$flags" =~ [\*\<\>] ]]; then
@@ -779,10 +613,10 @@ show_final_summary() {
 
     # Show statistics
     local total_copied=${#COPIED_FILES[@]}
-    local total_deleted=${#DELETED_FILES[@]}
     local total_skipped=${#SKIPPED_FILES[@]}
     local total_created=${#CREATED_DIRS[@]}
     local total_symlinks=${#PRESERVED_SYMLINKS[@]}
+    local total_candidates=${#CANDIDATE_REMOVAL_FILES[@]}
 
     if [[ $total_copied -gt 0 ]]; then
         echo "📄 Files copied/updated ($total_copied):"
@@ -792,33 +626,9 @@ show_final_summary() {
         echo ""
     fi
 
-    if [[ $total_deleted -gt 0 ]]; then
-        echo "🗑️  Files deleted ($total_deleted):"
-        for file in "${DELETED_FILES[@]}"; do
-            echo "   • $file"
-        done
-        echo ""
-    fi
-
     if [[ $total_skipped -gt 0 ]]; then
         echo "⏭️  Files skipped (modified locally) ($total_skipped):"
         for file in "${SKIPPED_FILES[@]}"; do
-            echo "   • $file"
-        done
-        echo ""
-    fi
-
-    if [[ ${#TARGET_ONLY_TO_DELETE[@]} -gt 0 ]]; then
-        echo "🗑️  Target-only files deleted (${#TARGET_ONLY_TO_DELETE[@]}):"
-        for file in "${TARGET_ONLY_TO_DELETE[@]}"; do
-            echo "   • $file"
-        done
-        echo ""
-    fi
-
-    if [[ ${#TARGET_ONLY_TO_KEEP[@]} -gt 0 ]]; then
-        echo "✓ Target-only files preserved (${#TARGET_ONLY_TO_KEEP[@]}):"
-        for file in "${TARGET_ONLY_TO_KEEP[@]}"; do
             echo "   • $file"
         done
         echo ""
@@ -840,7 +650,17 @@ show_final_summary() {
         echo ""
     fi
 
-    if [[ $total_copied -eq 0 && $total_deleted -eq 0 && $total_skipped -eq 0 && $total_created -eq 0 && $total_symlinks -eq 0 ]]; then
+    if [[ $total_candidates -gt 0 ]]; then
+        echo "🗑️  Candidate files for removal — these exist only in target, not in source."
+        echo "   Run manually if you want to clean them up:"
+        echo ""
+        for file in "${CANDIDATE_REMOVAL_FILES[@]}"; do
+            echo "rm \"$file\""
+        done
+        echo ""
+    fi
+
+    if [[ $total_copied -eq 0 && $total_skipped -eq 0 && $total_created -eq 0 && $total_symlinks -eq 0 && $total_candidates -eq 0 ]]; then
         echo "✨ No changes needed - all files are up to date"
         echo ""
     fi
@@ -1763,62 +1583,13 @@ cmd_link_claude() {
         done < <(find "$claude_target" -mindepth 1 -print0 | sort -z)
 
         if [[ ${#target_only_files[@]} -gt 0 ]]; then
-            if [[ "$AUTO_YES" == "true" ]]; then
-                # Auto-delete target-only files
-                for filepath in "${target_only_files[@]}"; do
-                    local full_path="$GIT_ROOT/$filepath"
-                    if [[ "$DRY_RUN" == "false" ]]; then
-                        rm -rf "$full_path"
-                        DELETED_FILES+=("$filepath")
-                        echo "  🗑️  Deleted: $filepath"
-                    else
-                        echo "  🗑️  Would delete: $filepath"
-                    fi
-                done
-            else
-                # Interactive mode
-                echo ""
-                print_warning "Found ${#target_only_files[@]} file(s) in .claude/ that don't exist in dotclaude:"
-                for filepath in "${target_only_files[@]}"; do
-                    echo ""
-                    echo -n "Delete $filepath? [y/N/a/q]: "
-                    read -r response
-                    case "$response" in
-                        [Yy]*)
-                            local full_path="$GIT_ROOT/$filepath"
-                            if [[ "$DRY_RUN" == "false" ]]; then
-                                rm -rf "$full_path"
-                                DELETED_FILES+=("$filepath")
-                                echo "  🗑️  Deleted: $filepath"
-                            else
-                                echo "  🗑️  Would delete: $filepath"
-                            fi
-                            ;;
-                        [Aa]*)
-                            AUTO_YES=true
-                            for remaining in "${target_only_files[@]}"; do
-                                local full_path="$GIT_ROOT/$remaining"
-                                if [[ "$DRY_RUN" == "false" ]]; then
-                                    rm -rf "$full_path"
-                                    DELETED_FILES+=("$remaining")
-                                    echo "  🗑️  Deleted: $remaining"
-                                else
-                                    echo "  🗑️  Would delete: $remaining"
-                                fi
-                            done
-                            break
-                            ;;
-                        [Qq]*)
-                            print_info "Quitting"
-                            exit 0
-                            ;;
-                        *)
-                            TARGET_ONLY_TO_KEEP+=("$filepath")
-                            echo "  ⏭️  Kept: $filepath"
-                            ;;
-                    esac
-                done
-            fi
+            print_warning "Found ${#target_only_files[@]} file(s) in .claude/ that don't exist in dotclaude"
+            for filepath in "${target_only_files[@]}"; do
+                CANDIDATE_REMOVAL_FILES+=("$filepath")
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  • Candidate: $filepath"
+                fi
+            done
         fi
     fi
 
@@ -2026,62 +1797,13 @@ cmd_link_kilo() {
         done < <(find "$kilo_target" -mindepth 1 -print0 | sort -z)
 
         if [[ ${#target_only_files[@]} -gt 0 ]]; then
-            if [[ "$AUTO_YES" == "true" ]]; then
-                # Auto-delete target-only files
-                for filepath in "${target_only_files[@]}"; do
-                    local full_path="$GIT_ROOT/$filepath"
-                    if [[ "$DRY_RUN" == "false" ]]; then
-                        rm -rf "$full_path"
-                        DELETED_FILES+=("$filepath")
-                        echo "  🗑️  Deleted: $filepath"
-                    else
-                        echo "  🗑️  Would delete: $filepath"
-                    fi
-                done
-            else
-                # Interactive mode
-                echo ""
-                print_warning "Found ${#target_only_files[@]} file(s) in .kilo/ that don't exist in dotkilo:"
-                for filepath in "${target_only_files[@]}"; do
-                    echo ""
-                    echo -n "Delete $filepath? [y/N/a/q]: "
-                    read -r response
-                    case "$response" in
-                        [Yy]*)
-                            local full_path="$GIT_ROOT/$filepath"
-                            if [[ "$DRY_RUN" == "false" ]]; then
-                                rm -rf "$full_path"
-                                DELETED_FILES+=("$filepath")
-                                echo "  🗑️  Deleted: $filepath"
-                            else
-                                echo "  🗑️  Would delete: $filepath"
-                            fi
-                            ;;
-                        [Aa]*)
-                            AUTO_YES=true
-                            for remaining in "${target_only_files[@]}"; do
-                                local full_path="$GIT_ROOT/$remaining"
-                                if [[ "$DRY_RUN" == "false" ]]; then
-                                    rm -rf "$full_path"
-                                    DELETED_FILES+=("$remaining")
-                                    echo "  🗑️  Deleted: $remaining"
-                                else
-                                    echo "  🗑️  Would delete: $remaining"
-                                fi
-                            done
-                            break
-                            ;;
-                        [Qq]*)
-                            print_info "Quitting"
-                            exit 0
-                            ;;
-                        *)
-                            TARGET_ONLY_TO_KEEP+=("$filepath")
-                            echo "  ⏭️  Kept: $filepath"
-                            ;;
-                    esac
-                done
-            fi
+            print_warning "Found ${#target_only_files[@]} file(s) in .kilo/ that don't exist in dotkilo"
+            for filepath in "${target_only_files[@]}"; do
+                CANDIDATE_REMOVAL_FILES+=("$filepath")
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  • Candidate: $filepath"
+                fi
+            done
         fi
     fi
 
@@ -2320,62 +2042,13 @@ cmd_link_opencode() {
         done < <(find "$opencode_target" -mindepth 1 -print0 | sort -z)
 
         if [[ ${#target_only_files[@]} -gt 0 ]]; then
-            if [[ "$AUTO_YES" == "true" ]]; then
-                # Auto-delete target-only files
-                for filepath in "${target_only_files[@]}"; do
-                    local full_path="$GIT_ROOT/$filepath"
-                    if [[ "$DRY_RUN" == "false" ]]; then
-                        rm -rf "$full_path"
-                        DELETED_FILES+=("$filepath")
-                        echo "  🗑️  Deleted: $filepath"
-                    else
-                        echo "  🗑️  Would delete: $filepath"
-                    fi
-                done
-            else
-                # Interactive mode
-                echo ""
-                print_warning "Found ${#target_only_files[@]} file(s) in .opencode/ that don't exist in dotopencode:"
-                for filepath in "${target_only_files[@]}"; do
-                    echo ""
-                    echo -n "Delete $filepath? [y/N/a/q]: "
-                    read -r response
-                    case "$response" in
-                        [Yy]*)
-                            local full_path="$GIT_ROOT/$filepath"
-                            if [[ "$DRY_RUN" == "false" ]]; then
-                                rm -rf "$full_path"
-                                DELETED_FILES+=("$filepath")
-                                echo "  🗑️  Deleted: $filepath"
-                            else
-                                echo "  🗑️  Would delete: $filepath"
-                            fi
-                            ;;
-                        [Aa]*)
-                            AUTO_YES=true
-                            for remaining in "${target_only_files[@]}"; do
-                                local full_path="$GIT_ROOT/$remaining"
-                                if [[ "$DRY_RUN" == "false" ]]; then
-                                    rm -rf "$full_path"
-                                    DELETED_FILES+=("$remaining")
-                                    echo "  🗑️  Deleted: $remaining"
-                                else
-                                    echo "  🗑️  Would delete: $remaining"
-                                fi
-                            done
-                            break
-                            ;;
-                        [Qq]*)
-                            print_info "Quitting"
-                            exit 0
-                            ;;
-                        *)
-                            TARGET_ONLY_TO_KEEP+=("$filepath")
-                            echo "  ⏭️  Kept: $filepath"
-                            ;;
-                    esac
-                done
-            fi
+            print_warning "Found ${#target_only_files[@]} file(s) in .opencode/ that don't exist in dotopencode"
+            for filepath in "${target_only_files[@]}"; do
+                CANDIDATE_REMOVAL_FILES+=("$filepath")
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  • Candidate: $filepath"
+                fi
+            done
         fi
     fi
 
