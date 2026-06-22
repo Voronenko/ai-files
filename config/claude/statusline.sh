@@ -40,7 +40,71 @@ get_repo_memory_stats() {
     echo "$memory_display"
 }
 
+# ── Z.AI token quota with caching (60s TTL in /dev/shm) ──
+get_zai_quota() {
+    local cache_file="/dev/shm/zai-quota-cache.json"
+    local cache_ttl=60
+
+    # Check if cache is fresh
+    local use_cache=false
+    if [ -f "$cache_file" ]; then
+        local cache_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0)))
+        [ "$cache_age" -lt "$cache_ttl" ] && use_cache=true
+    fi
+
+    # Fetch fresh data if cache is stale or missing
+    if ! $use_cache; then
+        local api_key="${ZAI_API_KEY:-$(pass psst/ai/z_ai/api_key 2>/dev/null)}"
+        if [ -n "$api_key" ]; then
+            curl -s --max-time 3 \
+                -H "Authorization: Bearer $api_key" \
+                -H "Accept: application/json" \
+                "https://api.z.ai/api/monitor/usage/quota/limit" > "${cache_file}.tmp" 2>/dev/null
+            if [ -s "${cache_file}.tmp" ]; then
+                mv "${cache_file}.tmp" "$cache_file"
+            elif [ -f "$cache_file" ]; then
+                # curl failed, keep stale cache
+                rm -f "${cache_file}.tmp"
+            fi
+        fi
+    fi
+
+    # Parse token quota percentage from cache
+    [ ! -f "$cache_file" ] && return
+
+    local percentage reset_ts remaining_ms remaining_min remaining_h remaining_m icon reset_info
+    percentage=$(jq -r '.data.limits[] | select(.type == "TOKENS_LIMIT") | .percentage' "$cache_file" 2>/dev/null)
+    [ -z "$percentage" ] || [ "$percentage" = "null" ] && return
+
+    reset_ts=$(jq -r '.data.limits[] | select(.type == "TOKENS_LIMIT") | .nextResetTime' "$cache_file" 2>/dev/null)
+
+    # 🔥 icon at 90%+
+    if [ "$percentage" -ge 90 ]; then
+        icon="🔥"
+    else
+        icon=""
+    fi
+
+    # If at 100%, show time until reset
+    if [ "$percentage" -ge 100 ] && [ -n "$reset_ts" ] && [ "$reset_ts" != "null" ]; then
+        remaining_ms=$((reset_ts - $(date +%s) * 1000))
+        if [ "$remaining_ms" -gt 0 ]; then
+            remaining_min=$((remaining_ms / 60000))
+            remaining_h=$((remaining_min / 60))
+            remaining_m=$((remaining_min % 60))
+            if [ "$remaining_h" -gt 0 ]; then
+                reset_info=" (resets in ${remaining_h}h${remaining_m}m)"
+            else
+                reset_info=" (resets in ${remaining_m}m)"
+            fi
+        fi
+    fi
+
+    echo "${icon}${percentage}%${reset_info}"
+}
+
 MEMORY_STATS=$(get_repo_memory_stats)
+ZAI_QUOTA=$(get_zai_quota)
 
 # Check for active session
 SESSION_INFO=""
@@ -70,4 +134,4 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
     fi
 fi
 
-echo "🦝 [$MODEL_DISPLAY] 📁 ${CURRENT_DIR##*/}$GIT_BRANCH$MEMORY_STATS$SESSION_INFO"
+echo "🦝 [$MODEL_DISPLAY] 📁 ${CURRENT_DIR##*/}$GIT_BRANCH$MEMORY_STATS$SESSION_INFO | 📊 $ZAI_QUOTA"
