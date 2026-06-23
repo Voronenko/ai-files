@@ -1,0 +1,93 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "ai-files-skills",
+  "description": "Curated marketplace of AI agent skills from the ai-files project.",
+  "owner": {
+    "name": "ai-files"
+  },
+  "plugins": [
+    {
+      "name": "dev-swiss-knife",
+      "source": "./",
+      "description": "Swiss army knife of dev tools: ADR, diagrams, Obsidian CLI, PlantUML",
+      "skills": [
+        "./skills/adr-tools",
+        "./skills/mermaid",
+        "./skills/obsidian-cli",
+        "./skills/plantuml"
+      ]
+    },
+    {
+      "name": "graphify",
+      "source": "./",
+      "description": "any input (code, docs, papers, images) - knowledge graph - clustered communities - HTML + JSON + audit report",
+      "skills": [
+        "./skills/graphify"
+      ]
+    },
+    {
+      "name": "humble-pr-review",
+      "source": "./",
+      "description": "use when user asks for \"code review\", \"review my PR\", \"review PR",
+      "skills": [
+        "./skills/humble-pr-review"
+      ]
+    },
+    {
+      "name": "lnav",
+      "source": "./",
+      "description": "assisting human exploring logs with lnav tool",
+      "skills": [
+        "./skills/lnav"
+      ]
+    },
+    {
+      "name": "lnav-unattended",
+      "source": "./",
+      "description": "use lnav tool when user asks you to filter logs",
+      "skills": [
+        "./skills/lnav-unattended"
+      ]
+    },
+    {
+      "name": "ops-github-actions-versions",
+      "source": "./",
+      "description": "use when you are modifiing github workflow to get information about action versions to use.",
+      "skills": [
+        "./skills/ops-github-actions-versions"
+      ]
+    },
+    {
+      "name": "playwright-cli",
+      "source": "./",
+      "description": "Automate browser interactions, test web pages and work with Playwright tests.",
+      "skills": [
+        "./skills/playwright-cli"
+      ]
+    },
+    {
+      "name": "pyenv-poetry-virtual-env",
+      "source": "./",
+      "description": "use when you initialize python virtual environments, also when using poetry or pyenv",
+      "skills": [
+        "./skills/pyenv-poetry-virtual-env"
+      ]
+    },
+    {
+      "name": "revealjs-markdown",
+      "source": "./",
+      "description": "user wants to create markdown presentation with revealjs",
+      "skills": [
+        "./skills/revealjs-markdown"
+      ]
+    },
+    {
+      "name": "zellij",
+      "source": "./",
+      "description": "modify zellij config",
+      "skills": [
+        "./skills/zellij"
+      ]
+    }
+  ]
+}

@@ -42,6 +42,96 @@ The Makefile orchestrates distribution build through several targets:
 - **`make build`** - Prepares the `dist/` directory by creating necessary subdirectories and copying source files
 
 
+## Marketplace
+
+This repository publishes skills as a [Claude Code marketplace](https://docs.anthropic.com/en/docs/claude-code/plugin-marketplaces) via `.claude-plugin/marketplace.json`. The marketplace bundles local skills from `skills/` into installable plugins — 10 plugins in total: one grouped bundle (`dev-swiss-knife`) and 9 individual skill plugins.
+
+### Generating the marketplace
+
+```bash
+./bin/ai-files-marketplace-update
+# or via the dispatcher:
+./bin/ai-files marketplace update
+```
+
+This walks `skills/`, reads each `SKILL.md` frontmatter, and writes `.claude-plugin/marketplace.json`.
+
+### Registering the marketplace
+
+**Interactive (recommended):**
+
+```bash
+./bin/ai-files marketplace install
+```
+
+This runs marketplace generation, then interactively prompts to register the local marketplace and optionally the 3rd party vendor skills marketplace.
+
+**Non-interactive:**
+
+```bash
+./bin/ai-files marketplace install --yes
+```
+
+**Local (manual):**
+
+```bash
+claude plugin marketplace add .
+```
+
+**Remote (from GitHub):**
+
+```bash
+claude plugin marketplace add https://raw.githubusercontent.com/<user>/ai-files/main/.claude-plugin/marketplace.json
+```
+
+### Installing plugins
+
+```bash
+# Install the dev tool bundle (adr-tools, mermaid, obsidian-cli, plantuml)
+claude plugin install dev-swiss-knife
+
+# Install individual skills
+claude plugin install graphify
+claude plugin install lnav
+claude plugin install playwright-cli
+```
+
+### Available plugins
+
+| Plugin | Type | Skills |
+|--------|------|--------|
+| `dev-swiss-knife` | group (4) | adr-tools, mermaid, obsidian-cli, plantuml |
+| `graphify` | individual | graphify |
+| `humble-pr-review` | individual | humble-pr-review |
+| `lnav` | individual | lnav |
+| `lnav-unattended` | individual | lnav-unattended |
+| `ops-github-actions-versions` | individual | ops-github-actions-versions |
+| `playwright-cli` | individual | playwright-cli |
+| `pyenv-poetry-virtual-env` | individual | pyenv-poetry-virtual-env |
+| `revealjs-markdown` | individual | revealjs-markdown |
+| `zellij` | individual | zellij |
+
+### Adding new skill groupings
+
+Edit the `SKILL_GROUPS` dictionary at the top of `bin/ai-files-marketplace-update`:
+
+```python
+SKILL_GROUPS = {
+    "dev-swiss-knife": {
+        "skills": ["adr-tools", "mermaid", "obsidian-cli", "plantuml"],
+        "description": "Swiss army knife of dev tools: ADR, diagrams, Obsidian CLI, PlantUML",
+    },
+    # Add new groups here:
+    # "my-group": {
+    #     "skills": ["skill-a", "skill-b"],
+    #     "description": "Description of the group",
+    # },
+}
+```
+
+Skills listed in a group are combined into one installable plugin. Any skill not listed in `SKILL_GROUPS` becomes its own individual plugin entry automatically.
+
+
 ## ai-files
 
 The `ai-files` is a command-line interface that provides various utilities for managing AI Files project configuration, MCP servers, memory services, and more. It serves as a dispatcher that routes commands to specialized subcommands.

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+#
+# ai-files-marketplace - Marketplace management dispatcher
+#
+# Usage: ai-files marketplace <command> [options]
+#
+# Commands:
+#   install   Register ai-files marketplace with Claude (interactive)
+#   update    Regenerate .claude-plugin/marketplace.json from skills/
+
+set -euo pipefail
+
+SCRIPT_PATH="$0"
+while [ -h "$SCRIPT_PATH" ]; do
+    DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$DIR/$SCRIPT_PATH"
+done
+SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+show_help() {
+    cat <<EOF
+Usage: ai-files marketplace <command> [options]
+
+Manage Claude Code skill marketplaces.
+
+Commands:
+  install   Register ai-files marketplace with Claude (interactive)
+  update    Regenerate .claude-plugin/marketplace.json from skills/
+
+Options:
+  -h, --help  Show this help message
+
+Examples:
+  ai-files marketplace install
+  ai-files marketplace install --yes
+  ai-files marketplace update
+EOF
+}
+
+CMD="${1:-help}"
+shift || true
+
+case "$CMD" in
+    install)
+        exec "$SELF_DIR/ai-files-marketplace-install" "$@"
+        ;;
+    update)
+        exec "$SELF_DIR/ai-files-marketplace-update" "$@"
+        ;;
+    help|-h|--help|"")
+        show_help
+        ;;
+    *)
+        echo "Error: Unknown marketplace command: $CMD" >&2
+        echo "Valid commands: install, update" >&2
+        show_help
+        exit 1
+        ;;
+esac

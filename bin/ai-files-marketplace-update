@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Generate .claude-plugin/marketplace.json from local skills/ directory.
+
+Skills can be grouped using SKILL_GROUPS configuration below.
+Any skill not listed in a group becomes its own individual plugin entry.
+"""
+
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+SKILLS_DIR = REPO_ROOT / "skills"
+OUTPUT_DIR = REPO_ROOT / ".claude-plugin"
+OUTPUT_FILE = OUTPUT_DIR / "marketplace.json"
+SKILL_FILE = "SKILL.md"
+
+# Skills to skip (e.g. templates)
+SKIP_SKILLS = {"a-template"}
+
+# Skill grouping configuration
+# Keys = plugin names. Skills listed under each key are combined into one plugin.
+# Skills not listed here become individual plugins.
+# Description is used for the group plugin; individual plugins use SKILL.md frontmatter.
+SKILL_GROUPS = {
+    "dev-swiss-knife": {
+        "skills": ["adr-tools", "mermaid", "obsidian-cli", "plantuml"],
+        "description": "Swiss army knife of dev tools: ADR, diagrams, Obsidian CLI, PlantUML",
+    },
+}
+
+
+def parse_yaml_frontmatter(content: str) -> dict:
+    """Extract YAML frontmatter between --- delimiters."""
+    if not content.startswith("---"):
+        return {}
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return {}
+    try:
+        return yaml.safe_load(parts[1]) or {}
+    except yaml.YAMLError:
+        return {}
+
+
+def discover_skills() -> list[dict]:
+    """Find all skill directories under skills/ that contain SKILL.md.
+
+    Returns list of dicts with keys: dir_name, name, description, path.
+    """
+    skills = []
+    for skill_dir in sorted(SKILLS_DIR.iterdir()):
+        if not skill_dir.is_dir() or skill_dir.name in SKIP_SKILLS:
+            continue
+        skill_md = skill_dir / SKILL_FILE
+        if not skill_md.exists():
+            continue
+        content = skill_md.read_text()
+        meta = parse_yaml_frontmatter(content)
+        skills.append({
+            "dir_name": skill_dir.name,
+            "name": meta.get("name", skill_dir.name),
+            "description": meta.get("description", f"Skills from {skill_dir.name}"),
+            "path": f"./skills/{skill_dir.name}",
+        })
+    return skills
+
+
+def build_plugins(skills: list[dict]) -> list[dict]:
+    """Build plugin entries, respecting SKILL_GROUPS configuration."""
+    plugins = []
+    grouped_dirs = set()
+
+    # Build group entries first
+    for plugin_name, group_cfg in SKILL_GROUPS.items():
+        group_skills = group_cfg["skills"]
+        description = group_cfg.get("description", f"Grouped skills: {', '.join(group_skills)}")
+        skill_paths = []
+        for skill in skills:
+            if skill["dir_name"] in group_skills:
+                skill_paths.append(skill["path"])
+                grouped_dirs.add(skill["dir_name"])
+        if skill_paths:
+            plugins.append({
+                "name": plugin_name,
+                "source": "./",
+                "description": description,
+                "skills": sorted(skill_paths),
+            })
+
+    # Individual entries for remaining skills
+    for skill in skills:
+        if skill["dir_name"] in grouped_dirs:
+            continue
+        plugins.append({
+            "name": skill["name"],
+            "source": "./",
+            "description": skill["description"],
+            "skills": [skill["path"]],
+        })
+
+    return plugins
+
+
+def generate_marketplace(plugins: list[dict]) -> None:
+    """Write the marketplace.json file."""
+    marketplace = {
+        "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+        "name": "ai-files-skills",
+        "description": "Curated marketplace of AI agent skills from the ai-files project.",
+        "owner": {"name": "ai-files"},
+        "plugins": plugins,
+    }
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(OUTPUT_FILE, "w") as f:
+        json.dump(marketplace, f, indent=2)
+        f.write("\n")
+
+    print(f"Generated {OUTPUT_FILE}")
+    print(f"  {len(plugins)} plugin(s) defined")
+    for p in plugins:
+        skill_paths = p.get("skills", [])
+        if len(skill_paths) > 1:
+            print(f"  - {p['name']} ({len(skill_paths)} skills)")
+        else:
+            print(f"  - {p['name']} ({skill_paths[0] if skill_paths else '?'})")
+
+
+def main():
+    skills = discover_skills()
+    plugins = build_plugins(skills)
+    generate_marketplace(plugins)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+#
+# ai-files-marketplace-install - Register ai-files marketplace with Claude
+#
+# Interactive script that:
+# 1. Generates .claude-plugin/marketplace.json from skills/
+# 2. Asks to register the ai-files marketplace with Claude
+# 3. Asks to add 3rd party vendor skills marketplace
+#
+# Usage: ai-files marketplace install [OPTIONS]
+#
+# Options:
+#   -y, --yes           Non-interactive mode (answer yes to both prompts)
+#   -s, --scope <scope> Installation scope: user (default), project, local
+
+set -euo pipefail
+
+readonly EXIT_SUCCESS=0
+readonly EXIT_ERROR=1
+
+SCRIPT_PATH="$0"
+while [ -h "$SCRIPT_PATH" ]; do
+    DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$DIR/$SCRIPT_PATH"
+done
+SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+REPO_ROOT="$(cd -P "$SELF_DIR/.." && pwd)"
+
+VENDOR_MARKETPLACE_URL="https://raw.githubusercontent.com/nfraops/ai-files-vendor-skills/master/.claude-plugin/marketplace.json"
+
+YES_MODE=false
+SCOPE="user"
+
+show_help() {
+    cat <<EOF
+Usage: ai-files marketplace install [OPTIONS]
+
+Register ai-files marketplace with Claude Code and optionally add
+3rd party vendor skills marketplace.
+
+Options:
+  -y, --yes           Non-interactive mode (answer yes to both prompts)
+  -s, --scope <scope> Installation scope: user (default), project, local
+  -h, --help          Show this help message
+
+Examples:
+  ai-files marketplace install
+  ai-files marketplace install --yes
+  ai-files marketplace install --scope project
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -y|--yes)
+            YES_MODE=true
+            shift
+            ;;
+        -s|--scope)
+            SCOPE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_help
+            exit "$EXIT_SUCCESS"
+            ;;
+        *)
+            echo "Error: Unknown option: $1" >&2
+            show_help
+            exit "$EXIT_ERROR"
+            ;;
+    esac
+done
+
+# Validate scope
+case "$SCOPE" in
+    user|project|local) ;;
+    *)
+        echo "Error: Invalid scope '$SCOPE'. Valid: user, project, local" >&2
+        exit "$EXIT_ERROR"
+        ;;
+esac
+
+echo "=== ai-files marketplace install ==="
+echo ""
+
+# Check prerequisites
+if ! command -v claude &>/dev/null; then
+    echo "Error: 'claude' CLI not found in PATH." >&2
+    echo "  Install Claude Code: https://docs.anthropic.com/en/docs/claude-code/overview" >&2
+    exit "$EXIT_ERROR"
+fi
+
+# Step 1: Generate marketplace.json
+echo "→ Generating marketplace.json from skills/..."
+if ! "$SELF_DIR/ai-files-marketplace-update"; then
+    echo "Error: Failed to generate marketplace.json" >&2
+    exit "$EXIT_ERROR"
+fi
+echo ""
+
+# Step 2: Register ai-files marketplace
+if [[ "$YES_MODE" == "true" ]]; then
+    answer="y"
+else
+    read -rp "Register ai-files marketplace with Claude? [Y/n] " answer
+fi
+if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
+    echo "→ Adding ai-files marketplace (scope: $SCOPE)..."
+    if claude plugin marketplace add "$REPO_ROOT" --scope "$SCOPE"; then
+        echo "✓ ai-files marketplace registered"
+    else
+        echo "✗ Failed to register ai-files marketplace" >&2
+    fi
+else
+    echo "  Skipped."
+fi
+echo ""
+
+# Step 3: Add 3rd party vendor skills marketplace
+if [[ "$YES_MODE" == "true" ]]; then
+    answer="y"
+else
+    read -rp "Add 3rd party vendor skills marketplace? [y/N] " answer
+fi
+if [[ "$answer" =~ ^[Yy] ]]; then
+    echo "→ Adding vendor skills marketplace (scope: $SCOPE)..."
+    if claude plugin marketplace add "$VENDOR_MARKETPLACE_URL" --scope "$SCOPE"; then
+        echo "✓ Vendor skills marketplace registered"
+    else
+        echo "✗ Failed to register vendor skills marketplace" >&2
+    fi
+else
+    echo "  Skipped."
+fi
+echo ""
+
+# Step 4: Show registered marketplaces
+echo "→ Registered marketplaces:"
+claude plugin marketplace list
+
+echo ""
+echo "=== Done ==="
+echo "Install plugins with:"
+echo "  claude plugin install dev-swiss-knife    # Bundle: ADR, diagrams, Obsidian, PlantUML"
+echo "  claude plugin install graphify"
+echo "  claude plugin install lnav"
+echo "  claude plugin install playwright-cli"
+echo "  # ... or any other skill name"
