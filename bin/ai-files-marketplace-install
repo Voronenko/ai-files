@@ -3,9 +3,10 @@
 # ai-files-marketplace-install - Register ai-files marketplace with Claude
 #
 # Interactive script that:
-# 1. Generates .claude-plugin/marketplace.json from skills/
-# 2. Asks to register the ai-files marketplace with Claude
-# 3. Asks to add 3rd party vendor skills marketplace
+# 1. Asks to register the ai-files marketplace (from GitHub) with Claude
+# 2. Asks to add 3rd party vendor skills marketplace
+#
+# Run 'ai-files marketplace update' first to (re)generate .claude-plugin/marketplace.json
 #
 # Usage: ai-files marketplace install [OPTIONS]
 #
@@ -30,14 +31,17 @@ REPO_ROOT="$(cd -P "$SELF_DIR/.." && pwd)"
 VENDOR_MARKETPLACE_URL="https://raw.githubusercontent.com/nfraops/ai-files-vendor-skills/master/.claude-plugin/marketplace.json"
 
 YES_MODE=false
-SCOPE="user"
+SCOPE="project"
 
 show_help() {
     cat <<EOF
 Usage: ai-files marketplace install [OPTIONS]
 
-Register ai-files marketplace with Claude Code and optionally add
-3rd party vendor skills marketplace.
+Register ai-files marketplace with Claude Code from GitHub and optionally
+add 3rd party vendor skills marketplace.
+
+Run 'ai-files marketplace update' first to refresh marketplace.json locally,
+then commit and push so the remote stays current.
 
 Options:
   -y, --yes           Non-interactive mode (answer yes to both prompts)
@@ -82,6 +86,24 @@ case "$SCOPE" in
         ;;
 esac
 
+# Derive GitHub repo shorthand from git remote
+derive_github_repo() {
+    local remote_url
+    remote_url=$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || true)
+    if [[ -z "$remote_url" ]]; then
+        echo ""
+        return
+    fi
+
+    # Extract owner/repo from various git URL formats, strip .git suffix:
+    #   git@github.com:owner/repo.git  → owner/repo
+    #   https://github.com/owner/repo.git → owner/repo
+    #   https://github.com/owner/repo    → owner/repo
+    echo "$remote_url" | sed -n 's|.*github\.com[:/]\([^/]\+/[^/]\+\).*|\1|p' | sed 's|\.git$||'
+}
+
+GITHUB_REPO=$(derive_github_repo)
+
 echo "=== ai-files marketplace install ==="
 echo ""
 
@@ -92,33 +114,41 @@ if ! command -v claude &>/dev/null; then
     exit "$EXIT_ERROR"
 fi
 
-# Step 1: Generate marketplace.json
-echo "→ Generating marketplace.json from skills/..."
-if ! "$SELF_DIR/ai-files-marketplace-update"; then
-    echo "Error: Failed to generate marketplace.json" >&2
-    exit "$EXIT_ERROR"
+# Step 1: Register ai-files marketplace from GitHub
+if [[ -z "$GITHUB_REPO" ]]; then
+    echo "Warning: Could not determine GitHub repo from git remote." >&2
+    echo "  Falling back to local path." >&2
+    echo ""
 fi
-echo ""
 
-# Step 2: Register ai-files marketplace
 if [[ "$YES_MODE" == "true" ]]; then
     answer="y"
 else
     read -rp "Register ai-files marketplace with Claude? [Y/n] " answer
 fi
 if [[ -z "$answer" || "$answer" =~ ^[Yy] ]]; then
-    echo "→ Adding ai-files marketplace (scope: $SCOPE)..."
-    if claude plugin marketplace add "$REPO_ROOT" --scope "$SCOPE"; then
-        echo "✓ ai-files marketplace registered"
+    if [[ -n "$GITHUB_REPO" ]]; then
+        echo "→ Adding ai-files marketplace from GitHub ($GITHUB_REPO, scope: $SCOPE)..."
+        if claude plugin marketplace add "$GITHUB_REPO" --scope "$SCOPE"; then
+            echo "✓ ai-files marketplace registered"
+        else
+            echo "✗ Failed to register ai-files marketplace" >&2
+        fi
     else
-        echo "✗ Failed to register ai-files marketplace" >&2
+        # Fallback: local path
+        echo "→ Adding ai-files marketplace from local path (scope: $SCOPE)..."
+        if claude plugin marketplace add "$REPO_ROOT" --scope "$SCOPE"; then
+            echo "✓ ai-files marketplace registered"
+        else
+            echo "✗ Failed to register ai-files marketplace" >&2
+        fi
     fi
 else
     echo "  Skipped."
 fi
 echo ""
 
-# Step 3: Add 3rd party vendor skills marketplace
+# Step 2: Add 3rd party vendor skills marketplace
 if [[ "$YES_MODE" == "true" ]]; then
     answer="y"
 else
@@ -136,15 +166,15 @@ else
 fi
 echo ""
 
-# Step 4: Show registered marketplaces
+# Step 3: Show registered marketplaces
 echo "→ Registered marketplaces:"
 claude plugin marketplace list
 
 echo ""
 echo "=== Done ==="
 echo "Install plugins with:"
-echo "  claude plugin install dev-swiss-knife    # Bundle: ADR, diagrams, Obsidian, PlantUML"
-echo "  claude plugin install graphify"
-echo "  claude plugin install lnav"
-echo "  claude plugin install playwright-cli"
+echo "  claude plugin install ai-files-dev-swiss-knife    # Bundle: ADR, diagrams, Obsidian, PlantUML"
+echo "  claude plugin install ai-files-graphify"
+echo "  claude plugin install ai-files-lnav"
+echo "  claude plugin install ai-files-playwright-cli"
 echo "  # ... or any other skill name"

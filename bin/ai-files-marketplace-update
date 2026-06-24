@@ -17,6 +17,11 @@ OUTPUT_DIR = REPO_ROOT / ".claude-plugin"
 OUTPUT_FILE = OUTPUT_DIR / "marketplace.json"
 SKILL_FILE = "SKILL.md"
 
+# Prefix applied to every marketplace plugin name so plugins are namespaced
+# to this marketplace (e.g. graphify -> ai-files-graphify). Skill invocation
+# names (SKILL.md frontmatter `name:`) are left untouched.
+PLUGIN_PREFIX = "ai-files-"
+
 # Skills to skip (e.g. templates)
 SKIP_SKILLS = {"a-template"}
 
@@ -29,7 +34,22 @@ SKILL_GROUPS = {
         "skills": ["adr-tools", "mermaid", "obsidian-cli", "plantuml"],
         "description": "Swiss army knife of dev tools: ADR, diagrams, Obsidian CLI, PlantUML",
     },
+    "lnav": {
+        "skills": ["lnav", "lnav-unattended"],
+        "description": "Explore and filter logs with lnav — interactive and unattended modes",
+    },
 }
+
+
+def prefixed(name: str) -> str:
+    """Return the marketplace plugin name with PLUGIN_PREFIX applied.
+
+    Idempotent: a name already carrying the prefix is returned unchanged
+    (guards against ai-files-ai-files-...).
+    """
+    if name.startswith(PLUGIN_PREFIX):
+        return name
+    return f"{PLUGIN_PREFIX}{name}"
 
 
 def parse_yaml_frontmatter(content: str) -> dict:
@@ -84,7 +104,7 @@ def build_plugins(skills: list[dict]) -> list[dict]:
                 grouped_dirs.add(skill["dir_name"])
         if skill_paths:
             plugins.append({
-                "name": plugin_name,
+                "name": prefixed(plugin_name),
                 "source": "./",
                 "description": description,
                 "skills": sorted(skill_paths),
@@ -95,7 +115,7 @@ def build_plugins(skills: list[dict]) -> list[dict]:
         if skill["dir_name"] in grouped_dirs:
             continue
         plugins.append({
-            "name": skill["name"],
+            "name": prefixed(skill["name"]),
             "source": "./",
             "description": skill["description"],
             "skills": [skill["path"]],

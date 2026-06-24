@@ -44,7 +44,7 @@ The Makefile orchestrates distribution build through several targets:
 
 ## Marketplace
 
-This repository publishes skills as a [Claude Code marketplace](https://docs.anthropic.com/en/docs/claude-code/plugin-marketplaces) via `.claude-plugin/marketplace.json`. The marketplace bundles local skills from `skills/` into installable plugins — 10 plugins in total: one grouped bundle (`dev-swiss-knife`) and 9 individual skill plugins.
+This repository publishes skills as a [Claude Code marketplace](https://docs.anthropic.com/en/docs/claude-code/plugin-marketplaces) via `.claude-plugin/marketplace.json`. The marketplace bundles local skills from `skills/` into installable plugins — 9 plugins in total: two grouped bundles (`ai-files-dev-swiss-knife`, `ai-files-lnav`) and 7 individual skill plugins. Every plugin name is namespaced with the `ai-files-` prefix (e.g. `ai-files-graphify`); the underlying skill invocation names (`/graphify`) stay bare.
 
 ### Generating the marketplace
 
@@ -64,7 +64,7 @@ This walks `skills/`, reads each `SKILL.md` frontmatter, and writes `.claude-plu
 ./bin/ai-files marketplace install
 ```
 
-This runs marketplace generation, then interactively prompts to register the local marketplace and optionally the 3rd party vendor skills marketplace.
+Registers the ai-files marketplace from GitHub (`Voronenko/ai-files`) at project scope by default and optionally adds the 3rd party vendor skills marketplace. Use `--scope user` for per-user registration. Run `./bin/ai-files marketplace update` first to regenerate `marketplace.json` locally, then commit and push so the remote stays current.
 
 **Non-interactive:**
 
@@ -72,44 +72,42 @@ This runs marketplace generation, then interactively prompts to register the loc
 ./bin/ai-files marketplace install --yes
 ```
 
-**Local (manual):**
+**Manual registration:**
 
 ```bash
+# From GitHub
+claude plugin marketplace add Voronenko/ai-files
+
+# From local path (development)
 claude plugin marketplace add .
-```
 
-**Remote (from GitHub):**
-
-```bash
-claude plugin marketplace add https://raw.githubusercontent.com/<user>/ai-files/main/.claude-plugin/marketplace.json
 ```
 
 ### Installing plugins
 
 ```bash
 # Install the dev tool bundle (adr-tools, mermaid, obsidian-cli, plantuml)
-claude plugin install dev-swiss-knife
+claude plugin install ai-files-dev-swiss-knife
 
 # Install individual skills
-claude plugin install graphify
-claude plugin install lnav
-claude plugin install playwright-cli
+claude plugin install ai-files-graphify
+claude plugin install ai-files-lnav
+claude plugin install ai-files-playwright-cli
 ```
 
 ### Available plugins
 
 | Plugin | Type | Skills |
 |--------|------|--------|
-| `dev-swiss-knife` | group (4) | adr-tools, mermaid, obsidian-cli, plantuml |
-| `graphify` | individual | graphify |
-| `humble-pr-review` | individual | humble-pr-review |
-| `lnav` | individual | lnav |
-| `lnav-unattended` | individual | lnav-unattended |
-| `ops-github-actions-versions` | individual | ops-github-actions-versions |
-| `playwright-cli` | individual | playwright-cli |
-| `pyenv-poetry-virtual-env` | individual | pyenv-poetry-virtual-env |
-| `revealjs-markdown` | individual | revealjs-markdown |
-| `zellij` | individual | zellij |
+| `ai-files-dev-swiss-knife` | group (4) | adr-tools, mermaid, obsidian-cli, plantuml |
+| `ai-files-graphify` | individual | graphify |
+| `ai-files-humble-pr-review` | individual | humble-pr-review |
+| `ai-files-lnav` | group (2) | lnav, lnav-unattended |
+| `ai-files-ops-github-actions-versions` | individual | ops-github-actions-versions |
+| `ai-files-playwright-cli` | individual | playwright-cli |
+| `ai-files-pyenv-poetry-virtual-env` | individual | pyenv-poetry-virtual-env |
+| `ai-files-revealjs-markdown` | individual | revealjs-markdown |
+| `ai-files-zellij` | individual | zellij |
 
 ### Adding new skill groupings
 
@@ -129,7 +127,7 @@ SKILL_GROUPS = {
 }
 ```
 
-Skills listed in a group are combined into one installable plugin. Any skill not listed in `SKILL_GROUPS` becomes its own individual plugin entry automatically.
+Skills listed in a group are combined into one installable plugin. Any skill not listed in `SKILL_GROUPS` becomes its own individual plugin entry automatically. The `ai-files-` prefix is applied to every emitted plugin name by the generator (`PLUGIN_PREFIX` in `bin/ai-files-marketplace-update`), so keep the `SKILL_GROUPS` keys and `SKILL.md` `name:` fields bare.
 
 
 ## ai-files

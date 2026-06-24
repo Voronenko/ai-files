@@ -7,7 +7,7 @@
   },
   "plugins": [
     {
-      "name": "dev-swiss-knife",
+      "name": "ai-files-dev-swiss-knife",
       "source": "./",
       "description": "Swiss army knife of dev tools: ADR, diagrams, Obsidian CLI, PlantUML",
       "skills": [
@@ -18,7 +18,16 @@
       ]
     },
     {
-      "name": "graphify",
+      "name": "ai-files-lnav",
+      "source": "./",
+      "description": "Explore and filter logs with lnav \u2014 interactive and unattended modes",
+      "skills": [
+        "./skills/lnav",
+        "./skills/lnav-unattended"
+      ]
+    },
+    {
+      "name": "ai-files-graphify",
       "source": "./",
       "description": "any input (code, docs, papers, images) - knowledge graph - clustered communities - HTML + JSON + audit report",
       "skills": [
@@ -26,7 +35,7 @@
       ]
     },
     {
-      "name": "humble-pr-review",
+      "name": "ai-files-humble-pr-review",
       "source": "./",
       "description": "use when user asks for \"code review\", \"review my PR\", \"review PR",
       "skills": [
@@ -34,23 +43,7 @@
       ]
     },
     {
-      "name": "lnav",
-      "source": "./",
-      "description": "assisting human exploring logs with lnav tool",
-      "skills": [
-        "./skills/lnav"
-      ]
-    },
-    {
-      "name": "lnav-unattended",
-      "source": "./",
-      "description": "use lnav tool when user asks you to filter logs",
-      "skills": [
-        "./skills/lnav-unattended"
-      ]
-    },
-    {
-      "name": "ops-github-actions-versions",
+      "name": "ai-files-ops-github-actions-versions",
       "source": "./",
       "description": "use when you are modifiing github workflow to get information about action versions to use.",
       "skills": [
@@ -58,7 +51,7 @@
       ]
     },
     {
-      "name": "playwright-cli",
+      "name": "ai-files-playwright-cli",
       "source": "./",
       "description": "Automate browser interactions, test web pages and work with Playwright tests.",
       "skills": [
@@ -66,7 +59,7 @@
       ]
     },
     {
-      "name": "pyenv-poetry-virtual-env",
+      "name": "ai-files-pyenv-poetry-virtual-env",
       "source": "./",
       "description": "use when you initialize python virtual environments, also when using poetry or pyenv",
       "skills": [
@@ -74,7 +67,7 @@
       ]
     },
     {
-      "name": "revealjs-markdown",
+      "name": "ai-files-revealjs-markdown",
       "source": "./",
       "description": "user wants to create markdown presentation with revealjs",
       "skills": [
@@ -82,7 +75,7 @@
       ]
     },
     {
-      "name": "zellij",
+      "name": "ai-files-zellij",
       "source": "./",
       "description": "modify zellij config",
       "skills": [
