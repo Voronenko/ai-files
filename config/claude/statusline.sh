@@ -40,6 +40,25 @@ get_repo_memory_stats() {
     echo "$memory_display"
 }
 
+# ── Resolve Z.AI API key from env or apiKeyHelper in settings ──
+get_zai_api_key() {
+    if [ -n "${ZAI_API_KEY}" ]; then
+        echo "${ZAI_API_KEY}"
+        return
+    fi
+
+    local settings_file="$HOME/.claude/settings.json"
+    local api_helper
+    if [ -f "$settings_file" ]; then
+        api_helper=$(jq -r '.apiKeyHelper // empty' "$settings_file" 2>/dev/null)
+    fi
+
+    if [ -n "$api_helper" ]; then
+        local cmd_parts=($api_helper)
+        "${cmd_parts[@]}" 2>/dev/null
+    fi
+}
+
 # ── Z.AI token quota with caching (60s TTL in /dev/shm) ──
 get_zai_quota() {
     local cache_file="/dev/shm/zai-quota-cache.json"
@@ -54,7 +73,7 @@ get_zai_quota() {
 
     # Fetch fresh data if cache is stale or missing
     if ! $use_cache; then
-        local api_key="${ZAI_API_KEY:-$(pass psst/ai/z_ai/api_key 2>/dev/null)}"
+        local api_key="$(get_zai_api_key)"
         if [ -n "$api_key" ]; then
             curl -s --max-time 3 \
                 -H "Authorization: Bearer $api_key" \

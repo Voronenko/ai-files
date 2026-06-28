@@ -15,16 +15,16 @@ use lsp plugin for python and typescript, to work with the project more efficien
 This file provides guidance to Claude Code (claude.ai/code) when working with this MCP Memory Service repository.
 
 **📝 Personal Customizations**:
-You can create `CLAUDE.local.md` (gitignored) for personal notes, custom workflows, or environment-specific instructions.
-This file contains shared project conventions.
+You should create `CLAUDE.local.md` (gitignored) for personal notes, custom workflows, or environment-specific instructions.
+This file contains shared between project conventions.
 
-**Information Lookup**:
-Files first, memory second, user last. See [`.ai-files/directives/memory-first.md`](.ai-files/directives/memory-first.md) for strategy.
-Comprehensive project context stored in memory with tags `claude-code-reference`.
+**Information Lookup Order**:
+Memory using repo-memory mcp first, files second, user last. See [`.ai-files/directives/memory-first.md`](.ai-files/directives/memory-first.md) for strategy.
 
 **Accessing external web pages for information**:
 
 Use Defuddle CLI to extract clean readable content from web pages. Prefer over WebFetch for standard web pages — it removes navigation, ads, and clutter, reducing token usage.
+Pre
 
 #### Defuddle Usage
 

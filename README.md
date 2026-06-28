@@ -197,13 +197,13 @@ Start MCP server with custom environment:
 ai-files mcp serve --env XYZ=111 -- ./server-binary --stdio
 ```
 
-### ai-files memory-service
+### ai-files memory
 
 Manage MCP Memory Service for the current project. This utility helps you check memory service status, view statistics, and launch the HTTP UI interface.
 
 **Usage:**
 ```bash
-ai-files memory-service <command>
+ai-files memory <command>
 ```
 
 **Commands:**
@@ -224,7 +224,7 @@ The script searches for memory MCP server configuration in:
 
 Check memory service status:
 ```bash
-ai-files memory-service status
+ai-files memory status
 ```
 
 This will display:
@@ -237,7 +237,7 @@ This will display:
 
 Start memory service with HTTP UI:
 ```bash
-ai-files memory-service ui
+ai-files memory ui
 ```
 
 This will:
