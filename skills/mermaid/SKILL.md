@@ -206,6 +206,8 @@ validate_mermaid() {
 npm install -g @mermaid-js/mermaid-cli
 ```
 
+Important! mmdc won't write to /dev/null — needs a real output extension.
+
 ## Common Error Patterns
 
 | Error | Cause | Fix |
