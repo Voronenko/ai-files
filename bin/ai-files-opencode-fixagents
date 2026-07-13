@@ -1,0 +1,32 @@
+#!/bin/bash
+set -euo pipefail
+
+find . -type f -path ".opencode/agents/*.md" -print0 | while IFS= read -r -d '' file; do
+  tmp="$(mktemp)"
+  front="$(mktemp)"
+  body="$(mktemp)"
+
+  awk '
+    NR==1 && $0=="---" {infm=1; print > front; next}
+    infm {print > front; if ($0=="---" && ++c==1){infm=0; next}}
+    {print > body}
+  ' front="$front" body="$body" "$file"
+
+  if grep -q '^tools:[[:space:]]*[^[:space:]].*,.*$' "$front"; then
+    tools=$(yq -r '.tools' "$front")
+    yq -i 'del(.tools)' "$front"
+    {
+      printf 'tools:\n'
+      IFS=',' read -ra arr <<<"$tools"
+      for t in "${arr[@]}"; do
+        key=$(echo "$t" | xargs | tr '[:upper:]' '[:lower:]')
+        printf '  %s: true\n' "$key"
+      done
+    } | yq -P eval-all 'select(fileIndex==0) * select(fileIndex==1)' "$front" - > "$tmp"
+    mv "$tmp" "$front"
+    cat "$front" "$body" > "$file"
+    echo "Fixed $file"
+  fi
+
+  rm -f "$front" "$body" "$tmp"
+done

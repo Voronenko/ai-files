@@ -45,13 +45,34 @@ Error: `Expecting ... got 'PS'` (Parenthesis start)
 
 **RIGHT:**
 ```mermaid
-CryptoToCrypto[Convert via CHF:<br/>from_amount times from_asset CHF<br/>divided by to_asset CHF]
+CryptoToCrypto[Convert via CHF:\nfrom_amount times from_asset CHF\ndivided by to_asset CHF]
 CryptoToCrypto[Calculate to_amount using CHF prices]
 ```
 
 **RULE:** In rectangle nodes `[...]`, replace `()` with descriptive text or omit entirely. Use mathematical formulas in tables below the diagram.
 
-### 3. Square Bracket + Parenthesis Combination (TERTIARY CAUSE OF PARSE ERRORS)
+### 3. HTML Line Breaks in Decision Nodes (GITHUB RENDERER)
+
+**ROOT CAUSE:** GitHub's Mermaid renderer is stricter than the live Mermaid editor. HTML line breaks `<br/>>` inside diamond (decision) nodes cause the layout engine to fail with a cryptic error: `Could not find a suitable point for the given distance`.
+
+**WRONG:**
+```mermaid
+Decision{Option A?<br/>Choose one}
+Decision{Is amount<br/>greater than<br/>threshold?}
+```
+
+Error: `Could not find a suitable point for the given distance`
+
+**RIGHT - Use \n or shorter labels:**
+```mermaid
+Decision{Option A?\nChoose one}
+Decision{Is amount greater\nthan threshold?}
+Decision{Amount > threshold?}
+```
+
+**RULE:** In diamond nodes `{...}`, never use `<br/>`. Use `\n` for line breaks or simplify labels.
+
+### 4. Square Bracket + Parenthesis Combination (TERTIARY CAUSE OF PARSE ERRORS)
 
 **ROOT CAUSE:** The pattern `[(text)]` - square bracket `[` immediately followed by parenthesis `(` - is interpreted as a cylinder node syntax, causing ambiguity.
 
@@ -74,7 +95,7 @@ Calc[Convert via CHF intermediate]
 
 **RULE:** Never use the `[(text)]` pattern in rectangle nodes. Remove parentheses or use descriptive text.
 
-### 4. Parameter Placeholders - Avoid Curly Braces (PANDOC COMPATIBILITY)
+### 5. Parameter Placeholders - Avoid Curly Braces (PANDOC COMPATIBILITY)
 
 **CRITICAL:** Curly braces `{}` cause issues in BOTH Mermaid syntax AND pandoc markdown-to-PDF rendering.
 
@@ -106,7 +127,7 @@ NodeC[Endpoint with parameter orderId]
 
 **RULE:** Never use `{}` for parameter placeholders. Use `<>` or descriptive text instead.
 
-### 5. Avoid Nested Subgraphs with Same Node IDs
+### 6. Avoid Nested Subgraphs with Same Node IDs
 Nested subgraphs can cause conflicts. Prefer flat diagrams with styles for grouping:
 
 **WRONG:**
@@ -126,7 +147,7 @@ flowchart TD
     style NodeA fill:#e1f5fe
 ```
 
-### 6. Node Syntax Reference
+### 7. Node Syntax Reference
 
 | Shape | Syntax | Example |
 |-------|--------|---------|
@@ -136,7 +157,7 @@ flowchart TD
 | Diamond | `ID{Text}` | `Decision{Is valid?}` |
 | Cylinder | `ID[(Text)]` | `Database[(Data)]` |
 
-### 7. Edge Labels with Special Characters
+### 8. Edge Labels with Special Characters
 Edge labels should avoid complex operators and special characters:
 
 **WRONG:**
@@ -150,7 +171,7 @@ A -->|ids: from_cg_id, to_cg_id| B
 A -->|Builds query with ids| B
 ```
 
-### 8. Use Simple Text
+### 9. Use Simple Text
 Avoid mathematical notation, code snippets, or complex formulas in node text. Put those in tables below the diagram.
 
 **WRONG:**
@@ -164,14 +185,16 @@ Calc[Calculate to_amount using CHF prices]
 ```
 (Then document the formula in a table below)
 
-### 9. Always Test
+### 10. Always Test
 After creating a diagram, test it in:
 - VS Code with Mermaid preview extension
 - Online: mermaid.live
 - Your documentation renderer
 - **CLI validation using mmdc** (if available)
 
-### 10. CLI Validation with mmdc
+**GitHub-specific issues:** `mmdc` and mermaid.live may not catch all renderer-specific errors. GitHub's Mermaid renderer is stricter — always test diagrams rendered on GitHub directly. Errors like `Could not find a suitable point for the given distance` often only surface in the GitHub renderer.
+
+### 11. CLI Validation with mmdc
 
 If the `mmdc` (Mermaid CLI) tool is available, validate diagram syntax before committing:
 
@@ -215,7 +238,8 @@ Important! mmdc won't write to /dev/null — needs a real output extension.
 | `Expecting ... got 'SQS'` | Square brackets `[]` in edge label like `\|text[]\|` | Replace `[]` with "list", "array", or remove |
 | `Expecting ... got 'PS'` | Parentheses `()` inside rectangle node `[text(...)]` | Remove `()`, use descriptive text |
 | `Expecting ... got 'PE'` | Square bracket + parenthesis pattern `[(` interpreted as cylinder | Remove `()`, avoid `[(` pattern |
-| `Expecting 'SQE'... got 'DIAMOND_START'` | Unescaped `{}` in node text | Replace `{}` with `<>` or descriptive words |
+| `Expecting ... got 'DIAMOND_START'` | Unescaped `{}` in node text | Replace `{}` with `<>` or descriptive words |
+| `Could not find a suitable point for the given distance` | HTML `<br/>>` in diamond decision nodes (GitHub renderer) | Use `\n` or shorter labels |
 | Pandoc PDF render fails | `{}` used as parameter placeholders | Use `<param>` or descriptive text instead |
 | `Parse error` in subgraph | Nested subgraphs with node conflicts | Flatten structure, use styles |
 | Edge label breaks | Special chars in `-->|label|` | Simplify label text, avoid `[]`, `{}`, `()` |

@@ -540,6 +540,8 @@ publish-memory-bank:
 
 install-graphify:
 	pipx install graphifyy
+	pipx inject graphifyy openai
+	pipx inject graphifyy tree-sitter-hcl
 
 install-spec-bmad:
 	npm install -g bmad-method
