@@ -1,6 +1,7 @@
 ai-files-*.zip
 bin/goose
 bin/opencode
+bin/rtk
 .cache
 .claude
 dist/*
@@ -8,7 +9,9 @@ docs/plans/
 .env
 graphify-out/
 .kilo
+.kilocode/
 .opencode
 .roomodes
 .specify
 vendor/
+.zcode/

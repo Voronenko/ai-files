@@ -568,6 +568,66 @@ Stores information in your MCP Memory Service with proper context and tagging, c
 
 Displays session memory context by running the session-start memory awareness hook manually to show relevant memories, project context, and git analysis, specifically designed as a Windows workaround for SessionStart hook bug (#160). On Windows, SessionStart hooks cause Claude Code to hang indefinitely, so this slash command provides the same functionality but can be triggered manually when you start a new session, working on all platforms (Windows, macOS, Linux), and is recommended to use at the start of each coding session, when switching projects or contexts, after compacting conversations to refresh memory context, or when you need to see what memories are available.
 
+## rtk (Rust Token Killer)
+
+[rtk](https://github.com/rtk-ai/rtk) is a CLI proxy that filters and compresses command output before it reaches your LLM, cutting token usage 60–90% on common operations (`git`, `ls`, `cat`, `grep`, test runners, build/lint, etc.). It is **not** an MCP server — it integrates with each agent through its own hook/plugin/rules mechanism, installed by `rtk init`.
+
+The Makefile provides one-command setup. rtk must be on your `PATH` first:
+
+```bash
+# (this repo) install the rtk binary to ~/ai-files/bin
+make install-rtk
+# (any project) official installer → ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh
+```
+
+### Enable rtk per agent
+
+rtk's scope is agent-dependent (enforced by rtk itself):
+
+| Agent | Command | Scope |
+|-------|---------|-------|
+| Claude Code | `make rtk-enable-claude` | global PreToolUse hook (patches `~/.claude`) |
+| OpenCode | `make rtk-enable-opencode` | global plugin (global-only in rtk) |
+| Kilo Code | `make rtk-enable-kilocode` | project rules at `.kilocode/rules/rtk-rules.md` |
+| zcode | `make rtk-enable-zcode` | not supported by rtk (informational) |
+
+Enable all supported agents at once:
+
+```bash
+make rtk-enable          # global/automatic mode for every agent (Claude hook + OpenCode plugin + Kilo rules)
+make rtk-enable-local    # project-local mode (Claude CLAUDE.md instructions + Kilo rules; OpenCode has none)
+```
+
+After enabling, **restart your agent**. Verify with `rtk init --show` and test with `git status` — it is transparently rewritten to `rtk git status`.
+
+> **Note:** only Bash tool calls are auto-rewritten. Built-in tools (`Read`, `Grep`, `Glob`) bypass the hook — use shell commands or explicit `rtk read` / `rtk grep` / `rtk find` for filtered output there.
+
+### Disable / uninstall
+
+```bash
+make rtk-disable         # global disable (removes the Claude hook + RTK.md + settings.json entry)
+make rtk-disable-local   # local disable: strips the <!-- rtk-instructions --> block from CLAUDE.md,
+                         #   and removes .rtk/ + .kilocode/rules/rtk-rules.md
+```
+
+`rtk-disable-local` removes artifacts by hand because rtk itself refuses local uninstall — `rtk init --uninstall` only works with `--global`.
+
+### Using rtk directly
+
+You can always invoke rtk explicitly for compact output, regardless of hooks:
+
+```bash
+rtk git status           # compact status
+rtk git diff             # condensed diff
+rtk read file.py         # smart file read
+rtk grep "pattern" .     # grouped search results
+rtk test                 # generic test wrapper (failures only)
+rtk gain                 # token-savings stats
+```
+
+Per-project TOML filters live in `.rtk/filters.toml` (created by local enablement). See the [rtk guide](https://www.rtk-ai.app/guide) for the full command reference.
+
 ## Specification toolkits
 
 ### BMAD Method CLI
