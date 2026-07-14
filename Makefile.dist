@@ -16,3 +16,65 @@ skill-juliusbrussee-caveman:
 
 skill-google-cloud:
 	ai-files skill-add google/skills -l
+
+## rtk — token-compression CLI proxy (https://github.com/rtk-ai/rtk)
+## rtk is a CLI proxy, NOT an MCP server; `rtk init` writes each agent's
+## hook/plugin/rules files itself.
+## Per-agent scope (rtk-enforced):
+##   Claude   - global hook (rtk-enable-claude) OR local CLAUDE.md instructions
+##   OpenCode - global plugin ONLY (no local mode)
+##   Kilo     - project-scoped rules ONLY (no global mode)
+##   zcode    - NOT supported by rtk
+
+_rtk-require:
+	@command -v rtk >/dev/null 2>&1 || { \
+		echo "ERROR: rtk not found on PATH."; \
+		echo "Install: curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh"; \
+		exit 1; \
+	}
+
+# --- per-agent enable (best/default mode) ---
+# Claude Code: native PreToolUse hook (global). --auto-patch = non-interactive settings.json patch.
+rtk-enable-claude: _rtk-require
+	RTK_TELEMETRY_DISABLED=1 rtk init -g --auto-patch < /dev/null
+
+# OpenCode: TS plugin (global-only in rtk).
+rtk-enable-opencode: _rtk-require
+	RTK_TELEMETRY_DISABLED=1 rtk init -g --opencode < /dev/null
+
+# Kilo Code: project-scoped rules file at .kilocode/rules/rtk-rules.md (its only mode).
+rtk-enable-kilocode: _rtk-require
+	RTK_TELEMETRY_DISABLED=1 rtk init --agent kilocode < /dev/null
+
+# rtk has no zcode integration (not in `rtk init --agent`). Informational no-op.
+rtk-enable-zcode:
+	@echo "rtk does not support zcode (not in its 'rtk init --agent' list). Skipping."
+
+# --- aggregates ---
+# Global/automatic mode for all supported agents (Claude hook + OpenCode plugin + Kilo rules).
+rtk-enable: rtk-enable-claude rtk-enable-opencode rtk-enable-kilocode
+	@echo "✅ rtk enabled (global/auto): Claude hook, OpenCode plugin, Kilo Code rules."
+	@echo "   Restart your agents to activate."
+
+# Local/project mode for agents that support it (Claude CLAUDE.md instructions + Kilo rules).
+# OpenCode has no local mode; zcode is unsupported.
+rtk-enable-local: _rtk-require
+	RTK_TELEMETRY_DISABLED=1 rtk init < /dev/null
+	RTK_TELEMETRY_DISABLED=1 rtk init --agent kilocode < /dev/null
+	@echo "✅ rtk enabled (local): Claude CLAUDE.md instructions + .rtk/filters.toml + Kilo Code rules."
+	@echo "   OpenCode has no local mode; zcode is unsupported."
+
+# Global disable: removes the global Claude hook + RTK.md + settings.json entry.
+rtk-disable: _rtk-require
+	RTK_TELEMETRY_DISABLED=1 rtk init -g --uninstall < /dev/null
+	@echo "✅ rtk disabled (global)."
+
+# Local disable: rtk refuses local uninstall ("manually remove RTK from CLAUDE.md"),
+# so remove project artifacts by hand. Strips the <!-- rtk-instructions --> block.
+rtk-disable-local:
+	@if [ -f CLAUDE.md ]; then \
+		sed -i '/<!-- rtk-instructions /,/<!-- \/rtk-instructions -->/d' CLAUDE.md; \
+	fi
+	@rm -rf .rtk
+	@rm -f .kilocode/rules/rtk-rules.md
+	@echo "✅ rtk disabled (local): stripped CLAUDE.md block, removed .rtk/ and .kilocode/rules/rtk-rules.md."

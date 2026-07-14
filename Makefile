@@ -714,6 +714,105 @@ install-grok-amd64:
 		echo '  export PATH="$$HOME/dotfiles/bin:$$PATH"'; \
 	fi
 
+install-rtk:
+	@set -euo pipefail; \
+	TAG="$$(curl -fsSL https://api.github.com/repos/rtk-ai/rtk/releases/latest \
+		| sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p')"; \
+	echo "Latest rtk release: $$TAG"; \
+	BIN_DIR="$$HOME/ai-files/bin"; \
+	mkdir -p "$$BIN_DIR"; \
+	case "$$(uname -s)" in \
+		Darwin) OS=apple-darwin ;; \
+		Linux)  OS=unknown-linux-musl ;; \
+		*) echo "ERROR: unsupported os: $$(uname -s)"; exit 1 ;; \
+	esac; \
+	case "$$(uname -m)" in \
+		x86_64|amd64) ARCH=x86_64 ;; \
+		arm64|aarch64) ARCH=aarch64; [ "$$OS" != "apple-darwin" ] && OS=unknown-linux-gnu ;; \
+		*) echo "ERROR: unsupported arch: $$(uname -m)"; exit 1 ;; \
+	esac; \
+	TARGET="$$ARCH-$$OS"; \
+	ARCHIVE="rtk-$$TARGET.tar.gz"; \
+	URL="https://github.com/rtk-ai/rtk/releases/download/$$TAG/$$ARCHIVE"; \
+	echo "Downloading $$ARCHIVE ($$TARGET)..."; \
+	tmp="$$(mktemp -d)"; \
+	curl -fsSL "$$URL" -o "$$tmp/$$ARCHIVE"; \
+	tar -xzf "$$tmp/$$ARCHIVE" -C "$$tmp"; \
+	RTK_BIN="$$(find "$$tmp" -type f -name rtk -print -quit)"; \
+	if [ -z "$$RTK_BIN" ]; then echo "ERROR: rtk binary not found in $$ARCHIVE"; exit 1; fi; \
+	mv "$$RTK_BIN" "$$BIN_DIR/rtk"; \
+	chmod +x "$$BIN_DIR/rtk"; \
+	rm -rf "$$tmp"; \
+	echo "✅ Installed rtk $$TAG ($$TARGET) to $$BIN_DIR/rtk"; \
+	if ! echo "$$PATH" | tr ':' '\n' | grep -qx "$$BIN_DIR"; then \
+		echo ''; \
+		echo 'Add to PATH:'; \
+		echo "  export PATH=\"$$BIN_DIR:\$$PATH\""; \
+	fi
+
+## rtk enablement — install rtk first (`make install-rtk`), then enable per agent.
+## rtk is a CLI proxy, NOT an MCP server; `rtk init` writes each agent's
+## hook/plugin/rules files itself.
+## Per-agent scope (rtk-enforced):
+##   Claude   - global hook (rtk-enable-claude) OR local CLAUDE.md instructions
+##   OpenCode - global plugin ONLY (no local mode)
+##   Kilo     - project-scoped rules ONLY (no global mode)
+##   zcode    - NOT supported by rtk
+
+_rtk-require:
+	@command -v rtk >/dev/null 2>&1 || { \
+		echo "ERROR: rtk not found on PATH."; \
+		echo "Install with: make install-rtk"; \
+		echo "Or: curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh"; \
+		exit 1; \
+	}
+
+# --- per-agent enable (best/default mode) ---
+# Claude Code: native PreToolUse hook (global). --auto-patch = non-interactive settings.json patch.
+rtk-enable-claude: _rtk-require
+	RTK_TELEMETRY_DISABLED=1 rtk init -g --auto-patch < /dev/null
+
+# OpenCode: TS plugin (global-only in rtk).
+rtk-enable-opencode: _rtk-require
+	RTK_TELEMETRY_DISABLED=1 rtk init -g --opencode < /dev/null
+
+# Kilo Code: project-scoped rules file at .kilocode/rules/rtk-rules.md (its only mode).
+rtk-enable-kilocode: _rtk-require
+	RTK_TELEMETRY_DISABLED=1 rtk init --agent kilocode < /dev/null
+
+# rtk has no zcode integration (not in `rtk init --agent`). Informational no-op.
+rtk-enable-zcode:
+	@echo "rtk does not support zcode (not in its 'rtk init --agent' list). Skipping."
+
+# --- aggregates ---
+# Global/automatic mode for all supported agents (Claude hook + OpenCode plugin + Kilo rules).
+rtk-enable: rtk-enable-claude rtk-enable-opencode rtk-enable-kilocode
+	@echo "✅ rtk enabled (global/auto): Claude hook, OpenCode plugin, Kilo Code rules."
+	@echo "   Restart your agents to activate."
+
+# Local/project mode for agents that support it (Claude CLAUDE.md instructions + Kilo rules).
+# OpenCode has no local mode; zcode is unsupported.
+rtk-enable-local: _rtk-require
+	RTK_TELEMETRY_DISABLED=1 rtk init < /dev/null
+	RTK_TELEMETRY_DISABLED=1 rtk init --agent kilocode < /dev/null
+	@echo "✅ rtk enabled (local): Claude CLAUDE.md instructions + .rtk/filters.toml + Kilo Code rules."
+	@echo "   OpenCode has no local mode; zcode is unsupported."
+
+# Global disable: removes the global Claude hook + RTK.md + settings.json entry.
+rtk-disable: _rtk-require
+	RTK_TELEMETRY_DISABLED=1 rtk init -g --uninstall < /dev/null
+	@echo "✅ rtk disabled (global)."
+
+# Local disable: rtk refuses local uninstall ("manually remove RTK from CLAUDE.md"),
+# so remove project artifacts by hand. Strips the <!-- rtk-instructions --> block.
+rtk-disable-local:
+	@if [ -f CLAUDE.md ]; then \
+		sed -i '/<!-- rtk-instructions /,/<!-- \/rtk-instructions -->/d' CLAUDE.md; \
+	fi
+	@rm -rf .rtk
+	@rm -f .kilocode/rules/rtk-rules.md
+	@echo "✅ rtk disabled (local): stripped CLAUDE.md block, removed .rtk/ and .kilocode/rules/rtk-rules.md."
+
 install-gemini-cli:
 	npm install -g @google/gemini-cli
 
