@@ -628,6 +628,61 @@ rtk gain                 # token-savings stats
 
 Per-project TOML filters live in `.rtk/filters.toml` (created by local enablement). See the [rtk guide](https://www.rtk-ai.app/guide) for the full command reference.
 
+## graphify
+
+[graphify](https://github.com/Graphify-Labs/graphify) maps a project (code, docs, PDFs, images, video) into a **knowledge graph** you query instead of grepping. Code is parsed locally with tree-sitter (no LLM, nothing leaves your machine); the `/graphify` skill is registered per agent by `graphify install --platform <p>`. The PyPI package is `graphifyy` (double-y); the CLI command is `graphify`.
+
+The Makefile provides one-command setup. graphify must be on your `PATH` first:
+
+```bash
+# (this repo) install the graphify CLI + extras
+make install-graphify
+# (any project) official installer → ~/.local/bin
+uv tool install graphifyy        # or: pipx install graphifyy
+```
+
+### Enable graphify per agent
+
+graphify copies the `/graphify` skill into each platform's config dir:
+
+| Agent | Command | Scope |
+|-------|---------|-------|
+| Claude Code | `make graphify-enable-claude` | global skill (`~/.claude/skills/graphify`) |
+| OpenCode | `make graphify-enable-opencode` | global skill + project plugin (`.opencode/`) |
+| Kilo Code | `make graphify-enable-kilocode` | global skill + `/graphify` command (kilo config dir) |
+| zcode | `make graphify-enable-zcode` | not supported by graphify (informational) |
+
+Enable all supported agents at once (user/global scope), or into the current repo (project scope):
+
+```bash
+make graphify-enable          # global: install the skill for Claude + OpenCode + Kilo
+make graphify-enable-local    # project-local: write the skill into this repo (--project)
+```
+
+After enabling, **restart your agent**, then run `/graphify .` in a project to build the graph. Query it with `graphify query "..."`, `graphify path A B`, or `graphify explain X`.
+
+### Disable / uninstall
+
+```bash
+make graphify-disable         # remove the graphify skill from ALL detected platforms
+make graphify-disable-purge   # same, and also delete graphify-out/
+```
+
+graphify's `uninstall` is all-platforms (this version has no per-platform or project-only uninstall), so `graphify-disable` removes every detected install at once.
+
+### Using graphify directly
+
+```bash
+/graphify .                    # build the graph for the current folder (in your agent)
+graphify query "how does auth reach the db?"
+graphify path "UserService" "DatabasePool"
+graphify explain "RateLimiter"
+graphify update .              # re-extract changed files (no LLM)
+graphify hook install          # auto-rebuild the graph on every git commit
+```
+
+The graph lives in `graphify-out/` (`graph.html`, `GRAPH_REPORT.md`, `graph.json`) and is meant to be committed so the team shares one map. See the [graphify README](https://github.com/Graphify-Labs/graphify/blob/v8/README.md) for the full reference.
+
 ## Specification toolkits
 
 ### BMAD Method CLI

@@ -813,6 +813,64 @@ rtk-disable-local:
 	@rm -f .kilocode/rules/rtk-rules.md
 	@echo "✅ rtk disabled (local): stripped CLAUDE.md block, removed .rtk/ and .kilocode/rules/rtk-rules.md."
 
+## graphify enablement — install graphify first (`make install-graphify`), then enable per agent.
+## graphify registers the /graphify skill into each platform's config dir via
+## `graphify install --platform <p>` (PyPI package `graphifyy`, CLI command `graphify`).
+## Per-agent scope:
+##   Claude   - global skill via `graphify install --platform claude`
+##   OpenCode - global skill via `graphify install --platform opencode`
+##   Kilo     - global skill via `graphify install --platform kilo`   (rtk names this "kilocode")
+##   zcode    - NOT supported by graphify (not in its --platform list)
+
+_graphify-require:
+	@command -v graphify >/dev/null 2>&1 || { \
+		echo "ERROR: graphify not found on PATH."; \
+		echo "Install with: make install-graphify"; \
+		echo "Or: uv tool install graphifyy   (or: pipx install graphifyy)"; \
+		exit 1; \
+	}
+
+# --- per-agent enable (global/user mode; copies the /graphify skill) ---
+# Claude Code: skill copied to ~/.claude/skills/graphify.
+graphify-enable-claude: _graphify-require
+	graphify install --platform claude < /dev/null
+
+# OpenCode: skill copied to the opencode config dir.
+graphify-enable-opencode: _graphify-require
+	graphify install --platform opencode < /dev/null
+
+# Kilo Code: skill copied to the kilo config dir (graphify platform name is "kilo").
+graphify-enable-kilocode: _graphify-require
+	graphify install --platform kilo < /dev/null
+
+# graphify has no zcode integration (zcode not in its --platform list). Informational no-op.
+graphify-enable-zcode:
+	@echo "graphify does not support zcode (not in its --platform list). Skipping."
+
+# --- aggregates ---
+# Global/user mode: install the /graphify skill for every supported agent.
+graphify-enable: graphify-enable-claude graphify-enable-opencode graphify-enable-kilocode
+	@echo "✅ graphify enabled (global): Claude, OpenCode, Kilo Code skills installed."
+	@echo "   Restart your agents, then run /graphify . in a project."
+
+# Project-local mode: install the skill into THIS repo (--project), so it can be committed/shared.
+graphify-enable-local: _graphify-require
+	graphify install --platform claude --project < /dev/null
+	graphify install --platform opencode --project < /dev/null
+	graphify install --platform kilo --project < /dev/null
+	@echo "✅ graphify enabled (project-local): skills written under the current repo."
+
+# --- disable ---
+# graphify uninstall removes the skill from ALL detected platforms (global + project) at once.
+graphify-disable: _graphify-require
+	graphify uninstall < /dev/null
+	@echo "✅ graphify disabled (uninstalled from all detected platforms)."
+
+# Same, and also delete the built graphify-out/ graph artifacts.
+graphify-disable-purge: _graphify-require
+	graphify uninstall --purge < /dev/null
+	@echo "✅ graphify disabled + graphify-out/ purged."
+
 install-gemini-cli:
 	npm install -g @google/gemini-cli
 
