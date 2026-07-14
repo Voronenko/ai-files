@@ -33,6 +33,7 @@ End the current development session by:
    - **Git branch**: Run `git rev-parse --abbrev-ref HEAD` to get current branch name (strip `origin/` prefix if remote branch)
 
 5. Basing on summary select three tags unique specifically for this session, and add it as #tag1 #tag2 #tag3 to the summary. Include ticket number as a tag if found (e.g., `PROJ-456`, `123`) — omit the `#` prefix for tag storage.
+   Should you want any tag referencing a pull request number, it should be formatted as PR<number> (e.g. PR4),  never bare 4 or #4
 
 6. Empty the `.ai-files/sessions/.current-session` file (don't remove it, just clear its contents)
 
