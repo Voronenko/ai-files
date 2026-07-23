@@ -674,7 +674,7 @@ install-opencode-desktop:
 	curl -fsSL "$$APPIMAGE_URL" -o "$$DEST"; \
 	chmod +x "$$DEST";\
 	echo "opencode-desktop installed successfully"
-install-opencode-cli:
+install-cli-opencode:
 	@set -euo pipefail; \
 	mkdir -p "$(CURDIR)/bin"; \
 	os="$$(uname -s | tr '[:upper:]' '[:lower:]')"; \
