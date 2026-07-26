@@ -1,7 +1,15 @@
 # ============================================================================
 # AI tooling
 # ============================================================================
-.ai-files/
+.ai-files/agents/
+.ai-files/commands/
+.ai-files/*.md
+.ai-files/dot*/*
+.ai-files/memory.db
+.ai-files/memory.db-*
+.ai-files/plugins/
+.ai-files/scripts/
+.ai-files/skills
 .claude/
 .agents/
 .gstack/

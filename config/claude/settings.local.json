@@ -1,19 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(for:*)",
-      "Bash(do grep -l \"## Communication Protocol\" \"$file\")",
-      "Bash(done)",
       "Bash(python3:*)",
       "Bash(terraform validate:*)",
       "Bash(terraform fmt:*)",
       "Edit(./ai-files/sessions/**)",
-      "Write(./ai-files/sessions/**)",
-      "Bash(grep -E \"\\\\.sh$\")",
+      "Bash(grep *"),
       "Bash(xargs ls *)",
-      "Bash(.specify/scripts/bash/create-new-feature.sh *)",
+      "Bash(.specify/scripts/bash/*:*)",
       "WebSearch",
-      "Bash(.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks)",
       "Bash(pyenv versions *)",
       "Bash(pyenv local *)",
       "Bash(poetry show *)",
