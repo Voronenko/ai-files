@@ -871,6 +871,26 @@ graphify-disable-purge: _graphify-require
 	graphify uninstall --purge < /dev/null
 	@echo "✅ graphify disabled + graphify-out/ purged."
 
+install-cli-reasonix:
+	@set -euo pipefail; \
+	TAG="$$(curl -fsSL https://api.github.com/repos/esengine/DeepSeek-Reasonix/releases/latest \
+		| sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p')"; \
+	echo "Latest DeepSeek-Reasonix release: $$TAG"; \
+	BIN_DIR="$(CURDIR)/bin"; \
+	mkdir -p "$$BIN_DIR"; \
+	ARCHIVE="reasonix-linux-amd64.tar.gz"; \
+	URL="https://github.com/esengine/DeepSeek-Reasonix/releases/download/$$TAG/$$ARCHIVE"; \
+	echo "Downloading $$ARCHIVE from $$TAG..."; \
+	tmp="$$(mktemp -d)"; \
+	curl -fsSL "$$URL" -o "$$tmp/$$ARCHIVE"; \
+	tar -xzf "$$tmp/$$ARCHIVE" -C "$$tmp"; \
+	REASONIX_BIN="$$(find "$$tmp" -type f -name reasonix -print -quit)"; \
+	if [ -z "$$REASONIX_BIN" ]; then echo "ERROR: reasonix binary not found in $$ARCHIVE"; exit 1; fi; \
+	mv "$$REASONIX_BIN" "$$BIN_DIR/reasonix"; \
+	chmod +x "$$BIN_DIR/reasonix"; \
+	rm -rf "$$tmp"; \
+	echo "✅ Installed reasonix $$TAG to $$BIN_DIR/reasonix"
+
 install-gemini-cli:
 	npm install -g @google/gemini-cli
 

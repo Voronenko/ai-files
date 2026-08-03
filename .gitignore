@@ -1,6 +1,7 @@
 ai-files-*.zip
 bin/goose
 bin/opencode
+bin/reasonix
 bin/rtk
 .cache
 .claude
