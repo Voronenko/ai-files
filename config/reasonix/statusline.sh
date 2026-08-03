@@ -1,13 +1,46 @@
 #!/bin/bash
-#https://code.claude.com/docs/en/statusline
+# Reasonix custom status line.
+# Config: [statusline] section in <Reasonix home>/config.toml (or ./reasonix.toml).
+# Contract: receives {"model","contextUsed","contextWindow","cwd"} as JSON on stdin;
+# the FIRST stdout line replaces the built-in data row.
+# Modeled on config/claude/statusline.sh (Claude Code protocol) with Reasonix input.
 
 # Read JSON input from stdin
 input=$(cat)
-cwd=$(echo "$input" | jq -r '.workspace.current_dir // empty')
 
-# Extract values using jq
-MODEL_DISPLAY=$(echo "$input" | jq -r '.model.display_name')
-CURRENT_DIR=$(echo "$input" | jq -r '.workspace.current_dir')
+# ── Parse Reasonix input ──
+# model may be a plain string or an object with display_name (keep both working)
+MODEL_DISPLAY=$(echo "$input" | jq -r '.model.display_name? // .model // empty' 2>/dev/null)
+CURRENT_DIR=$(echo "$input" | jq -r '.cwd // empty' 2>/dev/null)
+CONTEXT_USED=$(echo "$input" | jq -r '.contextUsed // 0' 2>/dev/null)
+CONTEXT_WINDOW=$(echo "$input" | jq -r '.contextWindow // 0' 2>/dev/null)
+
+# Fallbacks: empty stdin / missing fields
+[ -z "$MODEL_DISPLAY" ] && MODEL_DISPLAY="unknown"
+[ -z "$CURRENT_DIR" ] && CURRENT_DIR="$(pwd)"
+
+# Everything below is relative to the project dir reported via stdin
+cd "$CURRENT_DIR" 2>/dev/null || exit 1
+
+# ── Context usage in built-in footer format: CTX 123.6K (12%) ──
+# Mirrors Reasonix shortTokens (chat_tui.go): 1_500 → "1.5K", 142_000 → "142.0K",
+# 1_000_000 → "1.0M"; pct = used*100/window.
+short_tokens() {
+    local n=$1
+    if [ "$n" -ge 999950 ] 2>/dev/null; then
+        awk -v n="$n" 'BEGIN { printf "%.1fM", n/1000000 }'
+    elif [ "$n" -ge 1000 ] 2>/dev/null; then
+        awk -v n="$n" 'BEGIN { printf "%.1fK", n/1000 }'
+    else
+        echo "$n"
+    fi
+}
+
+CONTEXT_STATS=""
+if [ "$CONTEXT_WINDOW" -gt 0 ] 2>/dev/null; then
+    ctx_pct=$(( CONTEXT_USED * 100 / CONTEXT_WINDOW ))
+    CONTEXT_STATS=" | CTX $(short_tokens "$CONTEXT_USED") (${ctx_pct}%)"
+fi
 
 # ── Check for repo-memory MCP and get memory count ──
 get_repo_memory_stats() {
@@ -158,4 +191,4 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
     fi
 fi
 
-echo "🦝 [$MODEL_DISPLAY] 📁 ${CURRENT_DIR##*/}$GIT_BRANCH$MEMORY_STATS$SESSION_INFO | 📊 $ZAI_QUOTA"
+echo "🦝 [$MODEL_DISPLAY] 📁 ${CURRENT_DIR##*/}$GIT_BRANCH$MEMORY_STATS$SESSION_INFO | 📊 $ZAI_QUOTA$CONTEXT_STATS"
