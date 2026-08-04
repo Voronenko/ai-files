@@ -891,6 +891,62 @@ install-cli-reasonix:
 	rm -rf "$$tmp"; \
 	echo "✅ Installed reasonix $$TAG to $$BIN_DIR/reasonix"
 
+# Ensure ~/.reasonix/config.toml is a symlink to ~/keyfiles/dotreasonix/config.toml.
+# If the config is absent, or is not a link pointing to the keyfiles copy, the
+# existing file is backed up to config.toml.bak and the link is (re)created.
+config-reasonix:
+	@set -euo pipefail; \
+	RZ_HOME="$(HOME)/.reasonix"; \
+	CONFIG="$$RZ_HOME/config.toml"; \
+	SOURCE="$(HOME)/keyfiles/dotreasonix/config.toml"; \
+	if [ -L "$$CONFIG" ] && [ "$$(readlink -f "$$CONFIG")" = "$$(readlink -f "$$SOURCE")" ]; then \
+		echo "✅ reasonix config already links to $$SOURCE"; \
+	elif [ -e "$$CONFIG" ] || [ -L "$$CONFIG" ]; then \
+		mv "$$CONFIG" "$$CONFIG.bak"; \
+		echo "Backed up previous config to $$CONFIG.bak"; \
+		ln -s "$$SOURCE" "$$CONFIG"; \
+		echo "✅ Created symlink: $$CONFIG -> $$SOURCE"; \
+	else \
+		mkdir -p "$$RZ_HOME"; \
+		ln -s "$$SOURCE" "$$CONFIG"; \
+		echo "✅ Created symlink: $$CONFIG -> $$SOURCE"; \
+	fi
+
+# OpenCode config files managed as symlinks: ~/.config/opencode/<name> -> ~/keyfiles/dotopencode/<name>.
+# Extend this list to manage additional files; the config-opencode target loops over it.
+OPENCODE_CONFIG_FILES ?= opencode.jsonc tui.json oh-my-opencode-slim.json
+
+# Ensure each file in ~/.config/opencode/ is a symlink to ~/keyfiles/dotopencode/<name>.
+# - If the keyfiles source exists: an existing target (file or wrong link) is backed
+#   up to <name>.bak, then linked (reasonix behavior).
+# - If the keyfiles source is absent but a real file exists at the target: that file
+#   is MIGRATED into ~/keyfiles/dotopencode/<name> and linked back (first-run friendly).
+config-opencode:
+	@set -euo pipefail; \
+	OC_HOME="$(HOME)/.config/opencode"; \
+	SRC_DIR="$(HOME)/keyfiles/dotopencode"; \
+	mkdir -p "$$OC_HOME" "$$SRC_DIR"; \
+	link_one() { \
+		name="$$1"; \
+		CONFIG="$$OC_HOME/$$name"; \
+		SOURCE="$$SRC_DIR/$$name"; \
+		if [ -L "$$CONFIG" ] && [ "$$(readlink -f "$$CONFIG")" = "$$(readlink -f "$$SOURCE")" ]; then \
+			echo "✅ opencode $$name already links to $$SOURCE"; \
+		elif [ ! -e "$$SOURCE" ] && [ -f "$$CONFIG" ] && [ ! -L "$$CONFIG" ]; then \
+			mv "$$CONFIG" "$$SOURCE"; \
+			ln -s "$$SOURCE" "$$CONFIG"; \
+			echo "✅ Migrated $$name into $$SOURCE and linked $$CONFIG -> $$SOURCE"; \
+		else \
+			if [ -e "$$CONFIG" ] || [ -L "$$CONFIG" ]; then \
+				mv "$$CONFIG" "$$CONFIG.bak"; \
+				echo "Backed up previous $$name to $$CONFIG.bak"; \
+			fi; \
+			ln -s "$$SOURCE" "$$CONFIG"; \
+			echo "✅ Created symlink: $$CONFIG -> $$SOURCE"; \
+		fi; \
+	}; \
+	for name in $(OPENCODE_CONFIG_FILES); do link_one "$$name"; done
+
 install-gemini-cli:
 	npm install -g @google/gemini-cli
 
@@ -958,3 +1014,11 @@ release:
 	echo "   Archive: $$RELEASE_ZIP"; \
 	echo "   Tag: $$RELEASE_TAG"; \
 	echo "   URL: $$(gh release view $$RELEASE_TAG --json url -q .url)"
+
+
+
+### Orchestration
+
+
+install-opencode-ohmy-slim:
+	bunx oh-my-opencode-slim@latest install

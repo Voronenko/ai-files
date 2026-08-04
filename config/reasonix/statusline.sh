@@ -158,6 +158,14 @@ get_zai_quota() {
 MEMORY_STATS=$(get_repo_memory_stats)
 ZAI_QUOTA=$(get_zai_quota)
 
+# Z.AI token quota applies only to GLM models served by Z.AI (api.z.ai); it is
+# N/A for other providers (e.g. DeepSeek) — hide the segment unless the active
+# model is a GLM model AND quota data is available.
+QUOTA_SEGMENT=""
+case "${MODEL_DISPLAY,,}" in
+    glm*) [ -n "$ZAI_QUOTA" ] && QUOTA_SEGMENT=" | 📊 $ZAI_QUOTA" ;;
+esac
+
 # Check for active session
 SESSION_INFO=""
 SESSION_FILE="./.ai-files/sessions/.current-session"
@@ -191,4 +199,4 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
     fi
 fi
 
-echo "🦝 [$MODEL_DISPLAY] 📁 ${CURRENT_DIR##*/}$GIT_BRANCH$MEMORY_STATS$SESSION_INFO | 📊 $ZAI_QUOTA$CONTEXT_STATS"
+echo "🦝 [$MODEL_DISPLAY] 📁 ${CURRENT_DIR##*/}$GIT_BRANCH$MEMORY_STATS$SESSION_INFO$QUOTA_SEGMENT$CONTEXT_STATS"

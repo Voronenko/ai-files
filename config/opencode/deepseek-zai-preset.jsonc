@@ -1,0 +1,62 @@
+{
+  "$schema": "https://unpkg.com/oh-my-opencode-slim@latest/oh-my-opencode-slim.schema.json",
+  "preset": "deepseek-zai",
+  "presets": {
+    "deepseek-zai": {
+      "orchestrator": {
+        "model": "zai-coding-plan/glm-5.2",
+        "variant": "max",
+        "skills": ["*", "!make-interfaces-feel-better"],
+        "mcps": ["*", "!context7", "!gh_app"]
+      },
+      "oracle": {
+        "model": "zai-coding-plan/glm-5-turbo",
+        "variant": "high",
+        "skills": ["ce-brainstorm", "workers-best-practices", "web-perf"],
+        "mcps": ["codegraph", "searxng", "crawl4ai"]
+      },
+      "librarian": {
+        "model": "deepseek/deepseek-v4-flash",
+        "variant": "low",
+        "skills": ["customer-research"],
+        "mcps": ["context7", "gh_app", "searxng", "crawl4ai"]
+      },
+      "explorer": {
+        "model": "deepseek/deepseek-v4-flash",
+        "variant": "low",
+        "skills": [],
+        "mcps": ["codegraph"]
+      },
+      "designer": {
+        "model": "zai-coding-plan/glm-5-turbo",
+        "variant": "medium",
+        "skills": [
+          "make-interfaces-feel-better",
+          "better-icons",
+          "vue",
+          "nuxt",
+          "motion",
+          "image",
+          "marketing-psychology",
+          "video"
+        ],
+        "mcps": ["codegraph"]
+      },
+      "fixer": {
+        "model": "deepseek/deepseek-v4-flash",
+        "variant": "high",
+        "skills": ["vitest", "pnpm", "vite", "tsdown"],
+        "mcps": ["codegraph", "searxng", "crawl4ai"]
+      }
+    }
+  },
+  "companion": {
+    "enabled": true,
+    "position": "bottom-right",
+    "size": "medium",
+    "gifPack": "default",
+    "loopStyle": "classic",
+    "speed": 1,
+    "debug": false
+  }
+}
