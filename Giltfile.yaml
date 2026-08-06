@@ -223,3 +223,12 @@ repositories:
         dstDir: vendor/skills/obsidian/obsidian-markdown
       - src: skills/json-canvas
         dstDir: vendor/skills/obsidian/json-canvas
+
+  # i-have-adhd skill + hooks
+  - git: git@github.com:ayghri/i-have-adhd.git
+    version: main
+    sources:
+      - src: skills/i-have-adhd
+        dstDir: vendor/skills/ayghri/i-have-adhd
+      - src: hooks
+        dstDir: vendor/skills/ayghri/hooks
