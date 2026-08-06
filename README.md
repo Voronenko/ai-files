@@ -471,6 +471,25 @@ Update from custom source directory:
 ai-files update -s /path/to/custom/dist
 ```
 
+### ai-files setup
+
+Interactive one-shot setup for an ai-files-managed git repository.
+Must be run from the **root** of a git repository (exits with an error otherwise).
+
+**Usage:**
+```bash
+ai-files setup
+```
+
+**Steps (each interactive):**
+0. Bootstrap `.ai-files/` if missing (`ai-files update files`)
+1. Sync `.ai-files/VERSION` from `dist/` if stale (`ai-files update files`)
+2. Obsidian integration config — shows current config via `ai-files config`, or offers `ai-files config setup` when the `aifiles.*` keys are missing
+3. Relink agent folders — per-agent y/N for `link-claude`, `link-kilo`, `link-opencode`, `link-specify`
+4. Initialize graphify — copies `.graphifyignore` to the repo root when `graphify-out/` is absent (a present `.graphifyignore` counts as done)
+5. Create missing dotfile templates — `.mcp.json`, `opencode.json`, `zcode.json` copied from the ai-files install root
+6. Suggest ignore entries for untracked setup files (`.claude/`, `.graphifyignore`, `.kilo/`, `.mcp.json`, `.opencode/`, `.specify/`, `opencode.json`, `zcode.json`) — written to `.gitignore.local` (symlink to `./.git/info/exclude`) when present, else `.gitignore`
+
 ### ai-files version
 
 Show version information for the ai-files project. The version is derived from git tags, branch names, or commit hashes.
