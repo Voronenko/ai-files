@@ -52,10 +52,11 @@ MERGE_FOLDERS=("commands" "hooks" "skills" "rules")
 PROTECTED_DIRS=(".ai-files/sessions" ".ai-files/memory" ".ai-files/memory-bank")
 # File patterns that should never be deleted
 PROTECTED_PATTERNS=("memory.db*")
-# Runtime artifacts created by opencode itself (e.g. via npm install) inside .opencode/.
-# They are never part of the ai-files distribution and must be left untouched during
-# updates — never deleted, overwritten, or flagged as target-only.
-OPENCODE_RUNTIME_ARTIFACTS=("node_modules" "package.json" "package-lock.json" ".gitignore")
+# Runtime artifacts created by a tool's own runtime (e.g. opencode plugins / kilo running
+# `npm install`) inside their tool dirs (.opencode/, .kilo/). They are never part of the
+# ai-files distribution and must be left untouched during updates — never deleted,
+# overwritten, or flagged as target-only.
+RUNTIME_ARTIFACTS=("node_modules" "package.json" "package-lock.json" ".gitignore")
 
 # Tracking arrays
 declare -a COPIED_FILES=()
@@ -126,13 +127,13 @@ detect_git_root() {
     return 1
 }
 
-# Check if a path relative to .opencode/ is an opencode runtime artifact.
-# Matches the exact name (e.g. package.json) or anything nested under it
-# (e.g. node_modules/.package-lock.json).
-is_opencode_runtime_artifact() {
+# Check if a prefix-free path (relative to a tool dir like .opencode/ or .kilo/)
+# is a known runtime artifact. Matches the exact name (e.g. package.json) or
+# anything nested under it (e.g. node_modules/.package-lock.json).
+is_runtime_artifact() {
     local rel="$1"
     local artifact
-    for artifact in "${OPENCODE_RUNTIME_ARTIFACTS[@]}"; do
+    for artifact in "${RUNTIME_ARTIFACTS[@]}"; do
         [[ "$rel" == "$artifact" ]] && return 0
         [[ "$rel" == "$artifact"/* ]] && return 0
     done
@@ -161,13 +162,16 @@ is_protected_path() {
         fi
     done
 
-    # Check opencode runtime artifacts (npm files created by opencode itself)
-    if [[ "$filepath" == ".opencode/"* ]]; then
-        local rel="${filepath#.opencode/}"
-        if is_opencode_runtime_artifact "$rel"; then
-            return 0  # Protected - opencode runtime artifact
+    # Check tool runtime artifacts (npm files created by the tool itself, e.g. opencode/kilo)
+    local tool_dir
+    for tool_dir in .opencode .kilo; do
+        if [[ "$filepath" == "$tool_dir/"* ]]; then
+            local rel="${filepath#$tool_dir/}"
+            if is_runtime_artifact "$rel"; then
+                return 0  # Protected - tool runtime artifact
+            fi
         fi
-    fi
+    done
 
     # Check if file is tracked by git (additional protection)
     # Only check if GIT_TRACKED_FILES is populated (cmd_files context)
@@ -1790,6 +1794,13 @@ cmd_link_kilo() {
             if [[ "$relative_path" == agents ]] || [[ "$relative_path" == agents/* ]] || [[ "$relative_path" == skills ]] || [[ "$relative_path" == skills/* ]] || [[ "$relative_path" == rules ]] || [[ "$relative_path" == rules/* ]]; then
                 continue
             fi
+            # Skip tool runtime artifacts (npm files created by kilo itself, e.g. node_modules)
+            if is_runtime_artifact "$relative_path"; then
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  🔒 Runtime artifact (kept): .kilo/$relative_path"
+                fi
+                continue
+            fi
             local source_file="$dotkilo_source/$relative_path"
             if [[ ! -e "$source_file" && ! -L "$source_file" ]]; then
                 target_only_files+=(".kilo/$relative_path")
@@ -2028,10 +2039,10 @@ cmd_link_opencode() {
             if [[ "$relative_path" == agents ]] || [[ "$relative_path" == agents/* ]] || [[ "$relative_path" == skills ]] || [[ "$relative_path" == skills/* ]] || [[ "$relative_path" == rules ]] || [[ "$relative_path" == rules/* ]] || [[ "$relative_path" == commands ]] || [[ "$relative_path" == commands/* ]]; then
                 continue
             fi
-            # Skip opencode runtime artifacts (npm files created by opencode itself)
-            if is_opencode_runtime_artifact "$relative_path"; then
+            # Skip tool runtime artifacts (npm files created by the tool itself)
+            if is_runtime_artifact "$relative_path"; then
                 if [[ "$VERBOSE" == "true" ]]; then
-                    echo "  🔒 Opencode runtime artifact (kept): .opencode/$relative_path"
+                    echo "  🔒 Runtime artifact (kept): .opencode/$relative_path"
                 fi
                 continue
             fi
