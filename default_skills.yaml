@@ -13,4 +13,5 @@ default_skills:
   - pyenv-poetry-virtual-env
   # - zellij
   - playwright-cli
+  - workout
   # Note: a-template is excluded (it's a template, not meant for production use)
