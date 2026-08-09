@@ -36,6 +36,7 @@ PROJECT_ROOT="$(cd "$SELF_DIR/.." && pwd)"
 CLAUDE_ONLY=false
 KILO_ONLY=false
 OPENCODE_ONLY=false
+AGENTS_ONLY=false
 
 error() {
     echo -e "${RED}Error:${NC} $1" >&2
@@ -68,24 +69,17 @@ Options:
   --claude-only           Show and manage only Claude skills (.claude/skills/)
   --kilo-only            Show and manage only Kilo skills (.kilo/skills/)
   --opencode-only         Show and manage only OpenCode skills (.opencode/skills/)
+  --agents-only           Show and manage only Agents skills (.agents/skills/)
   -h, --help             Show this help message
 
 The interface shows:
-  Status indicators:
-    [✓✓✓] Enabled in Claude, Kilo, and OpenCode
-    [✓✓ ] Enabled in Claude and Kilo
-    [✓ ✓] Enabled in Claude and OpenCode
-    [ ✓✓] Enabled in Kilo and OpenCode
-    [✓  ] Enabled only in Claude
-    [ ✓ ] Enabled only in Kilo
-    [  ✓] Enabled only in OpenCode
-    [   ] Disabled in all
-  When --claude-only is active:
-    [✓]   Enabled in Claude
-  When --kilo-only is active:
-    [✓]   Enabled in Kilo
-  When --opencode-only is active:
-    [✓]   Enabled in OpenCode
+  Status indicators — column legend: C=Claude K=Kilo O=OpenCode A=Agents (✓ = enabled, space = disabled):
+    [C K O A]
+    [✓✓✓✓] Enabled in all four
+    [✓ ✓ ] Enabled in Claude and OpenCode
+    [   ✓] Enabled only in Agents
+    [    ] Disabled in all
+  When a --<agent>-only flag is active, a single [✓]/[ ] is shown for that agent.
 
   Controls:
     [TAB]   Multi-select
@@ -164,6 +158,7 @@ check_skill_status() {
     local claude_enabled=false
     local kilo_enabled=false
     local opencode_enabled=false
+    local agents_enabled=false
 
     if [ -n "$source_path" ]; then
         if [ -L "$PROJECT_ROOT/.claude/skills/$leaf_name" ]; then
@@ -183,9 +178,15 @@ check_skill_status() {
             resolved=$(readlink -f "$PROJECT_ROOT/.opencode/skills/$leaf_name" 2>/dev/null || true)
             [ "$resolved" = "$source_path" ] && opencode_enabled=true
         fi
+
+        if [ -L "$PROJECT_ROOT/.agents/skills/$leaf_name" ]; then
+            local resolved
+            resolved=$(readlink -f "$PROJECT_ROOT/.agents/skills/$leaf_name" 2>/dev/null || true)
+            [ "$resolved" = "$source_path" ] && agents_enabled=true
+        fi
     fi
 
-    echo "$claude_enabled:$kilo_enabled:$opencode_enabled"
+    echo "$claude_enabled:$kilo_enabled:$opencode_enabled:$agents_enabled"
 }
 
 get_skill_description() {
@@ -219,10 +220,8 @@ select_skills() {
         [ -z "$name" ] && continue
         local status
         status=$(check_skill_status "$name")
-        local claude_enabled="${status%%:*}"
-        local rest="${status#*:}"
-        local kilo_enabled="${rest%%:*}"
-        local opencode_enabled="${status##*:}"
+        local claude_enabled kilo_enabled opencode_enabled agents_enabled
+        IFS=':' read -r claude_enabled kilo_enabled opencode_enabled agents_enabled <<< "$status"
 
         local status_str
         if [[ "$CLAUDE_ONLY" == true ]]; then
@@ -231,12 +230,15 @@ select_skills() {
             [[ "$kilo_enabled" == true ]] && status_str="✓" || status_str=" "
         elif [[ "$OPENCODE_ONLY" == true ]]; then
             [[ "$opencode_enabled" == true ]] && status_str="✓" || status_str=" "
+        elif [[ "$AGENTS_ONLY" == true ]]; then
+            [[ "$agents_enabled" == true ]] && status_str="✓" || status_str=" "
         else
-            local c=" " k=" " o=" "
+            local c=" " k=" " o=" " a=" "
             [[ "$claude_enabled" == true ]] && c="✓"
             [[ "$kilo_enabled" == true ]] && k="✓"
             [[ "$opencode_enabled" == true ]] && o="✓"
-            status_str="${c}${k}${o}"
+            [[ "$agents_enabled" == true ]] && a="✓"
+            status_str="${c}${k}${o}${a}"
         fi
 
         local description
@@ -251,11 +253,25 @@ select_skills() {
 
     [ -z "$fzf_input" ] && return
 
+    # Legend correlates with any --<agent>-only filter in effect
+    local legend
+    if [[ "$CLAUDE_ONLY" == true ]]; then
+        legend="[C] Claude"
+    elif [[ "$KILO_ONLY" == true ]]; then
+        legend="[K] Kilo"
+    elif [[ "$OPENCODE_ONLY" == true ]]; then
+        legend="[O] OpenCode"
+    elif [[ "$AGENTS_ONLY" == true ]]; then
+        legend="[A] Agents"
+    else
+        legend="[C K O A] = Claude, Kilo, OpenCode, Agents"
+    fi
+
     local selected
     selected=$(echo "$fzf_input" | fzf \
         --multi \
         --prompt="Select skills: " \
-        --header="[TAB] multi-select | [ENTER] confirm | [ESC] quit" \
+        --header="Status legend: $legend (✓ on) | [TAB] multi-select | [ENTER] confirm | [ESC] quit" \
         --height=~50% \
         --layout=reverse \
         --delimiter=$'\t' \
@@ -333,6 +349,8 @@ execute_enable() {
         args+=(--kilo-only)
     elif [[ "$OPENCODE_ONLY" == true ]]; then
         args+=(--opencode-only)
+    elif [[ "$AGENTS_ONLY" == true ]]; then
+        args+=(--agents-only)
     fi
 
     if "$enable_script" "${args[@]}" 2>&1; then
@@ -354,6 +372,8 @@ execute_disable() {
         args+=(--kilo-only)
     elif [[ "$OPENCODE_ONLY" == true ]]; then
         args+=(--opencode-only)
+    elif [[ "$AGENTS_ONLY" == true ]]; then
+        args+=(--agents-only)
     fi
 
     if "$disable_script" "${args[@]}" 2>&1; then
@@ -368,13 +388,11 @@ execute_toggle() {
     local skill_name="$1"
     local status
     status=$(check_skill_status "$skill_name")
-    local claude_enabled="${status%%:*}"
-    local rest="${status#*:}"
-    local kilo_enabled="${rest%%:*}"
-    local opencode_enabled="${status##*:}"
+    local claude_enabled kilo_enabled opencode_enabled agents_enabled
+    IFS=':' read -r claude_enabled kilo_enabled opencode_enabled agents_enabled <<< "$status"
 
     local any_enabled=false
-    if [[ "$claude_enabled" == true ]] || [[ "$kilo_enabled" == true ]] || [[ "$opencode_enabled" == true ]]; then
+    if [[ "$claude_enabled" == true ]] || [[ "$kilo_enabled" == true ]] || [[ "$opencode_enabled" == true ]] || [[ "$agents_enabled" == true ]]; then
         any_enabled=true
     fi
 
@@ -458,6 +476,9 @@ parse_arguments() {
             --opencode-only)
                 OPENCODE_ONLY=true
                 ;;
+            --agents-only)
+                AGENTS_ONLY=true
+                ;;
             -h|--help)
                 show_help
                 exit "$EXIT_SUCCESS"
@@ -476,16 +497,13 @@ parse_arguments() {
         shift
     done
 
-    if [[ "$CLAUDE_ONLY" == true ]] && [[ "$KILO_ONLY" == true ]]; then
-        error "Options --claude-only and --kilo-only are mutually exclusive"
-        exit "$EXIT_ERROR"
-    fi
-    if [[ "$CLAUDE_ONLY" == true ]] && [[ "$OPENCODE_ONLY" == true ]]; then
-        error "Options --claude-only and --opencode-only are mutually exclusive"
-        exit "$EXIT_ERROR"
-    fi
-    if [[ "$KILO_ONLY" == true ]] && [[ "$OPENCODE_ONLY" == true ]]; then
-        error "Options --kilo-only and --opencode-only are mutually exclusive"
+    local only_count=0
+    if [[ "$CLAUDE_ONLY" == true ]]; then only_count=$((only_count + 1)); fi
+    if [[ "$KILO_ONLY" == true ]]; then only_count=$((only_count + 1)); fi
+    if [[ "$OPENCODE_ONLY" == true ]]; then only_count=$((only_count + 1)); fi
+    if [[ "$AGENTS_ONLY" == true ]]; then only_count=$((only_count + 1)); fi
+    if [ "$only_count" -gt 1 ]; then
+        error "Options --claude-only, --kilo-only, --opencode-only, and --agents-only are mutually exclusive"
         exit "$EXIT_ERROR"
     fi
 }

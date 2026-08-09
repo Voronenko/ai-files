@@ -3,6 +3,7 @@
 # ai-files-skill-disable - Disable a Claude Code skill by removing symlinks
 #
 # This script removes symlinks from .claude/skills/ and/or .kilo/skills/ or .opencode/skills/
+# or .agents/skills/
 #
 # Usage: ai-files-skill-disable <skill-name> [OPTIONS]
 
@@ -34,6 +35,7 @@ PROJECT_ROOT="$(cd "$SELF_DIR/.." && pwd)"
 CLAUDE_ONLY=false
 KILO_ONLY=false
 OPENCODE_ONLY=false
+AGENTS_ONLY=false
 SKILL_NAME=""
 
 error() {
@@ -61,12 +63,14 @@ Options:
   --claude-only           Disable only for Claude (.claude/skills/)
   --kilo-only            Disable only for Kilo (.kilo/skills/)
   --opencode-only         Disable only for OpenCode (.opencode/skills/)
+  --agents-only           Disable only for Agents (.agents/skills/)
   -h, --help             Show this help message
 
 Examples:
   ai-files skill disable adr-tools
   ai-files skill disable lnav --claude-only
   ai-files skill disable graphify --kilo-only
+  ai-files skill disable workout --agents-only
 
 This only removes symlinks; the skill source files in .ai-files/skills/
 or .ai-files/dotclaude/skills/ are preserved.
@@ -165,6 +169,9 @@ parse_arguments() {
             --opencode-only)
                 OPENCODE_ONLY=true
                 ;;
+            --agents-only)
+                AGENTS_ONLY=true
+                ;;
             -h|--help)
                 show_help
                 exit "$EXIT_SUCCESS"
@@ -193,18 +200,13 @@ parse_arguments() {
         exit "$EXIT_ERROR"
     fi
 
-    if [[ "$CLAUDE_ONLY" == true ]] && [[ "$KILO_ONLY" == true ]]; then
-        error "Options --claude-only and --kilo-only are mutually exclusive"
-        exit "$EXIT_ERROR"
-    fi
-
-    if [[ "$CLAUDE_ONLY" == true ]] && [[ "$OPENCODE_ONLY" == true ]]; then
-        error "Options --claude-only and --opencode-only are mutually exclusive"
-        exit "$EXIT_ERROR"
-    fi
-
-    if [[ "$KILO_ONLY" == true ]] && [[ "$OPENCODE_ONLY" == true ]]; then
-        error "Options --kilo-only and --opencode-only are mutually exclusive"
+    local only_count=0
+    if [[ "$CLAUDE_ONLY" == true ]]; then only_count=$((only_count + 1)); fi
+    if [[ "$KILO_ONLY" == true ]]; then only_count=$((only_count + 1)); fi
+    if [[ "$OPENCODE_ONLY" == true ]]; then only_count=$((only_count + 1)); fi
+    if [[ "$AGENTS_ONLY" == true ]]; then only_count=$((only_count + 1)); fi
+    if [ "$only_count" -gt 1 ]; then
+        error "Options --claude-only, --kilo-only, --opencode-only, and --agents-only are mutually exclusive"
         exit "$EXIT_ERROR"
     fi
 }
@@ -226,32 +228,40 @@ main() {
     local claude_disabled=false
     local kilo_disabled=false
     local opencode_disabled=false
+    local agents_disabled=false
 
     # Disable in Claude
-    if [[ "$KILO_ONLY" != true ]] && [[ "$OPENCODE_ONLY" != true ]]; then
+    if [[ "$KILO_ONLY" != true ]] && [[ "$OPENCODE_ONLY" != true ]] && [[ "$AGENTS_ONLY" != true ]]; then
         if disable_skill_in_dir "$skill_source" "$PROJECT_ROOT/.claude/skills"; then
             claude_disabled=true
         fi
     fi
 
     # Disable in Kilo
-    if [[ "$CLAUDE_ONLY" != true ]] && [[ "$OPENCODE_ONLY" != true ]]; then
+    if [[ "$CLAUDE_ONLY" != true ]] && [[ "$OPENCODE_ONLY" != true ]] && [[ "$AGENTS_ONLY" != true ]]; then
         if disable_skill_in_dir "$skill_source" "$PROJECT_ROOT/.kilo/skills"; then
             kilo_disabled=true
         fi
     fi
 
     # Disable in OpenCode
-    if [[ "$CLAUDE_ONLY" != true ]] && [[ "$KILO_ONLY" != true ]]; then
+    if [[ "$CLAUDE_ONLY" != true ]] && [[ "$KILO_ONLY" != true ]] && [[ "$AGENTS_ONLY" != true ]]; then
         if disable_skill_in_dir "$skill_source" "$PROJECT_ROOT/.opencode/skills"; then
             opencode_disabled=true
+        fi
+    fi
+
+    # Disable in Agents
+    if [[ "$CLAUDE_ONLY" != true ]] && [[ "$KILO_ONLY" != true ]] && [[ "$OPENCODE_ONLY" != true ]]; then
+        if disable_skill_in_dir "$skill_source" "$PROJECT_ROOT/.agents/skills"; then
+            agents_disabled=true
         fi
     fi
 
     echo ""
 
     # Check if anything was disabled
-    if [[ "$claude_disabled" == false ]] && [[ "$kilo_disabled" == false ]] && [[ "$opencode_disabled" == false ]]; then
+    if [[ "$claude_disabled" == false ]] && [[ "$kilo_disabled" == false ]] && [[ "$opencode_disabled" == false ]] && [[ "$agents_disabled" == false ]]; then
         info "Skill was not linked in any target directory"
         exit "$EXIT_SUCCESS"
     fi
