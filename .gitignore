@@ -1,4 +1,5 @@
 # local exploration clones
+.agents
 ai-files-*.zip
 bin/goose
 bin/opencode

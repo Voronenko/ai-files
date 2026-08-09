@@ -5,7 +5,7 @@
       "Bash(terraform validate:*)",
       "Bash(terraform fmt:*)",
       "Edit(./ai-files/sessions/**)",
-      "Bash(grep *"),
+      "Bash(grep *)",
       "Bash(xargs ls *)",
       "Bash(.specify/scripts/bash/*:*)",
       "WebSearch",

@@ -16,30 +16,37 @@ clean:
 	mkdir -p ./dist/.ai-files/dotclaude/commands
 	# opencode support
 	mkdir -p ./dist/.ai-files/dotopencode/commands
+	# agents support
+	mkdir -p ./dist/.ai-files/dotagents/commands
 	# Create empty skills directories (will be populated with individual symlinks later)
 	# dotclaude/skills is populated by publish-spec-kit-claude
 	mkdir -p dist/.ai-files/dotkilo/skills
 	mkdir -p dist/.ai-files/dotclaude/skills
 	mkdir -p dist/.ai-files/dotopencode/skills
+	mkdir -p dist/.ai-files/dotagents/skills
 	# create symlinks from hidden names to visible directories (relative symlinks)
 	ln -sfn .ai-files/dotkilo dist/.kilo
 	ln -sfn .ai-files/dotclaude dist/.claude
 	ln -sfn .ai-files/dotspecify dist/.specify
 	ln -sfn .ai-files/dotopencode dist/.opencode
+	ln -sfn .ai-files/dotagents dist/.agents
 	# ai-files repo uses own dist
 	ln -sfn dist/.kilo .kilo
 	ln -sfn dist/.claude   .claude
 	ln -sfn dist/.opencode .opencode
+	ln -sfn dist/.agents .agents
 relink-from-dist:
 	# create symlinks from hidden names to visible directories (relative symlinks)
 	ln -sfn .ai-files/dotkilo dist/.kilo
 	ln -sfn .ai-files/dotclaude dist/.claude
 	ln -sfn .ai-files/dotspecify dist/.specify
 	ln -sfn .ai-files/dotopencode dist/.opencode
+	ln -sfn .ai-files/dotagents dist/.agents
 	# ai-files repo uses own dist
 	ln -sfn dist/.kilo .kilo
 	ln -sfn dist/.claude   .claude
 	ln -sfn dist/.opencode .opencode
+	ln -sfn dist/.agents .agents
 
 
 prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prompts
@@ -57,6 +64,10 @@ prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prom
 	# opencode specific configs
 	@if [ -d "config/opencode" ]; then \
 		cp -r config/opencode/* ./dist/.ai-files/dotopencode/; \
+	fi
+	# agents specific configs
+	@if [ -d "config/agents" ]; then \
+		cp -r config/agents/* ./dist/.ai-files/dotagents/; \
 	fi
 	cp -r rules ./dist/.ai-files/
 	# unified skills
@@ -132,16 +143,16 @@ _link-default-skills:
 	done; \
 	echo "  ✅ Linked $$(echo $$DEFAULT_SKILLS | wc -w) skills"
 
-# Populate dotkilo/skills/ and dotopencode/skills/ with individual symlinks
+# Populate dotkilo/skills/, dotopencode/skills/ and dotagents/skills/ with individual symlinks
 # to dist/.ai-files/skills/, filtered by default_skills.yaml
 _link-dot-dir-skills:
-	@echo "Linking skills to dotkilo/skills/ and dotopencode/skills/..."
+	@echo "Linking skills to dotkilo/skills/, dotopencode/skills/ and dotagents/skills/..."
 	@DEFAULT_SKILLS=$$(make --no-print-directory get-default-skills 2>/dev/null); \
 	if [ -z "$$DEFAULT_SKILLS" ]; then \
 		echo "  ⚠️  No default_skills.yaml, using all skills"; \
 		DEFAULT_SKILLS=$$(find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -exec basename {} \;); \
 	fi; \
-	for dir in dotkilo dotopencode; do \
+	for dir in dotkilo dotopencode dotagents; do \
 		for skill in $$DEFAULT_SKILLS; do \
 			if [ -e "dist/.ai-files/skills/$$skill" ]; then \
 				ln -sfr "dist/.ai-files/skills/$$skill" "dist/.ai-files/$$dir/skills/$$skill" 2>/dev/null; \
@@ -188,19 +199,30 @@ create-default-symlinks:
 			fi; \
 		done; \
 		cd - >/dev/null; \
+		cd dist/.agents/skills && \
+		for item in *; do \
+			if [ "$$item" != "*" ] && [ -e "$$item" ]; then \
+				if ! echo "$$DEFAULT_SKILLS" | grep -q "$$item"; then \
+					rm -rf "$$item" 2>/dev/null; \
+				fi; \
+			fi; \
+		done; \
+		cd - >/dev/null; \
 		echo "  ✅ Filtered to default skills"; \
 	fi
 
 create-symlinks:
-	@echo "Creating .claude/, .kilo/, and .opencode directories with symlinks..."
+	@echo "Creating .claude/, .kilo/, .opencode, and .agents directories with symlinks..."
 	# Create directories (remove symlinks if they exist)
 	@if [ -L "dist/.claude" ]; then rm "dist/.claude"; fi
 	@if [ -L "dist/.kilo" ]; then rm "dist/.kilo"; fi
 	@if [ -L "dist/.specify" ]; then rm "dist/.specify"; fi
 	@if [ -L "dist/.opencode" ]; then rm "dist/.opencode"; fi
+	@if [ -L "dist/.agents" ]; then rm "dist/.agents"; fi
 	@mkdir -p dist/.claude/commands dist/.claude/skills dist/.claude/agents
 	@mkdir -p dist/.kilo/commands dist/.kilo/skills dist/.kilo/agents dist/.kilo/rules
 	@mkdir -p dist/.opencode/commands dist/.opencode/skills dist/.opencode/agents dist/.opencode/rules
+	@mkdir -p dist/.agents/commands dist/.agents/skills dist/.agents/agents dist/.agents/rules
 	# Create file-level symlinks for .claude/commands/
 	@find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
 		for f do \
@@ -371,9 +393,62 @@ create-symlinks:
 			done \
 		' sh {} +; \
 	fi
+	# Same for .agents/
+	@find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.agents/commands/$$base"; \
+		done \
+	' sh {} +
+	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.agents/skills/$$base"; \
+		done \
+	' sh {} +
+	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type d -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.agents/skills/$$base"; \
+		done \
+	' sh {} +
+	# Create file-level symlinks for .agents/agents/
+	@if [ -d "dist/.ai-files/agents" ]; then \
+		find dist/.ai-files/agents -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.agents/agents/$$base"; \
+			done \
+		' sh {} +; \
+	fi
+	# Create dir-level symlinks for .agents/agents/
+	@if [ -d "dist/.ai-files/agents" ]; then \
+		find dist/.ai-files/agents -mindepth 1 -maxdepth 1 -type d -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.agents/agents/$$base"; \
+			done \
+		' sh {} +; \
+	fi
+	@find dist/.ai-files/rules -mindepth 1 -maxdepth 1 -exec sh -c '\
+		for f do \
+			base=$$(basename "$$f"); \
+			ln -sfr "$$f" "dist/.agents/rules/$$base"; \
+		done \
+	' sh {} +
+	# Link everything from dist/.ai-files/dotagents/ to dist/.agents/
+	@if [ -d "dist/.ai-files/dotagents" ]; then \
+		find dist/.ai-files/dotagents -mindepth 1 -maxdepth 1 ! -name "skills" ! -name "commands" ! -name "rules" ! -name "agents" -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfn "$$f" "dist/.agents/$$base"; \
+			done \
+		' sh {} +; \
+	fi
 	@ln -sfn dist/.kilo .kilo
 	@ln -sfn dist/.claude .claude
 	@ln -sfn dist/.opencode .opencode
+	@ln -sfn dist/.agents .agents
 	@ln -sfn dist/.specify .specify
 	# Recreate dist/.specify symlink (removed at start of create-symlinks)
 	@ln -sfn .ai-files/dotspecify dist/.specify
@@ -528,12 +603,15 @@ publish-memory-bank:
 	@echo "Creating memory bank directories for each agent..."
 	@mkdir -p ./dist/.ai-files/dotkilo/rules/memory-bank
 	@mkdir -p ./dist/.ai-files/dotopencode/rules/memory-bank
+	@mkdir -p ./dist/.ai-files/dotagents/rules/memory-bank
 	@echo "Copying memory bank instructions to agent directories..."
 	@cp "prompts/memory-bank-instructions.md" "./dist/.ai-files/dotkilo/rules/memory-bank/"
 	@cp "prompts/memory-bank-instructions.md" "./dist/.ai-files/dotopencode/rules/memory-bank/"
+	@cp "prompts/memory-bank-instructions.md" "./dist/.ai-files/dotagents/rules/memory-bank/"
 	@echo "✅ Memory bank successfully published to all agent directories:"
 	@echo "   • ./dist/.ai-files/dotkilo/rules/memory-bank/"
 	@echo "   • ./dist/.ai-files/dotopencode/rules/memory-bank/"
+	@echo "   • ./dist/.ai-files/dotagents/rules/memory-bank/"
 
 
 ## Common tools installation routines
@@ -1015,6 +1093,44 @@ release:
 	echo "   Tag: $$RELEASE_TAG"; \
 	echo "   URL: $$(gh release view $$RELEASE_TAG --json url -q .url)"
 
+install-cli-prime-agent:
+	@set -eu; \
+	PRIME_AGENT_DOWNLOAD_BASE_URL="$${PRIME_AGENT_DOWNLOAD_BASE_URL:-https://pub-728493de92a943e2a9b2d17b4719f318.r2.dev}"; \
+	PRIME_AGENT_RELEASE_CHANNEL="$${PRIME_AGENT_RELEASE_CHANNEL:-stable}"; \
+	PRIME_AGENT_PACKAGE="$${PRIME_AGENT_PACKAGE:-prime-agent}"; \
+	PRIME_AGENT_CMD="$${PRIME_AGENT_CMD:-prime-agent}"; \
+	command -v curl >/dev/null 2>&1 || { echo "error: curl is required"; exit 1; }; \
+	command -v sha256sum >/dev/null 2>&1 || { echo "error: sha256sum is required"; exit 1; }; \
+	command -v npm >/dev/null 2>&1 || { echo "error: npm is required"; exit 1; }; \
+	command -v node >/dev/null 2>&1 || { echo "error: Node.js >= 20.6.0 is required"; exit 1; }; \
+	node -e 'const [a,b,c]=process.versions.node.split(".").map(Number); process.exit(a > 20 || (a === 20 && (b > 6 || (b === 6 && c >= 0))) ? 0 : 1)' \
+		|| { echo "error: Node.js >= 20.6.0 is required; found $$(node --version)"; exit 1; }; \
+	tmp_dir="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmp_dir"' EXIT INT TERM; \
+	base_url="$${PRIME_AGENT_DOWNLOAD_BASE_URL%/}"; \
+	channel="$${PRIME_AGENT_RELEASE_CHANNEL}"; \
+	echo "Resolving Prime Agent $$channel release..."; \
+	version="$$(curl -fsSL "$$base_url/$$channel" | tr -d '[:space:]')"; \
+	version="$${version#v}"; \
+	test -n "$$version" || { echo "error: could not resolve Prime Agent version"; exit 1; }; \
+	case "$$version" in \
+		*[!0-9A-Za-z.-]*) echo "error: invalid Prime Agent version: $$version"; exit 1 ;; \
+	esac; \
+	tarball="$$(printf '%s-%s.tgz' "$${PRIME_AGENT_PACKAGE}" "$$version")"; \
+	release_url="$$base_url/releases/v$$version"; \
+	echo "Downloading Prime Agent v$$version..."; \
+	curl -fsSL "$$release_url/SHA256SUMS" -o "$$tmp_dir/SHA256SUMS"; \
+	curl -fsSL "$$release_url/$$tarball" -o "$$tmp_dir/$$tarball"; \
+	awk -v file="$$tarball" '$$2 == file { print; found=1; exit } END { if (!found) exit 1 }' \
+		"$$tmp_dir/SHA256SUMS" > "$$tmp_dir/SHA256SUMS.selected" \
+		|| { echo "error: checksum for $$tarball not found"; exit 1; }; \
+	(cd "$$tmp_dir" && sha256sum -c SHA256SUMS.selected); \
+	echo "Installing Prime Agent v$$version..."; \
+	PRIME_AGENT_BOOTSTRAP_TOOLS_ON_INSTALL=1 \
+	PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL=1 \
+	PRIME_AGENT_INSTALL_UV=0 \
+	npm install -g --no-fund --no-audit --loglevel=error --progress=false "$$tmp_dir/$$tarball"; \
+	echo "Prime Agent installed: $$(command -v "$${PRIME_AGENT_CMD}" || true)"
 
 
 ### Orchestration
@@ -1022,3 +1138,4 @@ release:
 
 install-opencode-ohmy-slim:
 	bunx oh-my-opencode-slim@latest install
+

@@ -4,7 +4,7 @@
   "presets": {
     "deepseek-zai": {
       "orchestrator": {
-        "model": "deepseek-v4-pro",
+        "model": "deepseek/deepseek-v4-pro",
         "variant": "high",
         "skills": ["*", "!make-interfaces-feel-better"],
         "mcps": ["*", "!context7", "!gh_app", "!repo_memory"]

@@ -43,7 +43,7 @@ SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 SOURCE_DIR="${SELF_DIR}/../dist"
 
 # Target directories to update (for files subcommand)
-TARGET_DIRS=(".ai-files" ".claude" ".kilo" ".opencode")
+TARGET_DIRS=(".ai-files" ".claude" ".kilo" ".opencode" ".agents")
 
 # Folders that should be merged (not fully replaced) within target directories
 MERGE_FOLDERS=("commands" "hooks" "skills" "rules")
@@ -1010,9 +1010,9 @@ cmd_files() {
             fi
         done
 
-        # Also process symlinks in dot* subdirectories (dotclaude, dotkilo)
+        # Also process symlinks in dot* subdirectories (dotclaude, dotkilo, dotagents)
         # These contain symlinks that need to be preserved
-        for dotdir in dotclaude dotkilo dotopencode; do
+        for dotdir in dotclaude dotkilo dotopencode dotagents; do
             local dotdir_src="$src_path/$dotdir"
             local dotdir_dest="$dest_path/$dotdir"
 
