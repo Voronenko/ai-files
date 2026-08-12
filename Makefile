@@ -1132,6 +1132,49 @@ install-cli-prime-agent:
 	npm install -g --no-fund --no-audit --loglevel=error --progress=false "$$tmp_dir/$$tarball"; \
 	echo "Prime Agent installed: $$(command -v "$${PRIME_AGENT_CMD}" || true)"
 
+install-cli-pi-agent:
+	@set -eu; \
+	MAKEFILE_DIR="$$(cd "$$(dirname "$$(realpath "$(lastword $(MAKEFILE_LIST))")")" && pwd)"; \
+	INSTALL_DIR="$$MAKEFILE_DIR/bin"; \
+	if command -v pi >/dev/null 2>&1; then \
+		echo "pi already installed: $$(command -v pi)"; \
+		pi --version || true; \
+		exit 0; \
+	fi; \
+	OS="$$(uname -s | tr '[:upper:]' '[:lower:]')"; \
+	ARCH="$$(uname -m)"; \
+	case "$$OS/$$ARCH" in \
+		darwin/arm64)  ASSET="pi-darwin-arm64.tar.gz" ;; \
+		darwin/x86_64) ASSET="pi-darwin-x64.tar.gz" ;; \
+		linux/x86_64)  ASSET="pi-linux-x64.tar.gz" ;; \
+		linux/aarch64) ASSET="pi-linux-arm64.tar.gz" ;; \
+		*) ASSET="" ;; \
+	esac; \
+	if [ -n "$$ASSET" ] && command -v curl >/dev/null 2>&1; then \
+		echo "Installing Pi binary ($$ASSET)..."; \
+		TMP="$$(mktemp -d)"; \
+		trap 'rm -rf "$$TMP"' EXIT; \
+		if curl -fsSL \
+			"https://github.com/badlogic/pi-mono/releases/latest/download/$$ASSET" \
+			-o "$$TMP/pi.tar.gz"; then \
+			mkdir -p "$$INSTALL_DIR"; \
+			tar -xzf "$$TMP/pi.tar.gz" -C "$$TMP"; \
+			if [ -d "$$TMP/pi" ]; then \
+				PI_SRC="$$TMP/pi"; \
+			else \
+				PI_SRC="$$TMP"; \
+			fi; \
+			install -m 0755 "$$PI_SRC/pi" "$$INSTALL_DIR/pi"; \
+			for wasm in "$$PI_SRC"/*.wasm; do \
+				if [ -f "$$wasm" ]; then \
+					cp -a "$$wasm" "$$INSTALL_DIR/"; \
+				fi; \
+			done; \
+			echo "Installed: $$INSTALL_DIR/pi"; \
+			exit 0; \
+		fi; \
+		echo "Binary unavailable, falling back to official installer..."; \
+	fi;
 
 ### Orchestration
 

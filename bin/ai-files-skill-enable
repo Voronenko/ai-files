@@ -3,7 +3,7 @@
 # ai-files-skill-enable - Enable a Claude Code skill by creating symlinks
 #
 # This script creates symlinks from .claude/skills/ and/or .kilo/skills/ or .opencode/skills/
-# to skills in .ai-files/skills/ or .ai-files/dotclaude/skills/
+# or .agents/skills/ to skills in .ai-files/skills/ or .ai-files/dotclaude/skills/
 #
 # Usage: ai-files-skill-enable <skill-name> [OPTIONS]
 
@@ -34,6 +34,7 @@ PROJECT_ROOT="$(cd "$SELF_DIR/.." && pwd)"
 CLAUDE_ONLY=false
 KILO_ONLY=false
 OPENCODE_ONLY=false
+AGENTS_ONLY=false
 SKILL_NAME=""
 
 error() {
@@ -61,12 +62,14 @@ Options:
   --claude-only           Enable only for Claude (.claude/skills/)
   --kilo-only            Enable only for Kilo (.kilo/skills/)
   --opencode-only         Enable only for OpenCode (.opencode/skills/)
+  --agents-only           Enable only for Agents (.agents/skills/)
   -h, --help             Show this help message
 
 Examples:
   ai-files skill enable adr-tools
   ai-files skill enable lnav --claude-only
   ai-files skill enable graphify --kilo-only
+  ai-files skill enable workout --agents-only
 
 Skills are sourced from:
   - .ai-files/skills/
@@ -187,6 +190,9 @@ parse_arguments() {
             --opencode-only)
                 OPENCODE_ONLY=true
                 ;;
+            --agents-only)
+                AGENTS_ONLY=true
+                ;;
             -h|--help)
                 show_help
                 exit "$EXIT_SUCCESS"
@@ -215,18 +221,13 @@ parse_arguments() {
         exit "$EXIT_ERROR"
     fi
 
-    if [[ "$CLAUDE_ONLY" == true ]] && [[ "$KILO_ONLY" == true ]]; then
-        error "Options --claude-only and --kilo-only are mutually exclusive"
-        exit "$EXIT_ERROR"
-    fi
-
-    if [[ "$CLAUDE_ONLY" == true ]] && [[ "$OPENCODE_ONLY" == true ]]; then
-        error "Options --claude-only and --opencode-only are mutually exclusive"
-        exit "$EXIT_ERROR"
-    fi
-
-    if [[ "$KILO_ONLY" == true ]] && [[ "$OPENCODE_ONLY" == true ]]; then
-        error "Options --kilo-only and --opencode-only are mutually exclusive"
+    local only_count=0
+    if [[ "$CLAUDE_ONLY" == true ]]; then only_count=$((only_count + 1)); fi
+    if [[ "$KILO_ONLY" == true ]]; then only_count=$((only_count + 1)); fi
+    if [[ "$OPENCODE_ONLY" == true ]]; then only_count=$((only_count + 1)); fi
+    if [[ "$AGENTS_ONLY" == true ]]; then only_count=$((only_count + 1)); fi
+    if [ "$only_count" -gt 1 ]; then
+        error "Options --claude-only, --kilo-only, --opencode-only, and --agents-only are mutually exclusive"
         exit "$EXIT_ERROR"
     fi
 }
@@ -257,18 +258,23 @@ main() {
     echo "Enabling skill: $SKILL_NAME"
 
     # Enable in Claude
-    if [[ "$KILO_ONLY" != true ]] && [[ "$OPENCODE_ONLY" != true ]]; then
+    if [[ "$KILO_ONLY" != true ]] && [[ "$OPENCODE_ONLY" != true ]] && [[ "$AGENTS_ONLY" != true ]]; then
         enable_skill_in_dir "$SKILL_NAME" "$skill_source" "$PROJECT_ROOT/.claude/skills"
     fi
 
     # Enable in Kilo
-    if [[ "$CLAUDE_ONLY" != true ]] && [[ "$OPENCODE_ONLY" != true ]]; then
+    if [[ "$CLAUDE_ONLY" != true ]] && [[ "$OPENCODE_ONLY" != true ]] && [[ "$AGENTS_ONLY" != true ]]; then
         enable_skill_in_dir "$SKILL_NAME" "$skill_source" "$PROJECT_ROOT/.kilo/skills"
     fi
 
     # Enable in OpenCode
-    if [[ "$CLAUDE_ONLY" != true ]] && [[ "$KILO_ONLY" != true ]]; then
+    if [[ "$CLAUDE_ONLY" != true ]] && [[ "$KILO_ONLY" != true ]] && [[ "$AGENTS_ONLY" != true ]]; then
         enable_skill_in_dir "$SKILL_NAME" "$skill_source" "$PROJECT_ROOT/.opencode/skills"
+    fi
+
+    # Enable in Agents
+    if [[ "$CLAUDE_ONLY" != true ]] && [[ "$KILO_ONLY" != true ]] && [[ "$OPENCODE_ONLY" != true ]]; then
+        enable_skill_in_dir "$SKILL_NAME" "$skill_source" "$PROJECT_ROOT/.agents/skills"
     fi
 
     echo ""

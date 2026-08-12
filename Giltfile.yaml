@@ -232,3 +232,60 @@ repositories:
         dstDir: vendor/skills/ayghri/i-have-adhd
       - src: hooks
         dstDir: vendor/skills/ayghri/hooks
+
+  # mattpocock/skills — engineering + productivity skills
+  - git: https://github.com/mattpocock/skills.git
+    version: main
+    sources:
+      # Engineering skills
+      - src: skills/engineering/ask-matt
+        dstDir: vendor/skills/mattpocock/ask-matt
+      - src: skills/engineering/code-review
+        dstDir: vendor/skills/mattpocock/code-review
+      - src: skills/engineering/codebase-design
+        dstDir: vendor/skills/mattpocock/codebase-design
+      - src: skills/engineering/diagnosing-bugs
+        dstDir: vendor/skills/mattpocock/diagnosing-bugs
+      - src: skills/engineering/domain-modeling
+        dstDir: vendor/skills/mattpocock/domain-modeling
+      - src: skills/engineering/grill-with-docs
+        dstDir: vendor/skills/mattpocock/grill-with-docs
+      - src: skills/engineering/implement
+        dstDir: vendor/skills/mattpocock/implement
+      - src: skills/engineering/improve-codebase-architecture
+        dstDir: vendor/skills/mattpocock/improve-codebase-architecture
+      - src: skills/engineering/prototype
+        dstDir: vendor/skills/mattpocock/prototype
+      - src: skills/engineering/research
+        dstDir: vendor/skills/mattpocock/research
+      - src: skills/engineering/resolving-merge-conflicts
+        dstDir: vendor/skills/mattpocock/resolving-merge-conflicts
+      - src: skills/engineering/setup-matt-pocock-skills
+        dstDir: vendor/skills/mattpocock/setup-matt-pocock-skills
+      - src: skills/engineering/tdd
+        dstDir: vendor/skills/mattpocock/tdd
+      - src: skills/engineering/to-spec
+        dstDir: vendor/skills/mattpocock/to-spec
+      - src: skills/engineering/to-tickets
+        dstDir: vendor/skills/mattpocock/to-tickets
+      - src: skills/engineering/triage
+        dstDir: vendor/skills/mattpocock/triage
+      - src: skills/engineering/wayfinder
+        dstDir: vendor/skills/mattpocock/wayfinder
+      - src: skills/engineering/wizard
+        dstDir: vendor/skills/mattpocock/wizard
+      # Productivity skills
+      - src: skills/productivity/grill-me
+        dstDir: vendor/skills/mattpocock/grill-me
+      - src: skills/productivity/grilling
+        dstDir: vendor/skills/mattpocock/grilling
+      - src: skills/productivity/handoff
+        dstDir: vendor/skills/mattpocock/handoff
+      - src: skills/productivity/teach
+        dstDir: vendor/skills/mattpocock/teach
+      - src: skills/productivity/to-questionnaire
+        dstDir: vendor/skills/mattpocock/to-questionnaire
+      - src: skills/productivity/wait-what
+        dstDir: vendor/skills/mattpocock/wait-what
+      - src: skills/productivity/writing-for-agents
+        dstDir: vendor/skills/mattpocock/writing-for-agents

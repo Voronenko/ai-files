@@ -1,11 +1,14 @@
 # local exploration clones
+# pi binary + wasm assets (installed via `make install-cli-pi-agent`)
 .agents
 ai-files-*.zip
 bin/goose
 bin/opencode
+bin/pi
 bin/reasonix
 bin/reasonix-cli
 bin/rtk
+bin/*.wasm
 .cache
 .claude
 dist/*
