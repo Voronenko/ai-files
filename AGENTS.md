@@ -5,6 +5,22 @@ Call me 🦝 every time you reply.
 ## Agent configuration files
 When checking for rules, and other agent specific configuration files, check relative path under .ai-files/ dir first under the project root.
 
+## Repository Planning Policy
+
+Repository-local plans are mandatory.
+
+When a task requires planning, Claude MUST create the plan as a Markdown file under plans directory: `.ai-files/memory-bank/plans/`
+The `.ai-files/memory-bank/plans/` directory is relative to the repository root.
+
+Rules:
+- Never put repository plans in `/tmp`, `~/.claude`, or another external directory.
+- Create plans directory if it does not exist.
+- Use one plan file per substantial task.
+- Use descriptive filenames such as `plans/<task-name>.md`. If ticket number is known, specify it too.
+- Before implementation, ensure the plan exists and is up to date.
+- During implementation, update the plan when the approach or scope changes.
+- At the end, mark completed steps and record any deviations.
+
 ## Working with files
 When working with codebase, answering code questions, use instructions from .ai-files/COMMON_CODE_TASKS.md for efficient way of working with code.
 
