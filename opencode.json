@@ -24,7 +24,11 @@
       "git tag": "allow",
       "mv": "ask",
       "rm": "ask"
-    }
+    },
+    "edit": {
+      ".ai-files/**": "allow"
+    },
+    "repo-memory_*": "allow"
   },
   "lsp": true,
   "mcp": {

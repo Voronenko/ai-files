@@ -1032,6 +1032,9 @@ install-mcp-memory-service:
 	pipx mcp-memory-service
 	pipx inject mcp-memory-service onnxruntime
 
+install-mcp-ssh-manager:
+	npm install -g mcp-ssh-manager
+
 install-cli-to-local-bin:
 	@set -e; \
 	SRC="$(PWD)/bin/ai-files"; \

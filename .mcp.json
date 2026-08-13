@@ -11,7 +11,37 @@
         "MCP_MEMORY_STORAGE_BACKEND": "sqlite_vec",
         "MCP_ALLOW_ANONYMOUS_ACCESS": "true",
         "PYTHONUNBUFFERED": "1"
-      }
+      },
+      "autoApprove": [
+        "mcp__repo-memory__memory_store",
+        "mcp__repo-memory__memory_store_session",
+        "mcp__repo-memory__memory_list",
+        "mcp__repo-memory__memory_search",
+        "mcp__repo-memory__memory_detail",
+        "mcp__repo-memory__memory_explore",
+        "mcp__repo-memory__memory_update",
+        "mcp__repo-memory__memory_delete",
+        "mcp__repo-memory__memory_graph",
+        "mcp__repo-memory__memory_ingest",
+        "mcp__repo-memory__memory_harvest",
+        "mcp__repo-memory__memory_distill",
+        "mcp__repo-memory__memory_consolidate",
+        "mcp__repo-memory__memory_cleanup",
+        "mcp__repo-memory__memory_conflicts",
+        "mcp__repo-memory__memory_resolve",
+        "mcp__repo-memory__unquarantine_memory",
+        "mcp__repo-memory__get_quarantined_memories",
+        "mcp__repo-memory__memory_quality",
+        "mcp__repo-memory__memory_health",
+        "mcp__repo-memory__memory_stats",
+        "mcp__repo-memory__mistake_note_add",
+        "mcp__repo-memory__mistake_note_search",
+        "mcp__repo-memory__mistake_note_update",
+        "mcp__repo-memory__mistake_note_delete",
+        "mcp__repo-memory__commit_session_legacy",
+        "mcp__repo-memory__get_bootstrap_profile",
+        "mcp__repo-memory__get_onboarding_guide"
+      ]
     }
   }
 }
