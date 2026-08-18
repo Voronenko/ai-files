@@ -114,6 +114,7 @@ build: prepare-dist prepare-claude _link-dot-dir-skills create-default-symlinks
 	echo build completed
 
 # Helper: Read default skills from YAML, output space-separated list
+# Entries are bare names for own skills, namespace/skill for vendored ones
 get-default-skills:
 	@if [ ! -f "default_skills.yaml" ]; then \
 		echo "" >&2; \
@@ -122,44 +123,57 @@ get-default-skills:
 	@if command -v yq >/dev/null 2>&1; then \
 		yq eval '.default_skills[]' default_skills.yaml 2>/dev/null | tr '\n' ' ' | sed 's/ *$$//'; \
 	else \
-		grep -E '^\s+-\s+[a-zA-Z0-9_-]+' default_skills.yaml 2>/dev/null | \
+		grep -E '^\s+-\s+[a-zA-Z0-9_/.-]+' default_skills.yaml 2>/dev/null | \
 			sed 's/^\s*-\s*//' | tr '\n' ' ' | sed 's/ *$$//'; \
 	fi
 
-# Helper: Link default skills from config to both .claude and .kilo
-_link-default-skills:
-	@echo "Linking default skills..."
-	@mkdir -p dist/.claude/skills dist/.kilo/skills
-	@DEFAULT_SKILLS=$$(make --no-print-directory get-default-skills 2>/dev/null); \
-	if [ -z "$$DEFAULT_SKILLS" ]; then \
-		echo "  ⚠️  Using all skills (default_skills.yaml not found or empty)"; \
-		DEFAULT_SKILLS=$$(find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -exec basename {} \;); \
-	fi; \
-	for skill in $$DEFAULT_SKILLS; do \
-		if [ -e "dist/.ai-files/skills/$$skill" ]; then \
-			ln -sfr "dist/.ai-files/skills/$$skill" "dist/.claude/skills/$$skill" 2>/dev/null; \
-			ln -sfr "dist/.ai-files/skills/$$skill" "dist/.kilo/skills/$$skill" 2>/dev/null; \
-		fi \
+# Shared skill resolver: turns default_skills.yaml entries into link:src pairs.
+#   bare 'foo'   -> 'foo:foo'      (own skill, keeps bare name)
+#   'ns/foo'     -> 'foo:ns/foo', or 'foo-ns:ns/foo' when the bare name collides
+# Collisions are computed over the full inventory (own depth-1 + vendor depth-2
+# dirs containing SKILL.md), so link names never depend on which entries are listed.
+define RESOLVE_SKILLS
+resolve_skills() { \
+	local root="$$1"; \
+	local colliding; \
+	colliding=$$(cd "$$root" && find . -mindepth 2 -maxdepth 3 -name SKILL.md \
+		| sed 's|^\./||; s|/SKILL.md$$||' | awk -F/ '{print $$NF}' | sort | uniq -d); \
+	for e in $$2; do \
+		case "$$e" in \
+			*/*) ns="$${e%%/*}"; name="$${e##*/}";; \
+			*) ns=""; name="$$e";; \
+		esac; \
+		link="$$name"; \
+		if [ -n "$$ns" ] && echo "$$colliding" | grep -qx "$$name"; then \
+			link="$$name-$$ns"; \
+		fi; \
+		if [ -e "$$root/$$e" ]; then echo "$$link:$$e"; fi; \
 	done; \
-	echo "  ✅ Linked $$(echo $$DEFAULT_SKILLS | wc -w) skills"
+}
+all_skill_entries() { \
+	cd "$$1" && find . -mindepth 2 -maxdepth 3 -name SKILL.md \
+		| sed 's|^\./||; s|/SKILL.md$$||'; \
+}
+endef
+export RESOLVE_SKILLS
 
 # Populate dotkilo/skills/, dotopencode/skills/ and dotagents/skills/ with individual symlinks
-# to dist/.ai-files/skills/, filtered by default_skills.yaml
+# to dist/.ai-files/skills/ (own skills and vendored ns/skill), filtered by default_skills.yaml
 _link-dot-dir-skills:
 	@echo "Linking skills to dotkilo/skills/, dotopencode/skills/ and dotagents/skills/..."
-	@DEFAULT_SKILLS=$$(make --no-print-directory get-default-skills 2>/dev/null); \
+	@eval "$$RESOLVE_SKILLS"; \
+	DEFAULT_SKILLS=$$(make --no-print-directory get-default-skills 2>/dev/null); \
 	if [ -z "$$DEFAULT_SKILLS" ]; then \
 		echo "  ⚠️  No default_skills.yaml, using all skills"; \
-		DEFAULT_SKILLS=$$(find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -exec basename {} \;); \
+		DEFAULT_SKILLS=$$(all_skill_entries dist/.ai-files/skills); \
 	fi; \
-	for dir in dotkilo dotopencode dotagents; do \
-		for skill in $$DEFAULT_SKILLS; do \
-			if [ -e "dist/.ai-files/skills/$$skill" ]; then \
-				ln -sfr "dist/.ai-files/skills/$$skill" "dist/.ai-files/$$dir/skills/$$skill" 2>/dev/null; \
-			fi; \
+	for pair in $$(resolve_skills dist/.ai-files/skills "$$DEFAULT_SKILLS"); do \
+		link="$${pair%%:*}"; src="$${pair#*:}"; \
+		for dir in dotkilo dotopencode dotagents; do \
+			ln -sfr "dist/.ai-files/skills/$$src" "dist/.ai-files/$$dir/skills/$$link" 2>/dev/null; \
 		done; \
-		echo "  ✅ $$dir/skills populated"; \
-	done
+	done; \
+	echo "  ✅ dot dirs skills populated"
 
 # Create symlinks with default skills filter
 # Runs create-symlinks first, then removes skills not in default_skills.yaml
@@ -172,42 +186,19 @@ create-default-symlinks:
 		echo "  ⚠️  No default skills configured, keeping all skills"; \
 	else \
 		echo "  Keeping: $$DEFAULT_SKILLS"; \
-		cd dist/.claude/skills && \
-		for item in *; do \
-			if [ "$$item" != "*" ] && [ -e "$$item" ]; then \
-				if ! echo "$$DEFAULT_SKILLS" | grep -q "$$item"; then \
-					rm -rf "$$item" 2>/dev/null; \
+		KEEP=$$(eval "$$RESOLVE_SKILLS"; \
+			resolve_skills dist/.ai-files/skills "$$DEFAULT_SKILLS" | cut -d: -f1); \
+		for d in dist/.claude/skills dist/.kilo/skills dist/.opencode/skills dist/.agents/skills; do \
+			cd "$$d" && \
+			for item in *; do \
+				if [ "$$item" != "*" ] && [ -e "$$item" ]; then \
+					if ! echo "$$KEEP" | grep -qx "$$item"; then \
+						rm -rf "$$item" 2>/dev/null; \
+					fi; \
 				fi; \
-			fi; \
+			done; \
+			cd - >/dev/null; \
 		done; \
-		cd - >/dev/null; \
-		cd dist/.kilo/skills && \
-		for item in *; do \
-			if [ "$$item" != "*" ] && [ -e "$$item" ]; then \
-				if ! echo "$$DEFAULT_SKILLS" | grep -q "$$item"; then \
-					rm -rf "$$item" 2>/dev/null; \
-				fi; \
-			fi; \
-		done; \
-		cd - >/dev/null; \
-		cd dist/.opencode/skills && \
-		for item in *; do \
-			if [ "$$item" != "*" ] && [ -e "$$item" ]; then \
-				if ! echo "$$DEFAULT_SKILLS" | grep -q "$$item"; then \
-					rm -rf "$$item" 2>/dev/null; \
-				fi; \
-			fi; \
-		done; \
-		cd - >/dev/null; \
-		cd dist/.agents/skills && \
-		for item in *; do \
-			if [ "$$item" != "*" ] && [ -e "$$item" ]; then \
-				if ! echo "$$DEFAULT_SKILLS" | grep -q "$$item"; then \
-					rm -rf "$$item" 2>/dev/null; \
-				fi; \
-			fi; \
-		done; \
-		cd - >/dev/null; \
 		echo "  ✅ Filtered to default skills"; \
 	fi
 
@@ -230,36 +221,20 @@ create-symlinks:
 			ln -sfr "$$f" "dist/.claude/commands/$$base"; \
 		done \
 	' sh {} +
-	# Create file/dir symlinks for .claude/skills/ (exclude symlinks to avoid nesting)
-	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.claude/skills/$$base"; \
-		done \
-	' sh {} +
-	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type d -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.claude/skills/$$base"; \
-		done \
-	' sh {} +
+	# Link ALL skills (own + vendored ns/skill with conflict suffixes) into every
+	# agent skills dir; create-default-symlinks trims this to the default list
+	@eval "$$RESOLVE_SKILLS"; \
+	for pair in $$(resolve_skills dist/.ai-files/skills "$$(all_skill_entries dist/.ai-files/skills)"); do \
+		link="$${pair%%:*}"; src="$${pair#*:}"; \
+		for d in dist/.claude/skills dist/.kilo/skills dist/.opencode/skills dist/.agents/skills; do \
+			ln -sfr "dist/.ai-files/skills/$$src" "$$d/$$link"; \
+		done; \
+	done
 	# Same for .kilo/
 	@find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
 		for f do \
 			base=$$(basename "$$f"); \
 			ln -sfr "$$f" "dist/.kilo/commands/$$base"; \
-		done \
-	' sh {} +
-	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.kilo/skills/$$base"; \
-		done \
-	' sh {} +
-	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type d -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.kilo/skills/$$base"; \
 		done \
 	' sh {} +
 	# Create file-level symlinks for .kilo/agents/
@@ -348,18 +323,6 @@ create-symlinks:
 			ln -sfr "$$f" "dist/.opencode/commands/$$base"; \
 		done \
 	' sh {} +
-	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.opencode/skills/$$base"; \
-		done \
-	' sh {} +
-	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type d -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.opencode/skills/$$base"; \
-		done \
-	' sh {} +
 	# Create file-level symlinks for .opencode/agents/
 	@if [ -d "dist/.ai-files/agents" ]; then \
 		find dist/.ai-files/agents -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
@@ -398,18 +361,6 @@ create-symlinks:
 		for f do \
 			base=$$(basename "$$f"); \
 			ln -sfr "$$f" "dist/.agents/commands/$$base"; \
-		done \
-	' sh {} +
-	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.agents/skills/$$base"; \
-		done \
-	' sh {} +
-	@find dist/.ai-files/skills -mindepth 1 -maxdepth 1 -type d -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.agents/skills/$$base"; \
 		done \
 	' sh {} +
 	# Create file-level symlinks for .agents/agents/

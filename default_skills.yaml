@@ -1,5 +1,8 @@
 # Default skills to link to .claude/ and .kilo/ directories
 # Skills not listed here will not be linked automatically
+# Own skills: bare name. Vendor skills: namespace/skill (namespace = dir under vendor/skills/).
+# Same-named vendor skills get a '-namespace' suffix, e.g. mattpocock/teach and
+# alexknowshtml/teach link as teach-mattpocock and teach-alexknowshtml.
 default_skills:
   # Core skills
   # - adr-tools
@@ -14,4 +17,7 @@ default_skills:
   # - zellij
   - playwright-cli
   - workout
+  # Vendor skills (namespace/skill)
+  - alexknowshtml/teach
+  - mattpocock/teach
   # Note: a-template is excluded (it's a template, not meant for production use)

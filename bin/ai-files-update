@@ -77,19 +77,46 @@ VERBOSE=false
 SOURCE_DIR_OVERRIDE=""
 
 # Read default skills from default_skills.yaml (or return hardcoded fallback)
+# Entries: bare names for own skills, namespace/skill for vendored ones
 get_default_skills() {
     local -n _result=$1
     if [[ -f "$GIT_ROOT/default_skills.yaml" ]]; then
         if command -v yq >/dev/null 2>&1; then
             mapfile -t _result < <(yq eval '.default_skills[]' "$GIT_ROOT/default_skills.yaml" 2>/dev/null)
         else
-            mapfile -t _result < <(grep -E '^\s+-\s+[a-zA-Z0-9_-]+' "$GIT_ROOT/default_skills.yaml" 2>/dev/null | sed 's/^\s*-\s*//')
+            mapfile -t _result < <(grep -E '^\s+-\s+[a-zA-Z0-9_/.-]+' "$GIT_ROOT/default_skills.yaml" 2>/dev/null | sed 's/^\s*-\s*//')
         fi
     fi
     if [[ ${#_result[@]} -eq 0 ]]; then
         # Fallback hardcoded list (matches default_skills.yaml)
-        _result=("humble-pr-review" "mermaid" "obsidian" "plantuml" "pyenv-poetry-virtual-env" "playwright-cli")
+        _result=("humble-pr-review" "mermaid" "obsidian-cli" "plantuml" "pyenv-poetry-virtual-env" "playwright-cli" "workout")
     fi
+}
+
+# Resolve a default_skills entry to "link_name|src_rel" against .ai-files/skills/.
+# Bare entries keep their name; 'ns/name' gets a '-ns' suffix when the bare name
+# collides across the inventory (own depth-1 + vendor depth-2 dirs with SKILL.md).
+# Mirrors RESOLVE_SKILLS in the Makefile. Empty output = entry not present.
+resolve_skill_entry() {
+    local entry="$1"
+    local root="$GIT_ROOT/.ai-files/skills"
+    local name ns link
+
+    case "$entry" in
+        */*) ns="${entry%%/*}"; name="${entry##*/}" ;;
+        *) ns=""; name="$entry" ;;
+    esac
+    link="$name"
+    if [[ -n "$ns" ]]; then
+        local colliding
+        colliding=$(cd "$root" 2>/dev/null && find . -mindepth 2 -maxdepth 3 -name SKILL.md \
+            | sed 's|^\./||; s|/SKILL.md$||' | awk -F/ '{print $NF}' | sort | uniq -d)
+        if echo "$colliding" | grep -qx "$name"; then
+            link="$name-$ns"
+        fi
+    fi
+    [[ -e "$root/$entry" ]] && echo "$link|$entry"
+    return 0
 }
 
 # Functions for colored output
@@ -1551,9 +1578,13 @@ cmd_link_claude() {
         local -a default_skills=()
         get_default_skills default_skills
         for skill in "${default_skills[@]}"; do
-            if [[ -e "$GIT_ROOT/.ai-files/skills/$skill" ]]; then
-                local entry="$GIT_ROOT/.ai-files/skills/$skill"
-                local target_file="$claude_target/skills/$skill"
+            local resolved link src
+            resolved="$(resolve_skill_entry "$skill")"
+            [[ -n "$resolved" ]] || continue
+            link="${resolved%%|*}"; src="${resolved#*|}"
+            if [[ -e "$GIT_ROOT/.ai-files/skills/$src" ]]; then
+                local entry="$GIT_ROOT/.ai-files/skills/$src"
+                local target_file="$claude_target/skills/$link"
                 # Check if symlink already exists and points to the same target
                 if [[ -L "$target_file" ]]; then
                     local existing_abs="$(readlink -m "$target_file")"
@@ -1741,9 +1772,13 @@ cmd_link_kilo() {
         local -a default_skills=()
         get_default_skills default_skills
         for skill in "${default_skills[@]}"; do
-            local entry="$GIT_ROOT/.ai-files/skills/$skill"
+            local resolved link src
+            resolved="$(resolve_skill_entry "$skill")"
+            [[ -n "$resolved" ]] || continue
+            link="${resolved%%|*}"; src="${resolved#*|}"
+            local entry="$GIT_ROOT/.ai-files/skills/$src"
             [[ -e "$entry" ]] || continue
-            local target_file="$kilo_target/skills/$skill"
+            local target_file="$kilo_target/skills/$link"
             # Check if symlink already exists and points to the same target
             if [[ -L "$target_file" ]]; then
                 local existing_abs
@@ -1962,9 +1997,13 @@ cmd_link_opencode() {
         local -a default_skills=()
         get_default_skills default_skills
         for skill in "${default_skills[@]}"; do
-            local entry="$GIT_ROOT/.ai-files/skills/$skill"
+            local resolved link src
+            resolved="$(resolve_skill_entry "$skill")"
+            [[ -n "$resolved" ]] || continue
+            link="${resolved%%|*}"; src="${resolved#*|}"
+            local entry="$GIT_ROOT/.ai-files/skills/$src"
             [[ -e "$entry" ]] || continue
-            local target_file="$opencode_target/skills/$skill"
+            local target_file="$opencode_target/skills/$link"
             # Check if symlink already exists and points to the same target
             if [[ -L "$target_file" ]]; then
                 local existing_abs
