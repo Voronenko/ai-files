@@ -11,6 +11,7 @@ bin/rtk
 bin/*.wasm
 .cache
 .claude
+.commandcode
 dist/*
 docs/plans/
 .env

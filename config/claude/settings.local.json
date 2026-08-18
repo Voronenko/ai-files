@@ -12,7 +12,22 @@
       "Bash(pyenv versions *)",
       "Bash(pyenv local *)",
       "Bash(poetry show *)",
-      "Bash(pip show *)"
+      "Bash(pip show *)",
+      "mcp__ssh-manager__ssh_list_servers",
+      "mcp__ssh-manager__ssh_execute",
+      "mcp__ssh-manager__ssh_upload",
+      "mcp__ssh-manager__ssh_download",
+      "mcp__ssh-manager__ssh_sync",
+      "mcp__ssh-manager__ssh_session_start",
+      "mcp__ssh-manager__ssh_session_send",
+      "mcp__ssh-manager__ssh_session_list",
+      "mcp__ssh-manager__ssh_session_close",
+      "mcp__ssh-manager__ssh_health_check",
+      "mcp__ssh-manager__ssh_service_status",
+      "mcp__ssh-manager__ssh_process_manager",
+      "mcp__ssh-manager__ssh_monitor",
+      "mcp__ssh-manager__ssh_tail",
+      "mcp__ssh-manager__ssh_alert_setup"
     ],
     "deny": [],
     "ask": []

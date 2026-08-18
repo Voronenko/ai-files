@@ -42,6 +42,18 @@
         "mcp__repo-memory__get_bootstrap_profile",
         "mcp__repo-memory__get_onboarding_guide"
       ]
+    },
+    "ssh-manager": {
+      "command": "mcp-ssh-manager",
+      "args": [],
+      "autoApprove": [
+        "mcp__ssh-manager__ssh_execute",
+        "mcp__ssh-manager__ssh_list_servers",
+        "mcp__ssh-manager__ssh_upload",
+        "mcp__ssh-manager__ssh_download",
+        "mcp__ssh-manager__ssh_sync",
+        "mcp__ssh-manager__ssh_alias"
+      ]
     }
   }
 }

@@ -752,6 +752,7 @@ install-opencode-desktop:
 	curl -fsSL "$$APPIMAGE_URL" -o "$$DEST"; \
 	chmod +x "$$DEST";\
 	echo "opencode-desktop installed successfully"
+
 install-cli-opencode:
 	@set -euo pipefail; \
 	mkdir -p "$(CURDIR)/bin"; \
@@ -773,6 +774,9 @@ install-cli-opencode:
 	chmod +x "$(CURDIR)/bin/opencode"; \
 	rm -rf "$$tmp"; \
 	echo "Installed to $(CURDIR)/bin/opencode"
+
+install-cli-commandcode:
+	npm install -g command-code
 
 install-grok-amd64:
 	@set -e; \

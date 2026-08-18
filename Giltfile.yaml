@@ -289,3 +289,22 @@ repositories:
         dstDir: vendor/skills/mattpocock/wait-what
       - src: skills/productivity/writing-for-agents
         dstDir: vendor/skills/mattpocock/writing-for-agents
+
+  # alexknowshtml/claude-skills — session workflow skills
+  - git: https://github.com/alexknowshtml/claude-skills.git
+    version: main
+    sources:
+      - src: create-skill
+        dstDir: vendor/skills/alexknowshtml/create-skill
+      - src: pause
+        dstDir: vendor/skills/alexknowshtml/pause
+      - src: pretty-page
+        dstDir: vendor/skills/alexknowshtml/pretty-page
+      - src: publish-oss
+        dstDir: vendor/skills/alexknowshtml/publish-oss
+      - src: reflect
+        dstDir: vendor/skills/alexknowshtml/reflect
+      - src: teach
+        dstDir: vendor/skills/alexknowshtml/teach
+      - src: upskill
+        dstDir: vendor/skills/alexknowshtml/upskill

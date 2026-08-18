@@ -39,7 +39,7 @@ is_memory_file() {
     fi
     _imf_base="$_imf_root/.ai-files"
     case "$_imf_path" in
-        "$_imf_base/memory"|"$_imf_base"/memory/*) return 0 ;;
+        "$_imf_base"/memory*) return 0 ;;
         *) return 1 ;;
     esac
 }
