@@ -1,148 +1,206 @@
 # ADR Tools Command Reference
 
-Detailed reference for all adr-tools CLI commands.
+Detailed reference for the adr-tools CLI (`adr`, installed at `/home/slavko/dotfiles/adr`).
 
-## `/adr init [directory]`
+All commands are invoked through the shell as `adr <command>`. The agent must use these commands to manage ADR files — never create or edit ADR files by hand (except filling in the draft `adr new` produces).
+
+## `adr init [DIRECTORY]`
 
 Initialize an ADR repository in the current project.
 
-**Parameters:**
-- `directory` (optional): Custom directory path for ADRs. Defaults to `doc/adr`
+- `DIRECTORY` (optional): where ADRs live. Defaults to `doc/adr`.
 
 **What it does:**
-- Creates the ADR directory
-- Creates the first ADR documenting the decision to use ADRs
-- Creates a `.adr-dir` file to mark the repository location
+- If `DIRECTORY` is given: `mkdir -p` it and writes a `.adr-dir` file recording the path.
+- Creates the first ADR `0001-record-architecture-decisions.md` from `init.md` (no editor opened).
 
 **Examples:**
 ```
-/adr init
-/adr init documentation/decisions
+adr init
+adr init documentation/decisions
 ```
 
 ---
 
-## `/adr new <title> [--supersede <n>] [--link <n>:<relation>:<reverse-relation>]`
+## `adr new [-s N] [-l TARGET:LINK:REVERSE-LINK] TITLE...`
 
 Create a new Architecture Decision Record.
 
-**Required Parameters:**
-- `title`: The title of the decision (will be converted to filename-safe format)
+**Required:** `TITLE...` — the decision title (multiple words are concatenated; lowercased and slugified into the filename).
 
-**Optional Parameters:**
-- `-s <n>` or `--supersede <n>`: Number of an ADR this decision supersedes
-- `-l <n>:<relation>:<reverse-relation>` or `--link <n>:<relation>:<reverse-relation>`: Link to another ADR with custom relation text
-  - `n`: Target ADR number
-  - `relation`: Link text for new ADR (e.g., "Amends", "Depends on")
-  - `reverse-relation`: Link text for target ADR (e.g., "Amended by", "Required by")
-
-**Note:** This command does NOT support a `-d` or `--dir` flag. The ADR directory is automatically discovered via `.adr-dir` file or falls back to `doc/adr`. Use `/adr init <directory>` to set a custom ADR location.
+**Options (short forms only — no `--supersede`/`--link` long forms):**
+- `-s N` — supersede the ADR identified by `N` (number or partial filename). Repeatable.
+- `-l TARGET:LINK:REVERSE-LINK` — link to an existing ADR. `TARGET` = reference, `LINK` = label written into the new ADR, `REVERSE-LINK` = label written into the target ADR. Repeatable.
 
 **What it does:**
-1. Creates a new numbered ADR file (format: `NNNN-title.md`)
-2. Prompts for the following sections:
-   - **Context**: The issue motivating this decision
-   - **Decision**: The change being proposed or agreed to implement
-   - **Consequences**: What becomes easier or more difficult; risks introduced
-3. Sets status to "Accepted" by default
-4. If superseding, updates both ADRs with appropriate links
+1. Numbers the ADR (`NNNN`, zero-padded, max existing number + 1).
+2. Creates `NNNN-slug.md` from the template with `Date` (ISO 8601) and `Status: Accepted`.
+3. Opens it in `${VISUAL:-${EDITOR:-true}}` and prints the file path to stdout.
+4. With `-s`, writes `Supercedes [title](file)` into the new ADR and `Superceded by [title](file)` into the target, removing `Accepted` from the target.
 
 **Examples:**
 ```
-/adr new Use PostgreSQL for primary data store
-/adr new "Use Redis for caching" --link "1:Depends on:Enables"
-/adr new "Migrate to PostgreSQL" --supersede 3
+adr new Use PostgreSQL for primary data store
+adr new "Migrate to PostgreSQL" -s 3
+adr new "Use Redis for caching" -l "5:Depends on:Enables"
 ```
 
 ---
 
-## `/adr list`
+## `adr link SOURCE LINK TARGET REVERSE-LINK`
 
-List all Architecture Decision Records in the project.
+Link two existing ADRs. All four arguments are required.
 
-**What it does:**
-- Runs `adr list` to find all ADR files
-- Displays a formatted list with number, title, and status
+- `SOURCE` — reference (number or partial filename) of the source ADR.
+- `LINK` — label written into SOURCE's Status section.
+- `TARGET` — reference of the target ADR.
+- `REVERSE-LINK` — label written into TARGET's Status section.
 
-**Example:**
+**Examples:**
 ```
-/adr list
+adr link 12 Amends 10 "Amended by"
+adr link 7 "Depends on" 3 "Required by"
 ```
 
 ---
 
-## `/adr view <number-or-title>`
+## `adr list`
 
-View a specific Architecture Decision Record.
+List all ADRs, sorted, one path per line. Errors with `The <dir> directory does not exist` if no ADR repo is present.
 
-**Parameters:**
-- `number-or-title` (required): ADR number (e.g., "1") or partial title match
-
-**What it does:**
-- Finds the ADR file by number or title search
-- Displays the full content of the ADR
-
-**Examples:**
 ```
-/adr view 1
-/adr view postgresql
+adr list
 ```
+
+---
+
+## `adr generate [REPORT [OPTION...]]`
+
+Generate a report. With no `REPORT`, lists available generators (`toc`, `graph`).
+
+### `adr generate toc [-i INTRO] [-o OUTRO] [-p LINK_PREFIX]`
+
+Emit a markdown table of contents (`# Architecture Decision Records` + one `* [title](link)` per ADR) to stdout.
+- `-i INTRO` — markdown file prepended to the TOC.
+- `-o OUTRO` — markdown file appended to the TOC.
+- `-p LINK_PREFIX` — prefix each link.
+
+```
+adr generate toc
+```
+
+### `adr generate graph [-p LINK_PREFIX] [-e LINK-EXTENSION]`
+
+Emit a Graphviz `digraph` to stdout (pipe to `dot` to render). Nodes are ADRs; relationship edges come from each ADR's Status links (reverse links ending in "by" are dropped).
+- `-p LINK_PREFIX` — prefix each node's URL.
+- `-e LINK-EXTENSION` — link extension, defaults to `.html`.
+
+```
+adr generate graph | dot -Tsvg > graph.svg
+```
+
+---
+
+## `adr config`
+
+Print the shell config the CLI derives at runtime (`adr_bin_dir`, `adr_template_dir`). This is a bootstrap shim, not a settings manager — there is no user-editable config file.
+
+---
+
+## `adr upgrade-repository`
+
+Upgrade existing ADR documents to the latest format (converts `Date: DD/MM/YYYY` to ISO 8601 `YYYY-MM-DD`).
+
+```
+adr upgrade-repository
+```
+
+---
+
+## `adr help [COMMAND]`
+
+Show usage. With `COMMAND`, show that command's help. Uses `ADR_PAGER`/`PAGER` (default `more`).
+
+```
+adr help
+adr help new
+```
+
+---
+
+## Environment Variables
+
+| Variable | Effect |
+|---|---|
+| `ADR_TEMPLATE` | Template file used by `adr new` (else `templates/template.md` in the ADR dir, else the install dir's `template.md`) |
+| `ADR_DATE` | Override the date written into a new ADR (default `date +%Y-%m-%d`) |
+| `VISUAL` / `EDITOR` | Editor opened by `adr new` (default `true` = no edit) |
+| `ADR_PAGER` / `PAGER` | Pager for `adr help` (default `more`) |
 
 ---
 
 ## ADR File Format
 
-Each ADR follows this structure:
+Generated from `template.md` (placeholders `NUMBER`, `TITLE`, `DATE`, `STATUS` → `Accepted` are substituted by `adr new`):
 
 ```markdown
 # NUMBER. TITLE
 
-Date: YYYY-MM-DD
+Date: DATE
 
 ## Status
-Accepted
+
+STATUS
 
 ## Context
+
 The issue motivating this decision, and any context that influences or constrains the decision.
 
 ## Decision
+
 The change that we're proposing or have agreed to implement.
 
 ## Consequences
+
 What becomes easier or more difficult to do and any risks introduced by the change that will need to be mitigated.
 ```
 
 ---
 
-## ADR Directory Discovery
+## Directory Discovery
 
-The skill searches for ADR directories in this order:
-1. Looks for `.adr-dir` file (created by `adr init`)
-2. Falls back to `doc/adr` directory
-3. Searches up the directory tree from the current location
+The CLI locates the ADR directory by walking up from the current directory:
+1. `.adr-dir` file (written by `adr init <dir>`) — path resolved relative to the directory containing `.adr-dir`.
+2. `doc/adr` directory.
+3. Falls back to `doc/adr`.
 
 ---
 
 ## Status Values
 
-- **Accepted**: The current decision
-- **Superseded**: Replaced by a newer decision (with link to replacement)
-- **Proposed**: Not yet agreed upon by stakeholders
+Status is free-form text in the `## Status` section. Common values:
+- **Accepted** — default set by `adr new`; current active decision.
+- **Supercedes [title](file)** — written into a new ADR by `adr new -s`.
+- **Superceded by [title](file)** — written into the superseded ADR (the tool spells "Superceded" with one "d").
+- Relationship labels (`Amends`, `Amended by`, `Depends on`, `Required by`, `Relates to`, ...) via `adr link` / `adr new -l`.
 
 ---
 
 ## Linking ADRs
 
-ADRs can be linked to show relationships:
-- **Supersedes/Superseded by**: Decision replacement
-- **Amends/Amended by**: Modification to an existing decision
-- **Depends on/Required by**: Dependency between decisions
-- **Relates to/Related to**: General reference
+`adr link` and `adr new -l` write link lines into each ADR's Status section as `Label [title](file)`. Labels are free-form; conventional pairs:
+
+| Forward | Reverse |
+|---|---|
+| Amends | Amended by |
+| Depends on | Required by |
+| Relates to | Related to |
+| Supercedes | Superceded by (via `adr new -s`) |
 
 ---
 
 ## Error Messages
 
-- **"ADR directory not found"**: Run `/adr init` first to set up the ADR repository
-- **"No ADRs found"**: The repository exists but contains no decisions yet
-- **"ADR not found"**: Use `/adr list` to see available ADRs
+- **"The `<dir>` directory does not exist"** — run `adr init` first.
+- **"ERROR: no title given"** — `adr new` requires a title.
+- **"Not implemented: `-x`"** — unknown flag passed to `adr new`.

@@ -308,3 +308,35 @@ repositories:
         dstDir: vendor/skills/alexknowshtml/teach
       - src: upskill
         dstDir: vendor/skills/alexknowshtml/upskill
+
+  # callstackincubator/agent-skills — React Native skills (Callstack)
+  # https://github.com/callstackincubator/agent-skills (local: /home/slavko/tmp/agent-skills)
+  # 8 Callstack-maintained skills from skills/ + 3 vendored external skills mirrored in plugins/vendored/.agents/skills/
+  - git: https://github.com/callstackincubator/agent-skills.git
+    version: main
+    sources:
+      - src: skills/assess-react-native-migration
+        dstDir: vendor/skills/callstack/assess-react-native-migration
+      - src: skills/create-react-native-library
+        dstDir: vendor/skills/callstack/create-react-native-library
+      - src: skills/github-actions
+        dstDir: vendor/skills/callstack/github-actions
+      - src: skills/react-native-best-practices
+        dstDir: vendor/skills/callstack/react-native-best-practices
+      - src: skills/react-native-brownfield-migration
+        dstDir: vendor/skills/callstack/react-native-brownfield-migration
+      - src: skills/react-native-tv-best-practices
+        dstDir: vendor/skills/callstack/react-native-tv-best-practices
+      - src: skills/react-navigation
+        dstDir: vendor/skills/callstack/react-navigation
+      - src: skills/upgrading-react-native
+        dstDir: vendor/skills/callstack/upgrading-react-native
+      # vendored external skills mirrored inside the repo (see plugins/vendored/skills-lock.json)
+      # agent-device + dogfood ← callstackincubator/agent-device
+      # react-native-testing ← callstack/react-native-testing-library
+      - src: plugins/vendored/.agents/skills/agent-device
+        dstDir: vendor/skills/callstack/agent-device
+      - src: plugins/vendored/.agents/skills/dogfood
+        dstDir: vendor/skills/callstack/dogfood
+      - src: plugins/vendored/.agents/skills/react-native-testing
+        dstDir: vendor/skills/callstack/react-native-testing

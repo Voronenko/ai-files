@@ -5,7 +5,7 @@
 # alexknowshtml/teach link as teach-mattpocock and teach-alexknowshtml.
 default_skills:
   # Core skills
-  # - adr-tools
+  - adr-tools
   # - graphify
   - humble-pr-review
   # - lnav
