@@ -43,8 +43,14 @@ repositories:
 
   # ai-files skills explore vudovn/ag-kit
   # NOTE: ag-kit restructured everything under .agents/ (agent/, skills/, workflows/, rules/)
+  # Post-overlay: normalize Claude-style frontmatter (tools string, model:inherit, skills/version)
+  # to Opencode-valid shape (remove tools string, add mode:subagent). Vendor/ is gitignored;
+  # the normalizer keeps .opencode/agents/ag-kit valid without manual steps.
   - git: https://github.com/vudovn/ag-kit.git
     version: main
+    commands:
+      - cmd: python3
+        args: ["scripts/normalize-ag-kit-agents.py"]
     sources:
       # Agents
       - src: .agents/agent/seo-specialist.md

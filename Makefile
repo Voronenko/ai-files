@@ -49,6 +49,20 @@ relink-from-dist:
 	ln -sfn dist/.agents .agents
 
 
+# Normalize ag-kit agents for Opencode (tools string → valid frontmatter).
+# Idempotent; also heals vendor/ after `gilt overlay`. See scripts/normalize-ag-kit-agents.py.
+normalize-ag-kit-agents:
+	@if [ -f scripts/normalize-ag-kit-agents.py ]; then \
+		python3 scripts/normalize-ag-kit-agents.py; \
+	else \
+		echo "normalize-ag-kit-agents: script not found, skipping"; \
+	fi
+
+# Convenience: overlay + normalize in one step
+gilt-overlay:
+	gilt overlay
+	@$(MAKE) --no-print-directory normalize-ag-kit-agents
+
 prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prompts
 	mkdir -p ./dist/.ai-files
 	@if [ -d "plugins" ]; then \
@@ -91,6 +105,8 @@ prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prom
 		mkdir -p ./dist/.ai-files/agents && \
 		cp -r vendor/agents/* ./dist/.ai-files/agents/; \
 	fi
+	# ag-kit ships Claude-style tools/model/skills strings invalid for Opencode — normalize after copy
+	@$(MAKE) --no-print-directory normalize-ag-kit-agents 2>/dev/null || python3 scripts/normalize-ag-kit-agents.py 2>/dev/null || true
 	# Makefile for dist operations
 	cp Makefile.dist ./dist/Makefile
 	# gitignore for dist
