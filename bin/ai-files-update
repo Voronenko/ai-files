@@ -55,7 +55,8 @@ PROTECTED_PATTERNS=("memory.db*")
 # Runtime artifacts created by a tool's own runtime (e.g. opencode plugins / kilo running
 # `npm install`) inside their tool dirs (.opencode/, .kilo/). They are never part of the
 # ai-files distribution and must be left untouched during updates — never deleted,
-# overwritten, or flagged as target-only.
+# overwritten, linked into agent dirs, or flagged as target-only. This is the single
+# hardcoded ignore list for all agent traversals in this command.
 RUNTIME_ARTIFACTS=("node_modules" "package.json" "package-lock.json" ".gitignore")
 
 # Tracking arrays
@@ -1212,6 +1213,19 @@ EOF
 }
 
 # Process a single entry in dotclaude for link-claude
+# Print all entries under $1 (NUL-separated, sorted) for link-* traversals,
+# pruning RUNTIME_ARTIFACTS (runtime files owned by the target tool).
+find_linkable() {
+    local -a name_args=()
+    local first=1 pat
+    for pat in "${RUNTIME_ARTIFACTS[@]}"; do
+        (( first )) || name_args+=(-o)
+        first=0
+        name_args+=(-name "$pat")
+    done
+    find "$1" -mindepth 1 \( "${name_args[@]}" \) -prune -o -print0 | sort -z
+}
+
 process_dotclaude_entry() {
     local source_root="$1"  # .ai-files/dotclaude
     local target_root="$2"  # .claude
@@ -1545,7 +1559,7 @@ cmd_link_claude() {
     while IFS= read -r -d '' entry; do
         local relative_path="${entry#$dotclaude_source/}"
         process_dotclaude_entry "$dotclaude_source" "$claude_target" "$relative_path"
-    done < <(find "$dotclaude_source" -mindepth 1 -print0 | sort -z)
+    done < <(find_linkable "$dotclaude_source")
 
     # Also create symlinks from .ai-files/agents/, .ai-files/skills/ to .claude/
     # Process agents
@@ -1739,7 +1753,14 @@ cmd_link_kilo() {
     while IFS= read -r -d '' entry; do
         local relative_path="${entry#$dotkilo_source/}"
         process_dotclaude_entry "$dotkilo_source" "$kilo_target" "$relative_path"
-    done < <(find "$dotkilo_source" -mindepth 1 -print0 | sort -z)
+    done < <(find_linkable "$dotkilo_source")
+
+    # Earlier runs (before the prune) may have left .kilo/node_modules full of
+    # symlinks into .ai-files/dotkilo — flag it so it gets rebuilt by the tool.
+    if [[ -d "$kilo_target/node_modules" ]] && find "$kilo_target/node_modules" -type l -print -quit | grep -q .; then
+        print_warning ".kilo/node_modules contains symlinks into .ai-files (from an older link-kilo)."
+        echo "    Consider: rm -rf $kilo_target/node_modules (runtime artifact, will be reinstalled)"
+    fi
 
     # Also create symlinks from .ai-files/agents/, .ai-files/skills/, .ai-files/rules/ to .kilo/
     # Process agents
@@ -1964,7 +1985,7 @@ cmd_link_opencode() {
     while IFS= read -r -d '' entry; do
         local relative_path="${entry#$dotopencode_source/}"
         process_dotclaude_entry "$dotopencode_source" "$opencode_target" "$relative_path"
-    done < <(find "$dotopencode_source" -mindepth 1 -print0 | sort -z)
+    done < <(find_linkable "$dotopencode_source")
 
     # Also create symlinks from .ai-files/agents/, .ai-files/skills/, .ai-files/rules/ to .opencode/
     # Process agents

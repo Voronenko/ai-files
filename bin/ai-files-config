@@ -136,10 +136,37 @@ confirm_or_override() {
 
     case "$response" in
         [Yy][Ee][Ss]|[Yy]) echo "$proposed"; return 0 ;;
-        [Nn][Oo]|[Nn]) echo ""; return 1 ;;
+        # Always return 0: callers branch on empty output, and a nonzero status
+        # would trip `set -e` at their `x=$(confirm_or_override ...)` assignments.
+        [Nn][Oo]|[Nn]) echo ""; return 0 ;;
         "") echo "$proposed"; return 0 ;;
         *) echo "$response"; return 0 ;;
     esac
+}
+
+# Prompt for a project slug with fzf: list existing folders under <vault>/pages/
+# (relative to pages/, so no prefix to strip) and let the user either pick one
+# or type a new value. Esc/C-c returns empty. Falls back to a plain read when
+# fzf is unavailable.
+pick_project_slug() {
+    local vault_path="$1"
+    if ! command -v fzf >/dev/null 2>&1; then
+        local slug
+        read -p "Project slug (e.g. myproject, myorg/myapp): " slug || slug=""
+        slug="${slug# }"
+        slug="${slug% }"
+        echo "$slug"
+        return
+    fi
+    local out selection query
+    out=$( cd "$vault_path/pages" 2>/dev/null \
+           && find . -mindepth 1 -type d -not -path '*/.*' | sed 's|^\./||' | sort \
+           | fzf --print-query \
+                 --prompt='Project slug> ' \
+                 --header='enter: use selection or typed value · esc: skip' ) || true
+    selection=$(tail -n +2 <<<"$out" | head -1)
+    query=$(head -1 <<<"$out")
+    echo "${selection:-$query}"
 }
 
 cmd_setup() {
@@ -187,9 +214,11 @@ cmd_setup() {
     fi
 
     local i=1
+    local vault_paths_array=()
     echo "Available vaults:"
     while IFS=$'\t' read -r vault_name vault_path; do
         vaults_array+=("$vault_name")
+        vault_paths_array+=("$vault_path")
         printf "  [%d] %-20s %s\n" "$i" "$vault_name" "$vault_path"
         ((i++))
     done <<< "$vaults"
@@ -206,18 +235,21 @@ cmd_setup() {
     done
 
     local selected_vault="${vaults_array[$((selection-1))]}"
+    local selected_vault_path="${vault_paths_array[$((selection-1))]}"
     echo "Selected vault: $selected_vault"
     cmd_set "vault" "$selected_vault"
     echo ""
 
     local proposed_slug="${current_slug:-}"
     if [ -z "$proposed_slug" ]; then
-        read -p "Project slug (e.g. myproject, myorg/myapp): " proposed_slug || proposed_slug=""
-        proposed_slug="${proposed_slug# }"
-        proposed_slug="${proposed_slug% }"
+        proposed_slug=$(pick_project_slug "$selected_vault_path")
     else
         local new_slug
         new_slug=$(confirm_or_override "Keep project-slug" "$proposed_slug")
+        if [ -z "$new_slug" ]; then
+            # declined → re-pick: existing folder under pages/ or a custom value
+            new_slug=$(pick_project_slug "$selected_vault_path")
+        fi
         if [ -n "$new_slug" ]; then
             proposed_slug="$new_slug"
         fi
