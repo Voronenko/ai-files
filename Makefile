@@ -51,16 +51,22 @@ relink-from-dist:
 
 prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prompts
 	mkdir -p ./dist/.ai-files
-	cp -r plugins ./dist/.ai-files/
+	@if [ -d "plugins" ]; then \
+		cp -r plugins ./dist/.ai-files/; \
+	fi
 	@echo "Copying and linking plugin files..."
-        # unified stub for AGENTS.md
+	# unified stub for AGENTS.md
 	cp AGENTS.md ./dist/
 	# redirector for claude code to use AGENTS.md
 	cp CLAUDE.md ./dist/
 	# instructions for more efficient tools using
-	cp COMMON_CODE_TASKS.md ./dist/.ai-files/
+	@if [ -f "COMMON_CODE_TASKS.md" ]; then \
+		cp COMMON_CODE_TASKS.md ./dist/.ai-files/; \
+	fi
 	# clause specific configs
-	cp -r config/claude/* ./dist/.ai-files/dotclaude/
+	@if [ -d "config/claude" ]; then \
+		mkdir -p ./dist/.ai-files/dotclaude && cp -r config/claude/* ./dist/.ai-files/dotclaude/; \
+	fi
 	# opencode specific configs
 	@if [ -d "config/opencode" ]; then \
 		cp -r config/opencode/* ./dist/.ai-files/dotopencode/; \
@@ -69,9 +75,13 @@ prepare-dist: publish-spec-kit publish-commands publish-memory-bank publish-prom
 	@if [ -d "config/agents" ]; then \
 		cp -r config/agents/* ./dist/.ai-files/dotagents/; \
 	fi
-	cp -r rules ./dist/.ai-files/
+	@if [ -d "rules" ]; then \
+		cp -r rules ./dist/.ai-files/; \
+	fi
 	# unified skills
-	cp -r skills ./dist/.ai-files/
+	@if [ -d "skills" ]; then \
+		cp -r skills ./dist/.ai-files/; \
+	fi
 	# vendor skills
 	if [ -d vendor/skills ]; then \
 		cp -r vendor/skills/* ./dist/.ai-files/skills/; \
@@ -215,28 +225,34 @@ create-symlinks:
 	@mkdir -p dist/.opencode/commands dist/.opencode/skills dist/.opencode/agents dist/.opencode/rules
 	@mkdir -p dist/.agents/commands dist/.agents/skills dist/.agents/agents dist/.agents/rules
 	# Create file-level symlinks for .claude/commands/
-	@find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.claude/commands/$$base"; \
-		done \
-	' sh {} +
+	@if [ -d "dist/.ai-files/commands" ]; then \
+		find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.claude/commands/$$base"; \
+			done \
+		' sh {} +; \
+	fi
 	# Link ALL skills (own + vendored ns/skill with conflict suffixes) into every
 	# agent skills dir; create-default-symlinks trims this to the default list
-	@eval "$$RESOLVE_SKILLS"; \
-	for pair in $$(resolve_skills dist/.ai-files/skills "$$(all_skill_entries dist/.ai-files/skills)"); do \
-		link="$${pair%%:*}"; src="$${pair#*:}"; \
-		for d in dist/.claude/skills dist/.kilo/skills dist/.opencode/skills dist/.agents/skills; do \
-			ln -sfr "dist/.ai-files/skills/$$src" "$$d/$$link"; \
+	@if [ -d "dist/.ai-files/skills" ]; then \
+		eval "$$RESOLVE_SKILLS"; \
+		for pair in $$(resolve_skills dist/.ai-files/skills "$$(all_skill_entries dist/.ai-files/skills)"); do \
+			link="$${pair%%:*}"; src="$${pair#*:}"; \
+			for d in dist/.claude/skills dist/.kilo/skills dist/.opencode/skills dist/.agents/skills; do \
+				ln -sfr "dist/.ai-files/skills/$$src" "$$d/$$link"; \
+			done; \
 		done; \
-	done
+	fi
 	# Same for .kilo/
-	@find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.kilo/commands/$$base"; \
-		done \
-	' sh {} +
+	@if [ -d "dist/.ai-files/commands" ]; then \
+		find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.kilo/commands/$$base"; \
+			done \
+		' sh {} +; \
+	fi
 	# Create file-level symlinks for .kilo/agents/
 	@if [ -d "dist/.ai-files/agents" ]; then \
 		find dist/.ai-files/agents -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
@@ -255,12 +271,14 @@ create-symlinks:
 			done \
 		' sh {} +; \
 	fi
-	@find dist/.ai-files/rules -mindepth 1 -maxdepth 1 -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.kilo/rules/$$base"; \
-		done \
-	' sh {} +
+	@if [ -d "dist/.ai-files/rules" ]; then \
+		find dist/.ai-files/rules -mindepth 1 -maxdepth 1 -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.kilo/rules/$$base"; \
+			done \
+		' sh {} +; \
+	fi
 	# Link everything from dist/.ai-files/dotclaude/ to dist/.claude/ (except commands and hooks, handled separately)
 	# settings.local.json is copied (not symlinked) so it stays a self-contained, locally-editable file
 	@if [ -d "dist/.ai-files/dotclaude" ]; then \
@@ -317,12 +335,14 @@ create-symlinks:
 		' sh {} +; \
 	fi
 	# Same for .opencode/
-	@find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.opencode/commands/$$base"; \
-		done \
-	' sh {} +
+	@if [ -d "dist/.ai-files/commands" ]; then \
+		find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.opencode/commands/$$base"; \
+			done \
+		' sh {} +; \
+	fi
 	# Create file-level symlinks for .opencode/agents/
 	@if [ -d "dist/.ai-files/agents" ]; then \
 		find dist/.ai-files/agents -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
@@ -341,12 +361,14 @@ create-symlinks:
 			done \
 		' sh {} +; \
 	fi
-	@find dist/.ai-files/rules -mindepth 1 -maxdepth 1 -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.opencode/rules/$$base"; \
-		done \
-	' sh {} +
+	@if [ -d "dist/.ai-files/rules" ]; then \
+		find dist/.ai-files/rules -mindepth 1 -maxdepth 1 -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.opencode/rules/$$base"; \
+			done \
+		' sh {} +; \
+	fi
 	# Link everything from dist/.ai-files/dotopencode/ to dist/.opencode/
 	@if [ -d "dist/.ai-files/dotopencode" ]; then \
 		find dist/.ai-files/dotopencode -mindepth 1 -maxdepth 1 ! -name "skills" ! -name "commands" ! -name "rules" ! -name "agents" -exec sh -c '\
@@ -357,12 +379,14 @@ create-symlinks:
 		' sh {} +; \
 	fi
 	# Same for .agents/
-	@find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.agents/commands/$$base"; \
-		done \
-	' sh {} +
+	@if [ -d "dist/.ai-files/commands" ]; then \
+		find dist/.ai-files/commands -type f -name '*.md' -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.agents/commands/$$base"; \
+			done \
+		' sh {} +; \
+	fi
 	# Create file-level symlinks for .agents/agents/
 	@if [ -d "dist/.ai-files/agents" ]; then \
 		find dist/.ai-files/agents -mindepth 1 -maxdepth 1 -type f -exec sh -c '\
@@ -381,12 +405,14 @@ create-symlinks:
 			done \
 		' sh {} +; \
 	fi
-	@find dist/.ai-files/rules -mindepth 1 -maxdepth 1 -exec sh -c '\
-		for f do \
-			base=$$(basename "$$f"); \
-			ln -sfr "$$f" "dist/.agents/rules/$$base"; \
-		done \
-	' sh {} +
+	@if [ -d "dist/.ai-files/rules" ]; then \
+		find dist/.ai-files/rules -mindepth 1 -maxdepth 1 -exec sh -c '\
+			for f do \
+				base=$$(basename "$$f"); \
+				ln -sfr "$$f" "dist/.agents/rules/$$base"; \
+			done \
+		' sh {} +; \
+	fi
 	# Link everything from dist/.ai-files/dotagents/ to dist/.agents/
 	@if [ -d "dist/.ai-files/dotagents" ]; then \
 		find dist/.ai-files/dotagents -mindepth 1 -maxdepth 1 ! -name "skills" ! -name "commands" ! -name "rules" ! -name "agents" -exec sh -c '\
@@ -407,7 +433,7 @@ create-symlinks:
 
 publish-prompts:
 	mkdir -p ./dist/.ai-files/prompts
-	cp -r ./prompts/ ./dist/.ai-files
+	@if [ -d "prompts" ]; then cp -r ./prompts/ ./dist/.ai-files/; fi
 
 
 adr-toc: adr-graph
@@ -482,7 +508,7 @@ publish-spec-kit: publish-spec-kit-templates publish-spec-kit-kilo publish-spec-
 publish-commands-source:
 	@echo "Copying commands source to dist..."
 	@mkdir -p ./dist/.ai-files
-	@cp -r commands ./dist/.ai-files/
+	@if [ -d "commands" ]; then cp -r commands ./dist/.ai-files/; fi
 	@chmod +x ./dist/.ai-files/dotspecify/scripts/bash/*.sh
 	@echo "✅ Commands source copied to ./dist/.ai-files/commands/"
 
