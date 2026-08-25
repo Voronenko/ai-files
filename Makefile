@@ -633,14 +633,174 @@ install-cli-taskmaster:
 	npm install -g task-master-ai
 	echo "Use task-master init on a new project"
 
-install-antigravity-apt:
-	sudo mkdir -p /etc/apt/keyrings
-	curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | \
-		sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
-	echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | \
-		sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
-	sudo apt update
-	sudo apt install antigravity
+# LEGACY 1.x — APT package (superseded by portable 2.0 tar.gz). Kept for reference.
+# install-antigravity-apt:
+# 	sudo mkdir -p /etc/apt/keyrings
+# 	curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | \
+# 		sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
+# 	echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | \
+# 		sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
+# 	sudo apt update
+# 	sudo apt install antigravity
+
+# ── Antigravity 2.0 (portable tar.gz) ────────────────────────────────────────
+# Upstream: https://storage.googleapis.com/antigravity-public/antigravity-hub/<ver>/linux-x64/Antigravity.tar.gz
+# Bundle: Antigravity-x64/antigravity (ELF 197M), chrome-sandbox, locales/, resources/app.asar (icon at /icon.png 512×512)
+# Installs to ~/apps/Antigravity2 (strip-components), exposes ~/.local/bin/antigravity2 + Desktop + applications launchers.
+ANTIGRAVITY2_VERSION ?= 2.10.0-4996573600546816
+ANTIGRAVITY2_URL ?= https://storage.googleapis.com/antigravity-public/antigravity-hub/$(ANTIGRAVITY2_VERSION)/linux-x64/Antigravity.tar.gz
+ANTIGRAVITY2_DEST ?= $(HOME)/apps/Antigravity2
+ANTIGRAVITY2_TMP ?= /tmp/antigravity2.tar.gz
+
+install-antigravity2:
+	@set -euo pipefail; \
+	URL="$(ANTIGRAVITY2_URL)"; DEST="$(ANTIGRAVITY2_DEST)"; TMP="$(ANTIGRAVITY2_TMP)"; \
+	LEGACY_DEST="$$HOME/Apps/Antigravity2"; DESKTOP_DIR="$$(xdg-user-dir DESKTOP 2>/dev/null || echo "$$HOME/Desktop")"; \
+	if [ -d "$$LEGACY_DEST" ] && [ ! -d "$$DEST" ] && [ "$$LEGACY_DEST" != "$$DEST" ]; then echo "↪ Migrating legacy $$LEGACY_DEST → $$DEST"; mkdir -p "$$(dirname "$$DEST")"; mv "$$LEGACY_DEST" "$$DEST" 2>/dev/null || cp -a "$$LEGACY_DEST" "$$DEST"; fi; \
+	echo "⬇️  Antigravity 2.0 ($$(basename $$URL)) → $$DEST"; \
+	mkdir -p "$$DEST" "$$HOME/.local/bin" "$$HOME/.local/share/applications" "$$HOME/.local/share/icons" "$$DESKTOP_DIR"; \
+	if [ -f "$$HOME/Downloads/Antigravity.tar.gz" ] && [ "$$URL" = "https://storage.googleapis.com/antigravity-public/antigravity-hub/2.10.0-4996573600546816/linux-x64/Antigravity.tar.gz" ]; then \
+		echo "   Using cached ~/Downloads/Antigravity.tar.gz (override with ANTIGRAVITY2_URL=… or rm the file)"; \
+		cp "$$HOME/Downloads/Antigravity.tar.gz" "$$TMP"; \
+	else \
+		echo "   Downloading $$URL"; \
+		curl -fsSL "$$URL" -o "$$TMP"; \
+	fi; \
+	echo "   Extracting → $$DEST (strip top-level Antigravity-x64/)"; \
+	tar -xzf "$$TMP" -C "$$DEST" --strip-components=1; \
+	chmod +x "$$DEST/antigravity"; \
+	if [ -f "$$DEST/chrome-sandbox" ]; then \
+		if sudo -n true 2>/dev/null; then \
+			sudo chown root:root "$$DEST/chrome-sandbox" 2>/dev/null || true; \
+			sudo chmod 4755 "$$DEST/chrome-sandbox" 2>/dev/null || chmod 4755 "$$DEST/chrome-sandbox" || chmod 0755 "$$DEST/chrome-sandbox"; \
+		else \
+			chmod 4755 "$$DEST/chrome-sandbox" 2>/dev/null || chmod 0755 "$$DEST/chrome-sandbox"; \
+		fi; \
+	fi; \
+	echo "   Extracting icon from resources/app.asar"; \
+	ICON_DST="$$DEST/icon.png"; ICON_SHARE="$$HOME/.local/share/icons/antigravity2.png"; ICON_SRC=""; \
+	if [ -f "$$DEST/resources/app.asar" ]; then \
+		ASAR_TMP="$$(mktemp -d)"; \
+		if command -v npx >/dev/null 2>&1 && npx --yes @electron/asar extract "$$DEST/resources/app.asar" "$$ASAR_TMP" >/dev/null 2>&1 && [ -f "$$ASAR_TMP/icon.png" ]; then \
+			cp "$$ASAR_TMP/icon.png" "$$ICON_DST"; ICON_SRC="$$ICON_DST"; \
+		else \
+			echo "   ⚠️  asar extract failed — trying pixmap fallback"; \
+			if [ -f "/usr/share/pixmaps/antigravity.png" ]; then cp "/usr/share/pixmaps/antigravity.png" "$$ICON_DST" && ICON_SRC="$$ICON_DST"; fi; \
+		fi; \
+		rm -rf "$$ASAR_TMP"; \
+		if [ -n "$$ICON_SRC" ] && [ -f "$$ICON_SRC" ]; then cp -f "$$ICON_SRC" "$$ICON_SHARE" 2>/dev/null || true; fi; \
+	fi; \
+	if [ ! -f "$$ICON_DST" ] && [ -f "/usr/share/pixmaps/antigravity.png" ]; then cp "/usr/share/pixmaps/antigravity.png" "$$ICON_DST"; cp -f "/usr/share/pixmaps/antigravity.png" "$$ICON_SHARE" 2>/dev/null || true; ICON_SRC="$$ICON_DST"; fi; \
+	ICON_FIELD="$$ICON_SHARE"; if [ ! -f "$$ICON_FIELD" ] && [ -f "$$ICON_DST" ]; then ICON_FIELD="$$ICON_DST"; elif [ ! -f "$$ICON_FIELD" ]; then ICON_FIELD="antigravity"; fi; \
+	echo "   Creating launchers (Icon=$$ICON_FIELD)"; \
+	ln -sf "$$DEST/antigravity" "$$HOME/.local/bin/antigravity2"; \
+	_write_desktop() { dest="$$1"; icon="$$2"; bin="$$3"; \
+		printf '%s\n' '[Desktop Entry]' 'Name=Antigravity 2' 'Comment=Antigravity 2.0 — Agentic Desktop (portable tar.gz)' 'GenericName=Text Editor' "Exec=$$bin %F" "Icon=$$icon" 'Type=Application' 'StartupNotify=false' 'StartupWMClass=Antigravity' 'Categories=TextEditor;Development;IDE;' 'MimeType=application/x-antigravity-workspace;' 'Keywords=vscode;' 'Actions=new-window;' '' '[Desktop Action new-window]' 'Name=New Window' "Exec=$$bin --new-window %F" "Icon=$$icon" > "$$dest"; \
+	}; \
+	_write_desktop "$$HOME/.local/share/applications/antigravity2.desktop" "$$ICON_FIELD" "$$DEST/antigravity"; chmod 644 "$$HOME/.local/share/applications/antigravity2.desktop"; \
+	_write_desktop "$$DESKTOP_DIR/antigravity2.desktop" "$$ICON_FIELD" "$$DEST/antigravity"; chmod 644 "$$DESKTOP_DIR/antigravity2.desktop"; chmod +x "$$DESKTOP_DIR/antigravity2.desktop" 2>/dev/null || true; gio set "$$DESKTOP_DIR/antigravity2.desktop" metadata::trusted true 2>/dev/null || true; \
+	if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$$HOME/.local/share/applications" 2>/dev/null || true; fi; \
+	if command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -f -t "$$HOME/.local/share/icons" 2>/dev/null || true; fi; \
+	echo "✅ Antigravity 2.0 installed to $$DEST"; \
+	echo "   • Binary : $$DEST/antigravity"; \
+	echo "   • CLI    : $$HOME/.local/bin/antigravity2 → $$DEST/antigravity"; \
+	echo "   • App    : $$HOME/.local/share/applications/antigravity2.desktop"; \
+	echo "   • Desktop: $$DESKTOP_DIR/antigravity2.desktop"; \
+	echo "   • Icon   : $$ICON_FIELD"; \
+	if [ -f "$$LEGACY_DEST/antigravity" ] && [ "$$LEGACY_DEST" != "$$DEST" ]; then echo "   (legacy $$LEGACY_DEST still exists — remove with: rm -rf ~/Apps/Antigravity2)"; fi; \
+	if ! echo "$$PATH" | tr ':' '\n' | grep -qx "$$HOME/.local/bin"; then echo "   ⚠️  Add to PATH: export PATH=\"$$HOME/.local/bin:\$$PATH\""; fi
+
+install-antigravity-pack: install-antigravity2 install-antigravity-ide install-cli-antigravity
+	@echo ""
+	@echo "✅ antigravity pack complete — binaries:"
+	@printf "   • Antigravity2  %s  (CLI: %s)\n"  "$(ANTIGRAVITY2_DEST)/antigravity"  "$(HOME)/.local/bin/antigravity2"
+	@printf "   • IDE           %s  (CLI: %s, %s)\n" "$(ANTIGRAVITY_IDE_DEST)/antigravity-ide" "$(HOME)/.local/bin/antigravity-ide" "$(HOME)/.local/bin/agy-ide"
+	@printf "   • CLI  agy      %s  (alias %s)\n" "$(CURDIR)/bin/agy" "$(CURDIR)/bin/antigravity"
+
+install-antigravity: install-antigravity2
+
+uninstall-antigravity-pack: uninstall-antigravity2 uninstall-antigravity-ide
+	@rm -f "$(CURDIR)/bin/agy" "$(CURDIR)/bin/antigravity"
+	@echo "✅ antigravity pack uninstalled"
+
+uninstall-antigravity2:
+	@set -euo pipefail; \
+	DEST="$(ANTIGRAVITY2_DEST)"; LEGACY_DEST="$$HOME/Apps/Antigravity2"; DESKTOP_DIR="$$(xdg-user-dir DESKTOP 2>/dev/null || echo "$$HOME/Desktop")"; \
+	echo "Removing Antigravity 2.0 ($$DEST)"; \
+	rm -rf "$$DEST" "$$LEGACY_DEST"; \
+	rm -f "$$HOME/.local/bin/antigravity2" "$$HOME/.local/share/applications/antigravity2.desktop" "$$DESKTOP_DIR/antigravity2.desktop" "$$HOME/.local/share/icons/antigravity2.png"; \
+	if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$$HOME/.local/share/applications" 2>/dev/null || true; fi; \
+	echo "✅ Uninstalled"
+
+# ── Antigravity IDE 2.5.5 (portable tar.gz) ──────────────────────────────────
+# Upstream: https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/<ver>/linux-x64/Antigravity%20IDE.tar.gz
+# Bundle: "Antigravity IDE"/antigravity-ide (ELF 191M), bin/antigravity-ide (wrapper), chrome-sandbox, locales/, resources/app/ (VS Code fork)
+#         icon at resources/app/resources/linux/code.png (1024×1024). 18629 files, ~230 MB.
+# Installs to ~/apps/AntigravityIDE (strip-components), exposes ~/.local/bin/antigravity-ide (+ agy-ide alias) + Desktop + applications launchers.
+ANTIGRAVITY_IDE_VERSION ?= 2.5.5-4923483625488384
+ANTIGRAVITY_IDE_URL ?= https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/$(ANTIGRAVITY_IDE_VERSION)/linux-x64/Antigravity%20IDE.tar.gz
+ANTIGRAVITY_IDE_DEST ?= $(HOME)/apps/AntigravityIDE
+ANTIGRAVITY_IDE_TMP ?= /tmp/antigravity-ide.tar.gz
+
+install-antigravity-ide:
+	@set -euo pipefail; \
+	URL="$(ANTIGRAVITY_IDE_URL)"; DEST="$(ANTIGRAVITY_IDE_DEST)"; TMP="$(ANTIGRAVITY_IDE_TMP)"; \
+	DESKTOP_DIR="$$(xdg-user-dir DESKTOP 2>/dev/null || echo "$$HOME/Desktop")"; \
+	DISP_URL="$$(printf '%s' "$$URL" | sed 's/%20/ /g')"; \
+	echo "⬇️  Antigravity IDE ($$(basename "$$DISP_URL")) → $$DEST"; \
+	mkdir -p "$$DEST" "$$HOME/.local/bin" "$$HOME/.local/share/applications" "$$HOME/.local/share/icons" "$$DESKTOP_DIR"; \
+	if [ -f "$$HOME/Downloads/Antigravity IDE.tar.gz" ] && echo "$$URL" | grep -q "Antigravity%20IDE.tar.gz"; then \
+		echo "   Using cached ~/Downloads/Antigravity IDE.tar.gz (override with ANTIGRAVITY_IDE_URL=… or rm the file)"; \
+		cp "$$HOME/Downloads/Antigravity IDE.tar.gz" "$$TMP"; \
+	else \
+		echo "   Downloading $$URL"; \
+		curl -fsSL "$$URL" -o "$$TMP"; \
+	fi; \
+	echo "   Extracting → $$DEST (strip top-level 'Antigravity IDE/')"; \
+	tar -xzf "$$TMP" -C "$$DEST" --strip-components=1; \
+	chmod +x "$$DEST/antigravity-ide" 2>/dev/null || true; chmod +x "$$DEST/bin/antigravity-ide" 2>/dev/null || true; \
+	if [ -f "$$DEST/chrome-sandbox" ]; then \
+		if sudo -n true 2>/dev/null; then \
+			sudo chown root:root "$$DEST/chrome-sandbox" 2>/dev/null || true; \
+			sudo chmod 4755 "$$DEST/chrome-sandbox" 2>/dev/null || chmod 4755 "$$DEST/chrome-sandbox" || chmod 0755 "$$DEST/chrome-sandbox"; \
+		else \
+			chmod 4755 "$$DEST/chrome-sandbox" 2>/dev/null || chmod 0755 "$$DEST/chrome-sandbox"; \
+		fi; \
+	fi; \
+	echo "   Installing icon"; \
+	ICON_SRC_CAND="$$DEST/resources/app/resources/linux/code.png"; ICON_DST="$$DEST/icon.png"; ICON_SHARE="$$HOME/.local/share/icons/antigravity-ide.png"; ICON_FIELD=""; \
+	if [ -f "$$ICON_SRC_CAND" ]; then cp -f "$$ICON_SRC_CAND" "$$ICON_DST"; cp -f "$$ICON_SRC_CAND" "$$ICON_SHARE" 2>/dev/null || true; ICON_FIELD="$$ICON_SHARE"; \
+	elif [ -f "$$DEST/icon.png" ]; then cp -f "$$DEST/icon.png" "$$ICON_SHARE" 2>/dev/null || true; ICON_FIELD="$$ICON_SHARE"; \
+	elif [ -f "/usr/share/pixmaps/antigravity.png" ]; then cp -f "/usr/share/pixmaps/antigravity.png" "$$ICON_DST"; cp -f "/usr/share/pixmaps/antigravity.png" "$$ICON_SHARE" 2>/dev/null || true; ICON_FIELD="$$ICON_SHARE"; \
+	else ICON_FIELD="antigravity-ide"; fi; \
+	if [ ! -f "$$ICON_FIELD" ] && [ -f "$$ICON_DST" ]; then ICON_FIELD="$$ICON_DST"; fi; \
+	echo "   Creating launchers (Icon=$$ICON_FIELD)"; \
+	ln -sf "$$DEST/antigravity-ide" "$$HOME/.local/bin/antigravity-ide"; \
+	ln -sf "antigravity-ide" "$$HOME/.local/bin/agy-ide"; \
+	chmod +x "$$HOME/.local/bin/antigravity-ide" 2>/dev/null || true; \
+	_write_desktop() { dest="$$1"; icon="$$2"; bin="$$3"; \
+		printf '%s\n' '[Desktop Entry]' 'Name=Antigravity IDE' 'Comment=Antigravity IDE 2.5.5 — VS Code fork (portable tar.gz)' 'GenericName=Text Editor' "Exec=$$bin %F" "Icon=$$icon" 'Type=Application' 'StartupNotify=false' 'StartupWMClass=Antigravity IDE' 'Categories=TextEditor;Development;IDE;' 'MimeType=application/x-antigravity-workspace;' 'Keywords=vscode;antigravity;' 'Actions=new-window;' '' '[Desktop Action new-window]' 'Name=New Window' "Exec=$$bin --new-window %F" "Icon=$$icon" > "$$dest"; \
+	}; \
+	_write_desktop "$$HOME/.local/share/applications/antigravity-ide.desktop" "$$ICON_FIELD" "$$DEST/antigravity-ide"; chmod 644 "$$HOME/.local/share/applications/antigravity-ide.desktop"; \
+	_write_desktop "$$DESKTOP_DIR/antigravity-ide.desktop" "$$ICON_FIELD" "$$DEST/antigravity-ide"; chmod 644 "$$DESKTOP_DIR/antigravity-ide.desktop"; chmod +x "$$DESKTOP_DIR/antigravity-ide.desktop" 2>/dev/null || true; gio set "$$DESKTOP_DIR/antigravity-ide.desktop" metadata::trusted true 2>/dev/null || true; \
+	if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$$HOME/.local/share/applications" 2>/dev/null || true; fi; \
+	if command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -f -t "$$HOME/.local/share/icons" 2>/dev/null || true; fi; \
+	echo "✅ Antigravity IDE installed to $$DEST"; \
+	echo "   • Binary : $$DEST/antigravity-ide  (+ $$DEST/bin/antigravity-ide wrapper)"; \
+	echo "   • CLI    : $$HOME/.local/bin/antigravity-ide → $$DEST/antigravity-ide  (alias agy-ide)"; \
+	echo "   • App    : $$HOME/.local/share/applications/antigravity-ide.desktop"; \
+	echo "   • Desktop: $$DESKTOP_DIR/antigravity-ide.desktop"; \
+	echo "   • Icon   : $$ICON_FIELD  (source: $$ICON_SRC_CAND)"; \
+	if ! echo "$$PATH" | tr ':' '\n' | grep -qx "$$HOME/.local/bin"; then echo "   ⚠️  Add to PATH: export PATH=\"$$HOME/.local/bin:\$$PATH\""; fi
+
+uninstall-antigravity-ide:
+	@set -euo pipefail; \
+	DEST="$(ANTIGRAVITY_IDE_DEST)"; DESKTOP_DIR="$$(xdg-user-dir DESKTOP 2>/dev/null || echo "$$HOME/Desktop")"; \
+	echo "Removing Antigravity IDE ($$DEST)"; \
+	rm -rf "$$DEST"; \
+	rm -f "$$HOME/.local/bin/antigravity-ide" "$$HOME/.local/bin/agy-ide" "$$HOME/.local/share/applications/antigravity-ide.desktop" "$$DESKTOP_DIR/antigravity-ide.desktop" "$$HOME/.local/share/icons/antigravity-ide.png"; \
+	if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$$HOME/.local/share/applications" 2>/dev/null || true; fi; \
+	echo "✅ Uninstalled"
 
 install-ai-goose-cli:
 	@set -e; \
@@ -725,6 +885,52 @@ install-cli-opencode:
 	chmod +x "$(CURDIR)/bin/opencode"; \
 	rm -rf "$$tmp"; \
 	echo "Installed to $(CURDIR)/bin/opencode"
+
+# ── Antigravity CLI (agy) — single binary → ~/ai-files/bin/ ─────────────────
+# Upstream installer: https://antigravity.google/cli/install.sh  (shells out to agy install)
+# Manifest: https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/<platform>.json
+# Payload: cli_linux_x64.tar.gz (one file: "antigravity" 199M ELF) → installed as "agy", sha512-verified
+# Supports ANTIGRAVITY_CLI_VERSION=1.1.20 pin or latest (default resolves via manifest)
+ANTIGRAVITY_CLI_VERSION ?=
+ANTIGRAVITY_CLI_MANIFEST_BASE ?= https://antigravity-cli-auto-updater-974169037036.us-central1.run.app
+install-cli-antigravity:
+	@set -euo pipefail; \
+	BIN_DIR="$(CURDIR)/bin"; mkdir -p "$$BIN_DIR"; \
+	case "$$(uname -s)" in Darwin) os=darwin;; Linux) os=linux;; *) echo "Unsupported OS: $$(uname -s)" >&2; exit 1;; esac; \
+	case "$$(uname -m)" in x86_64|amd64) arch=amd64;; arm64|aarch64) arch=arm64;; *) echo "Unsupported arch: $$(uname -m)" >&2; exit 1;; esac; \
+	if [ "$$os" = linux ] && { [ -f /lib/libc.musl-x86_64.so.1 ] || [ -f /lib/libc.musl-aarch64.so.1 ] || ldd /bin/ls 2>&1 | grep -q musl; }; then plat="linux_$${arch}_musl"; \
+	elif [ "$$os" = linux ]; then plat="linux_$${arch}"; else plat="$${os}_$${arch}"; fi; \
+	if [ -n "$(ANTIGRAVITY_CLI_VERSION)" ]; then \
+		ver="$(ANTIGRAVITY_CLI_VERSION)"; ver="$${ver#v}"; \
+		case "$$ver" in *[!0-9A-Za-z.-]*) echo "invalid ANTIGRAVITY_CLI_VERSION: $$ver" >&2; exit 1;; esac; \
+		case "$$plat" in linux_amd64) url="https://storage.googleapis.com/antigravity-public/antigravity-cli/$$ver-5830032204103680/linux-x64/cli_linux_x64.tar.gz";; \
+			linux_arm64) url="https://storage.googleapis.com/antigravity-public/antigravity-cli/$$ver-5830032204103680/linux-arm64/cli_linux_arm64.tar.gz";; \
+			darwin_amd64) url="https://storage.googleapis.com/antigravity-public/antigravity-cli/$$ver-5830032204103680/darwin-x64/cli_mac_x64.tar.gz";; \
+			darwin_arm64) url="https://storage.googleapis.com/antigravity-public/antigravity-cli/$$ver-5830032204103680/darwin-arm/cli_mac_arm64.tar.gz";; \
+			*) echo "pinned version: unsupported platform $$plat" >&2; exit 1;; esac; \
+		echo "Antigravity CLI $$ver (pinned, platform $$plat)"; \
+		sha512=""; \
+	else \
+		manifest_url="$(ANTIGRAVITY_CLI_MANIFEST_BASE)/manifests/$$plat.json"; \
+		echo "Resolving Antigravity CLI (platform $$plat) via $$manifest_url"; \
+		manifest="$$(curl -fsSL "$$manifest_url")"; test -n "$$manifest" || { echo "could not fetch manifest" >&2; exit 1; }; \
+		ver="$$(printf '%s' "$$manifest" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"; \
+		url="$$(printf '%s' "$$manifest" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"; \
+		sha512="$$(printf '%s' "$$manifest" | sed -n 's/.*"sha512"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"; \
+		test -n "$$url" || { echo "manifest missing url" >&2; exit 1; }; \
+		echo "Latest: $$ver  sha512 $${sha512:0:16}…"; \
+	fi; \
+	tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT INT TERM; \
+	archive="$$tmp/cli.tar.gz"; echo "Downloading $$url"; curl -fsSL "$$url" -o "$$archive"; \
+	if [ -n "$$sha512" ]; then \
+		echo "$$sha512  $$archive" | sha512sum -c -; \
+	else echo "⚠️  No sha512 for pinned build — skipping verification"; fi; \
+	tar -xzf "$$archive" -C "$$tmp" antigravity; test -f "$$tmp/antigravity" || { echo "tar missing antigravity" >&2; exit 1; }; \
+	install -m 0755 "$$tmp/antigravity" "$$BIN_DIR/agy"; \
+	ln -sf agy "$$BIN_DIR/antigravity"; \
+	echo "✅ agy $$ver ($$plat) → $$BIN_DIR/agy  (alias antigravity)"; \
+	"$$BIN_DIR/agy" --version 2>&1 | head -n 5 || true; \
+	if ! echo "$$PATH" | tr ':' '\n' | grep -qx "$$BIN_DIR"; then echo "Add to PATH: export PATH=\"$$BIN_DIR:\$$PATH\""; fi
 
 install-cli-commandcode:
 	npm install -g command-code

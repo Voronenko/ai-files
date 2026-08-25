@@ -2,6 +2,8 @@
 # pi binary + wasm assets (installed via `make install-cli-pi-agent`)
 .agents
 ai-files-*.zip
+bin/agy
+bin/antigravity
 bin/goose
 bin/opencode
 bin/pi
