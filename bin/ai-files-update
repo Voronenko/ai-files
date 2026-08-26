@@ -65,6 +65,8 @@ declare -a SKIPPED_FILES=()
 declare -a CREATED_DIRS=()
 declare -a PRESERVED_SYMLINKS=()
 declare -a CANDIDATE_REMOVAL_FILES=()
+# Git-tracked cache (populated by cmd_files; empty for link-* subcommands)
+declare -A GIT_TRACKED_FILES=()
 
 # Rsync operations counter
 TOTAL_RSYNC_CALLS=0
@@ -73,9 +75,6 @@ TOTAL_RSYNC_CALLS=0
 AUTO_YES=false
 DRY_RUN=false
 VERBOSE=false
-
-# Source directory override
-SOURCE_DIR_OVERRIDE=""
 
 # Read default skills from default_skills.yaml (or return hardcoded fallback)
 # Entries: bare names for own skills, namespace/skill for vendored ones
@@ -144,7 +143,8 @@ print_diff() {
 
 # Get git repository root
 detect_git_root() {
-    local current_dir="$(pwd)"
+    local current_dir
+    current_dir="$(pwd)"
     while [[ "$current_dir" != "/" ]]; do
         if [[ -d "$current_dir/.git" ]]; then
             echo "$current_dir"
@@ -185,6 +185,7 @@ is_protected_path() {
     filename="$(basename "$filepath")"
     for protected_pattern in "${PROTECTED_PATTERNS[@]}"; do
         # Convert glob pattern to regex for matching
+        # shellcheck disable=SC2053  # pattern is an intentional glob (memory.db*)
         if [[ "$filename" == $protected_pattern ]]; then
             return 0  # Protected
         fi
@@ -293,6 +294,7 @@ detect_target_only_files() {
 
     # Return array via nameref (passed as array name)
     local -n result_array=$4
+    # shellcheck disable=SC2034  # nameref assignment is the output mechanism
     result_array=("${target_only[@]}")
 }
 
@@ -427,15 +429,6 @@ process_directory() {
     local dest_dir="$2"
     local base_path="$3"
 
-    # Check if this is a merge folder (commands, hooks, skills, or rules)
-    local is_merge_folder=false
-    for merge_folder in "${MERGE_FOLDERS[@]}"; do
-        if [[ "$base_path" == *"/$merge_folder" || "$base_path" == "$merge_folder" ]]; then
-            is_merge_folder=true
-            break
-        fi
-    done
-
     # Create destination directory if needed
     if [[ ! -d "$dest_dir" ]]; then
         if [[ "$DRY_RUN" == "false" ]]; then
@@ -474,9 +467,29 @@ process_directory() {
         rsync_opts="$rsync_opts --verbose"
     fi
 
+    # Git-tracked files are protected from bulk overwrite: exclude them from
+    # rsync entirely and handle each explicitly after the sync.
+    local guard_file=""
+    local -a rsync_guard_args=()
+    if [ "${#GIT_TRACKED_FILES[@]}" -gt 0 ]; then
+        guard_file="$(mktemp)"
+        local _tracked_rel
+        for _tracked_rel in "${!GIT_TRACKED_FILES[@]}"; do
+            [[ "$_tracked_rel" == "$base_path/"* ]] || continue
+            printf '%s
+' "${_tracked_rel#$base_path/}" >> "$guard_file"
+        done
+        if [ -s "$guard_file" ]; then
+            rsync_guard_args=(--exclude-from="$guard_file")
+        else
+            rm -f "$guard_file"
+            guard_file=""
+        fi
+    fi
+
     # Run rsync and capture output
     local rsync_output
-    rsync_output=$(rsync $rsync_opts "$src_dir/" "$dest_dir/" 2>&1 || true)
+    rsync_output=$(rsync $rsync_opts "${rsync_guard_args[@]}" "$src_dir/" "$dest_dir/" 2>&1 || true)
 
     # Track rsync operation
     TOTAL_RSYNC_CALLS=$((TOTAL_RSYNC_CALLS + 1))
@@ -510,6 +523,51 @@ process_directory() {
             fi
         fi
     done <<< "$rsync_output"
+
+    # Explicit handling for git-tracked files excluded from rsync above
+    if [ -n "$guard_file" ]; then
+        while IFS= read -r _tracked_rel; do
+            [ -n "$_tracked_rel" ] || continue
+            local _src_f="$src_dir/$_tracked_rel" _dst_f="$dest_dir/$_tracked_rel"
+            [ -f "$_src_f" ] && [ -f "$_dst_f" ] || continue
+            cmp -s "$_src_f" "$_dst_f" && continue
+            if [ "$AUTO_YES" == "true" ]; then
+                print_warning "Skipping git-tracked file: $base_path/$_tracked_rel"
+                SKIPPED_FILES+=("$base_path/$_tracked_rel (git-tracked)")
+                if [ "$VERBOSE" == "true" ]; then
+                    echo "  ⏭️  Skipped: $base_path/$_tracked_rel (git-tracked)"
+                fi
+            else
+                print_warning "Modified file detected: $base_path/$_tracked_rel"
+                print_warning "This file is tracked in git!"
+                print_diff "$_dst_f" "$_src_f"
+                echo -n "Overwrite $base_path/$_tracked_rel? [GIT-TRACKED] [y/N/q]: "
+                read -r response
+                case "$response" in
+                    [Yy]*)
+                        if [ "$DRY_RUN" == "false" ]; then
+                            cp "$_src_f" "$_dst_f"
+                            COPIED_FILES+=("$base_path/$_tracked_rel (overwritten)")
+                        else
+                            echo "  📝 Would overwrite: $base_path/$_tracked_rel"
+                        fi
+                        ;;
+                    [Qq]*)
+                        rm -f "$guard_file"
+                        print_info "Quitting update process"
+                        exit 0
+                        ;;
+                    *)
+                        SKIPPED_FILES+=("$base_path/$_tracked_rel (modified locally)")
+                        if [ "$VERBOSE" == "true" ]; then
+                            echo "  ⏭️  Skipped: $base_path/$_tracked_rel"
+                        fi
+                        ;;
+                esac
+            fi
+        done < "$guard_file"
+        rm -f "$guard_file"
+    fi
 
     # Copy new files
     if [[ ${#new_files[@]} -gt 0 && "$DRY_RUN" == "false" ]]; then
@@ -748,6 +806,11 @@ cmd_files() {
                 exit 0
                 ;;
             -s|--source)
+                [[ $# -ge 2 && "${2:-}" != -* ]] || {
+                    print_error "Option --source requires a directory argument"
+                    show_files_help
+                    exit 1
+                }
                 source_dir="$2"
                 shift 2
                 ;;
@@ -1012,19 +1075,23 @@ cmd_files() {
 
                     # Skip if destination already exists as symlink with same target
                     if [[ -L "$dest_entry" ]]; then
-                        local src_target="$(readlink "$src_entry")"
-                        local dest_target="$(readlink "$dest_entry")"
+                        local src_target
+                        src_target="$(readlink "$src_entry")"
+                        local dest_target
+                        dest_target="$(readlink "$dest_entry")"
                         [[ "$src_target" == "$dest_target" ]] && continue
                     fi
 
                     # Copy the symlink
                 if [[ "$DRY_RUN" == "false" ]]; then
                     # Create parent directory if needed
-                    local parent_dir="$(dirname "$dest_entry")"
+                    local parent_dir
+                    parent_dir="$(dirname "$dest_entry")"
                     mkdir -p "$parent_dir"
 
                     # Get the symlink target
-                    local link_target="$(readlink "$src_entry")"
+                    local link_target
+                    link_target="$(readlink "$src_entry")"
 
                     ln -sf "$link_target" "$dest_entry"
                     PRESERVED_SYMLINKS+=("$merge_base/$entry_rel -> $link_target")
@@ -1050,7 +1117,8 @@ cmd_files() {
             # Check if dotdir_dest is a managed symlink (points to .ai-files/*)
             local dotdir_is_managed=false
             if [[ -L "$dotdir_dest" ]]; then
-                local dotdir_link_target="$(readlink "$dotdir_dest")"
+                local dotdir_link_target
+                dotdir_link_target="$(readlink "$dotdir_dest")"
                 if [[ "$dotdir_link_target" == *".ai-files/"* ]]; then
                     dotdir_is_managed=true
                     if [[ "$VERBOSE" == "true" ]]; then
@@ -1084,19 +1152,23 @@ cmd_files() {
 
                     # Skip if destination already exists as symlink with same target
                     if [[ -L "$dest_entry" ]]; then
-                        local src_target="$(readlink "$src_entry")"
-                        local dest_target="$(readlink "$dest_entry")"
+                        local src_target
+                        src_target="$(readlink "$src_entry")"
+                        local dest_target
+                        dest_target="$(readlink "$dest_entry")"
                         [[ "$src_target" == "$dest_target" ]] && continue
                     fi
 
                     # Copy the symlink
                     if [[ "$DRY_RUN" == "false" ]]; then
                         # Create parent directory if needed
-                        local parent_dir="$(dirname "$dest_entry")"
+                        local parent_dir
+                        parent_dir="$(dirname "$dest_entry")"
                         mkdir -p "$parent_dir"
 
                         # Get the symlink target
-                        local link_target="$(readlink "$src_entry")"
+                        local link_target
+                        link_target="$(readlink "$src_entry")"
 
                         ln -sf "$link_target" "$dest_entry"
                         PRESERVED_SYMLINKS+=("$target_dir/$dotdir/$entry_rel -> $link_target")
@@ -1247,7 +1319,8 @@ process_dotclaude_entry() {
     fi
 
     # Create target directory if needed
-    local target_dir="$(dirname "$target_file")"
+    local target_dir
+    target_dir="$(dirname "$target_file")"
     if [[ ! -d "$target_dir" ]]; then
         if [[ "$DRY_RUN" == "false" ]]; then
             mkdir -p "$target_dir"
@@ -1280,13 +1353,15 @@ process_dotclaude_entry() {
             resolved_target_abs="$link_target"
             # If not absolute, make it absolute relative to source file's dir
             if [[ "$resolved_target_abs" != /* ]]; then
-                local source_dir_abs="$(cd "$(dirname "$source_file")" 2>/dev/null && pwd)"
+                local source_dir_abs
+                source_dir_abs="$(cd "$(dirname "$source_file")" 2>/dev/null && pwd)"
                 resolved_target_abs="$source_dir_abs/$(basename "$resolved_target_abs")"
             fi
         fi
 
         # For display purposes, calculate relative path from target to source
-        local target_dir_abs="$(cd "$(dirname "$target_file")" 2>/dev/null && pwd)"
+        local target_dir_abs
+        target_dir_abs="$(cd "$(dirname "$target_file")" 2>/dev/null && pwd)"
         local display_target=""
         if [[ -n "$target_dir_abs" ]]; then
             # Calculate relative path for display
@@ -1385,10 +1460,12 @@ process_dotclaude_entry() {
         local link_target="$source_rel/$relative_path"
 
         # Get absolute path of the source file for ln -sfr
-        local source_abs="$(cd "$(dirname "$source_file")" 2>/dev/null && pwd)/$(basename "$source_file")"
+        local source_abs
+        source_abs="$(cd "$(dirname "$source_file")" 2>/dev/null && pwd)/$(basename "$source_file")"
 
         # Calculate relative path for display
-        local target_dir_abs="$(cd "$(dirname "$target_file")" 2>/dev/null && pwd)"
+        local target_dir_abs
+        target_dir_abs="$(cd "$(dirname "$target_file")" 2>/dev/null && pwd)"
         local display_target=""
         if [[ -n "$target_dir_abs" ]]; then
             display_target=$(python3 -c "import os; print(os.path.relpath('$source_abs', '$target_dir_abs'))" 2>/dev/null || echo "$link_target")
@@ -1410,7 +1487,8 @@ process_dotclaude_entry() {
                     existing_abs="$(readlink -m "$target_file")"
                 fi
                 # Get absolute path of source file
-                local source_abs="$(cd "$(dirname "$source_file")" 2>/dev/null && pwd)/$(basename "$source_file")"
+                local source_abs
+                source_abs="$(cd "$(dirname "$source_file")" 2>/dev/null && pwd)/$(basename "$source_file")"
                 if [[ "$existing_abs" == "$source_abs" ]]; then
                     # Correct symlink already exists
                     if [[ "$VERBOSE" == "true" ]]; then
@@ -1565,14 +1643,18 @@ cmd_link_claude() {
     # Process agents
     if [[ -d "$GIT_ROOT/.ai-files/agents" ]]; then
         while IFS= read -r -d '' entry; do
-            local basename_entry="$(basename "$entry")"
+            local basename_entry
+            basename_entry="$(basename "$entry")"
             local target_file="$claude_target/agents/$basename_entry"
-            local target_dir="$(dirname "$target_file")"
+            local target_dir
+            target_dir="$(dirname "$target_file")"
             mkdir -p "$target_dir"
             # Check if symlink already exists and points to the same target
             if [[ -L "$target_file" ]]; then
-                local existing_abs="$(readlink -m "$target_file")"
-                local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                local existing_abs
+                existing_abs="$(readlink -m "$target_file")"
+                local entry_abs
+                entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
                 if [[ "$existing_abs" == "$entry_abs" ]]; then
                     continue
                 fi
@@ -1601,8 +1683,10 @@ cmd_link_claude() {
                 local target_file="$claude_target/skills/$link"
                 # Check if symlink already exists and points to the same target
                 if [[ -L "$target_file" ]]; then
-                    local existing_abs="$(readlink -m "$target_file")"
-                    local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                    local existing_abs
+                    existing_abs="$(readlink -m "$target_file")"
+                    local entry_abs
+                    entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
                     if [[ "$existing_abs" == "$entry_abs" ]]; then
                         continue
                     fi
@@ -1766,14 +1850,18 @@ cmd_link_kilo() {
     # Process agents
     if [[ -d "$GIT_ROOT/.ai-files/agents" ]]; then
         while IFS= read -r -d '' entry; do
-            local basename_entry="$(basename "$entry")"
+            local basename_entry
+            basename_entry="$(basename "$entry")"
             local target_file="$kilo_target/agents/$basename_entry"
-            local target_dir="$(dirname "$target_file")"
+            local target_dir
+            target_dir="$(dirname "$target_file")"
             mkdir -p "$target_dir"
             # Check if symlink already exists and points to the same target
             if [[ -L "$target_file" ]]; then
-                local existing_abs="$(readlink -m "$target_file")"
-                local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                local existing_abs
+                existing_abs="$(readlink -m "$target_file")"
+                local entry_abs
+                entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
                 if [[ "$existing_abs" == "$entry_abs" ]]; then
                     continue
                 fi
@@ -1821,14 +1909,18 @@ cmd_link_kilo() {
     # Process rules
     if [[ -d "$GIT_ROOT/.ai-files/rules" ]]; then
         while IFS= read -r -d '' entry; do
-            local basename_entry="$(basename "$entry")"
+            local basename_entry
+            basename_entry="$(basename "$entry")"
             local target_file="$kilo_target/rules/$basename_entry"
-            local target_dir="$(dirname "$target_file")"
+            local target_dir
+            target_dir="$(dirname "$target_file")"
             mkdir -p "$target_dir"
             # Check if symlink already exists and points to the same target
             if [[ -L "$target_file" ]]; then
-                local existing_abs="$(readlink -m "$target_file")"
-                local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                local existing_abs
+                existing_abs="$(readlink -m "$target_file")"
+                local entry_abs
+                entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
                 if [[ "$existing_abs" == "$entry_abs" ]]; then
                     continue
                 fi
@@ -1991,14 +2083,18 @@ cmd_link_opencode() {
     # Process agents
     if [[ -d "$GIT_ROOT/.ai-files/agents" ]]; then
         while IFS= read -r -d '' entry; do
-            local basename_entry="$(basename "$entry")"
+            local basename_entry
+            basename_entry="$(basename "$entry")"
             local target_file="$opencode_target/agents/$basename_entry"
-            local target_dir="$(dirname "$target_file")"
+            local target_dir
+            target_dir="$(dirname "$target_file")"
             mkdir -p "$target_dir"
             # Check if symlink already exists and points to the same target
             if [[ -L "$target_file" ]]; then
-                local existing_abs="$(readlink -m "$target_file")"
-                local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                local existing_abs
+                existing_abs="$(readlink -m "$target_file")"
+                local entry_abs
+                entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
                 if [[ "$existing_abs" == "$entry_abs" ]]; then
                     continue
                 fi
@@ -2046,14 +2142,18 @@ cmd_link_opencode() {
     # Process rules
     if [[ -d "$GIT_ROOT/.ai-files/rules" ]]; then
         while IFS= read -r -d '' entry; do
-            local basename_entry="$(basename "$entry")"
+            local basename_entry
+            basename_entry="$(basename "$entry")"
             local target_file="$opencode_target/rules/$basename_entry"
-            local target_dir="$(dirname "$target_file")"
+            local target_dir
+            target_dir="$(dirname "$target_file")"
             mkdir -p "$target_dir"
             # Check if symlink already exists and points to the same target
             if [[ -L "$target_file" ]]; then
-                local existing_abs="$(readlink -m "$target_file")"
-                local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                local existing_abs
+                existing_abs="$(readlink -m "$target_file")"
+                local entry_abs
+                entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
                 if [[ "$existing_abs" == "$entry_abs" ]]; then
                     continue
                 fi
@@ -2072,12 +2172,15 @@ cmd_link_opencode() {
         while IFS= read -r -d '' entry; do
             # Skip directories, only process files
             [[ -d "$entry" && ! -L "$entry" ]] && continue
-            local basename_entry="$(basename "$entry")"
+            local basename_entry
+            basename_entry="$(basename "$entry")"
             local target_file="$opencode_target/commands/$basename_entry"
             # Check if symlink already exists and points to the same target
             if [[ -L "$target_file" ]]; then
-                local existing_abs="$(readlink -m "$target_file")"
-                local entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
+                local existing_abs
+                existing_abs="$(readlink -m "$target_file")"
+                local entry_abs
+                entry_abs="$(cd "$(dirname "$entry")" 2>/dev/null && pwd)/$(basename "$entry")"
                 if [[ "$existing_abs" == "$entry_abs" ]]; then
                     continue
                 fi

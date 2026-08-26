@@ -16,7 +16,6 @@ set -euo pipefail
 readonly EXIT_SUCCESS=0
 readonly EXIT_EXPECTED_FAILURE=1
 readonly EXIT_ERROR=2
-readonly EXIT_PERMISSION=3
 readonly EXIT_NETWORK=4
 readonly EXIT_INVALID_SKILL=5
 
@@ -24,7 +23,6 @@ readonly EXIT_INVALID_SKILL=5
 # GLOBAL VARIABLES
 #=============================================================================
 
-GLOBAL_MODE=false
 BRANCH="main"
 OUTPUT_FILE=""
 REPO_SOURCE=""
@@ -84,6 +82,11 @@ normalize_url() {
         normalized_url="$source"
     elif [[ "$source" =~ ^git@ ]]; then
         normalized_url="$source"
+    # Local directory or file:// URL (hermetic/offline usage)
+    elif [[ "$source" == file://* ]]; then
+        normalized_url="${source#file://}"
+    elif [[ -d "$source" ]]; then
+        normalized_url="$(cd "$source" && pwd)"
     elif [[ "$source" =~ ^[^/]+/[^/]+$ ]]; then
         normalized_url="https://github.com/${source}"
     else
@@ -184,9 +187,28 @@ discover_skills() {
         done < <(find "$repo_path" -maxdepth 5 -name "SKILL.md" -print0 2>/dev/null)
     fi
 
-    for skill_file in "${skill_files[@]}"; do
-        parse_skill_file "$skill_file" "$install_internal" "$repo_path"
+    # Deduplicate: priority scan "." already covers skills/ subdirs, so the
+    # same SKILL.md can be collected more than once.
+    local -A seen_files=()
+    local unique_files=()
+    local f
+    for f in "${skill_files[@]}"; do
+        [[ -z "${seen_files[$f]:-}" ]] || continue
+        seen_files["$f"]=1
+        unique_files+=("$f")
     done
+    if (( ${#unique_files[@]} > 0 )); then
+        skill_files=("${unique_files[@]}")
+    else
+        skill_files=()
+    fi
+
+    for skill_file in "${skill_files[@]}"; do
+        # A skipped/invalid skill must not fail the whole discovery (set -e
+        # would otherwise propagate the parser's nonzero return).
+        parse_skill_file "$skill_file" "$install_internal" "$repo_path" || true
+    done
+    return 0
 }
 
 extract_front_matter() {
@@ -224,7 +246,12 @@ parse_skill_file() {
     fi
 
     skill_dir=$(dirname "$skill_file")
-    relative_src="${skill_dir#$repo_path/}"
+    if [[ "$skill_dir" == "$repo_path" ]]; then
+        relative_src="."
+    else
+        relative_src="${skill_dir#$repo_path/}"
+    fi
+    relative_src="${relative_src#./}"
 
     local sanitized_name
     sanitized_name=$(sanitize_skill_name "$name")

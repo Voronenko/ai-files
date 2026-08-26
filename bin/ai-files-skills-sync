@@ -212,7 +212,7 @@ main() {
     # Resolve skill names to source paths
     local resolved=()
     local warnings=0
-    local src rc
+    local src
     for skill in "${skills[@]}"; do
         src=$(find_skill_source "$skill")
 

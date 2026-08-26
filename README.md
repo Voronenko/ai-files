@@ -565,11 +565,13 @@ the nested-checkout shared-memory migration:
 bash tests/run-tests.sh     # needs bash, git, jq; sqlite3 optional
 ```
 
-`tests/test-config.sh` covers `ai-files config` the same way, including its
-unattended setup mode. `tests/test-marketplace.sh` covers the Claude
-marketplace tooling: dispatcher routing, unattended install flows via a fake
-`claude` CLI (argument assertions, failure injection), and `marketplace.json`
-generation.
+Every other CLI utility ships its own suite: `test-config.sh` (unattended
+setup modes), `test-marketplace.sh` (dispatcher routing, install flows via a
+fake `claude` CLI, `marketplace.json` generation), and one suite per skills
+tool — `test-skills-add.sh`, `test-skills-explore.sh`, `test-skills-sync.sh`,
+`test-skill-enable.sh`, `test-skill-disable.sh` — and `test-update.sh` covers
+the `ai-files update` sync/link subcommands (protection rules, default-skill
+linking, legacy `.specify` migration).
 
 Fixtures run in a self-cleaning temp workspace outside the checkout. All three
 suites execute on every push to `master` and on pull requests via
