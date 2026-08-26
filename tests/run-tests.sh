@@ -26,7 +26,7 @@ BASE="$(mktemp -d "${TMPDIR:-/tmp}/ai-files-mcp-test.XXXXXX")"
 trap 'rm -rf "$BASE"' EXIT
 
 fresh() { # fresh <dir>
-    rm -rf "$BASE/$1"
+    rm -rf "${BASE:?}/$1"
     mkdir -p "$BASE/$1"
     git -C "$BASE/$1" init -q
 }

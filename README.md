@@ -555,10 +555,11 @@ the nested-checkout shared-memory migration:
 bash tests/run-tests.sh     # needs bash, git, jq; sqlite3 optional
 ```
 
-Fixtures run in a self-cleaning temp workspace outside the checkout. The suite
-executes on every push to `master` and on pull requests via
-`.github/workflows/tests.yml`, together with `shellcheck` over the modified
-scripts.
+Fixtures run in a self-cleaning temp workspace outside the checkout.
+`tests/test-config.sh` covers `ai-files config` the same way, including its
+unattended setup mode. Both suites execute on every push to `master` and on
+pull requests via `.github/workflows/tests.yml`, together with `shellcheck`
+over the modified scripts.
 
 **Examples:**
 
