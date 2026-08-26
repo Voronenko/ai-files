@@ -1,0 +1,19 @@
+---
+name: tests
+
+"on":
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shellcheck bin scripts
+        run: shellcheck -S warning bin/ai-files-mcp bin/ai-files-setup
+
+      - name: Run ai-files mcp / setup test suite
+        run: bash tests/run-tests.sh

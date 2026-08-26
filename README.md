@@ -544,6 +544,22 @@ ai-files version
 3. In detached HEAD state, returns `detached-commit_hash`
 4. If not in a git repository, returns `unknown`
 
+### Tests
+
+The MCP tooling ships with an integration suite covering the three-config
+parallel writes, built-in server registration (`repo-memory`, `ssh-manager`),
+drift repair (`sync`), removal confirmation, pre-flight JSON validation, and
+the nested-checkout shared-memory migration:
+
+```bash
+bash tests/run-tests.sh     # needs bash, git, jq; sqlite3 optional
+```
+
+Fixtures run in a self-cleaning temp workspace outside the checkout. The suite
+executes on every push to `master` and on pull requests via
+`.github/workflows/tests.yml`, together with `shellcheck` over the modified
+scripts.
+
 **Examples:**
 
 ```bash
