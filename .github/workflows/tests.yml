@@ -26,6 +26,14 @@ jobs:
       - name: Run integration suites
         run: |
           fail=0
+          # Guard: every shell suite in tests/ must be matched by the loop
+          # below — a misnamed file would otherwise never run in CI.
+          for f in tests/*.sh; do
+            case "$f" in
+              tests/run-tests.sh|tests/test-*.sh) ;;
+              *) echo "::error::suite not matched by CI loop: $f"; fail=1 ;;
+            esac
+          done
           for s in tests/run-tests.sh tests/test-*.sh; do
             echo "::group::==> $s"
             bash "$s" || fail=1
