@@ -544,6 +544,16 @@ ai-files version
 3. In detached HEAD state, returns `detached-commit_hash`
 4. If not in a git repository, returns `unknown`
 
+**Examples:**
+
+```bash
+ai-files version
+# Output: v1.2.3 (if on tag)
+# Output: main-abc1234 (if on branch)
+# Output: detached-abc1234 (if detached HEAD)
+# Output: unknown (if not in git repo)
+```
+
 ### Tests
 
 The MCP tooling ships with an integration suite covering the three-config
@@ -555,20 +565,18 @@ the nested-checkout shared-memory migration:
 bash tests/run-tests.sh     # needs bash, git, jq; sqlite3 optional
 ```
 
-Fixtures run in a self-cleaning temp workspace outside the checkout. The suite
-executes on every push to `master` and on pull requests via
+Every other CLI utility ships its own suite: `test-config.sh` (unattended
+setup modes), `test-marketplace.sh` (dispatcher routing, install flows via a
+fake `claude` CLI, `marketplace.json` generation), and one suite per skills
+tool — `test-skills-add.sh`, `test-skills-explore.sh`, `test-skills-sync.sh`,
+`test-skill-enable.sh`, `test-skill-disable.sh` — and `test-update.sh` covers
+the `ai-files update` sync/link subcommands (protection rules, default-skill
+linking, legacy `.specify` migration).
+
+Fixtures run in a self-cleaning temp workspace outside the checkout. All three
+suites execute on every push to `master` and on pull requests via
 `.github/workflows/tests.yml`, together with `shellcheck` over the modified
 scripts.
-
-**Examples:**
-
-```bash
-ai-files version
-# Output: v1.2.3 (if on tag)
-# Output: main-abc1234 (if on branch)
-# Output: detached-abc1234 (if detached HEAD)
-# Output: unknown (if not in git repo)
-```
 
 ## Commands
 

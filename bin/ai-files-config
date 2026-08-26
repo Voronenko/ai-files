@@ -98,7 +98,16 @@ cmd_unset() {
 }
 
 get_git_repo_name() {
-    git remote -v 2>/dev/null | head -1 | sed -E 's|.*[:/]([^/]+)\.git.*|\1|' || echo ""
+    local url
+    url="$(git config --get remote.origin.url 2>/dev/null || true)"
+    if [ -z "$url" ]; then
+        echo ""
+        return 0
+    fi
+    # Strip .git suffix, then basename over both URL styles:
+    # https://host/org/repo and git@host:org/repo
+    url="${url%.git}"
+    echo "${url##*[/:]}"
 }
 
 confirm() {
@@ -162,14 +171,52 @@ pick_project_slug() {
     out=$( cd "$vault_path/pages" 2>/dev/null \
            && find . -mindepth 1 -type d -not -path '*/.*' | sed 's|^\./||' | sort \
            | fzf --print-query \
-                 --prompt='Project slug> ' \
-                 --header='enter: use selection or typed value · esc: skip' ) || true
+                --prompt='Project slug> ' \
+                --header='enter: use selection or typed value · esc: skip' ) || true
     selection=$(tail -n +2 <<<"$out" | head -1)
     query=$(head -1 <<<"$out")
     echo "${selection:-$query}"
 }
 
+# Unattended mode: any setup option or -y applies values without prompting.
+# Vault existence is softly verified against 'obsidian vaults verbose' when
+# that binary exists; missing obsidian never blocks scripted runs.
 cmd_setup() {
+    local opt_vault="" opt_slug="" opt_default="" opt_session="" opt_memory=""
+    local unattended=false
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -y|--yes)
+                unattended=true
+                ;;
+            --vault|--project-slug|--vault-default-path|--vault-session-default-path|--vault-memory-default-path)
+                [ $# -ge 2 ] || { echo "error: $1 requires a value" >&2; exit 1; }
+                case "$1" in
+                    --vault)                      opt_vault="$2" ;;
+                    --project-slug)               opt_slug="$2" ;;
+                    --vault-default-path)         opt_default="$2" ;;
+                    --vault-session-default-path) opt_session="$2" ;;
+                    --vault-memory-default-path)  opt_memory="$2" ;;
+                esac
+                shift
+                ;;
+            -h|--help)
+                show_help
+                return 0
+                ;;
+            *)
+                echo "error: unknown setup option '$1'" >&2
+                exit 1
+                ;;
+        esac
+        shift
+    done
+
+    if [ "$unattended" = true ] || [ -n "$opt_vault$opt_slug$opt_default$opt_session$opt_memory" ]; then
+        unattended=true
+    fi
+
     echo "=== ai-files config setup ==="
     echo ""
 
@@ -179,6 +226,104 @@ cmd_setup() {
     current_default_path=$(git config --local "$(full_key "vault-default-path")" 2>/dev/null || echo "")
     current_session_path=$(git config --local "$(full_key "vault-session-default-path")" 2>/dev/null || echo "")
     current_memory_path=$(git config --local "$(full_key "vault-memory-default-path")" 2>/dev/null || echo "")
+
+    local repo_name
+    repo_name=$(get_git_repo_name)
+
+    if [ "$unattended" = true ]; then
+        # ---------------------------------------------------------- vault --
+        local selected_vault
+        if [ -n "$opt_vault" ]; then
+            selected_vault="$opt_vault"
+        elif [ -n "$current_vault" ]; then
+            selected_vault="$current_vault"
+            echo "Keeping vault: $selected_vault"
+        else
+            echo "error: unattended setup requires --vault (no vault configured)" >&2
+            return 1
+        fi
+        cmd_set "vault" "$selected_vault"
+
+        if command -v obsidian >/dev/null 2>&1; then
+            if obsidian vaults verbose 2>/dev/null \
+                | awk -F'\t' -v v="$selected_vault" '$1 == v { found = 1 } END { exit !found }'; then
+                : ;
+            else
+                echo "warning: vault '$selected_vault' not listed by 'obsidian vaults verbose'" >&2
+            fi
+        fi
+        echo ""
+
+        # ---------------------------------------------------- project-slug --
+        local stored_slug
+        if [ -n "$opt_slug" ]; then
+            stored_slug="$opt_slug"
+            cmd_set "project-slug" "$stored_slug"
+        elif [ -n "$current_slug" ]; then
+            stored_slug="$current_slug"
+            echo "Keeping project-slug: $stored_slug"
+        else
+            stored_slug=""
+            echo "Skipping project-slug configuration (use --project-slug to set it)."
+        fi
+        echo ""
+
+        # ---------------------------------------------- vault-default-path --
+        local chosen_path actual_default_path
+        actual_default_path=""
+        if [ -n "$opt_default" ]; then
+            chosen_path="$opt_default"
+        elif [ -n "$stored_slug" ] && [ -n "$repo_name" ]; then
+            chosen_path="pages/$stored_slug/repo-$repo_name"
+        elif [ -n "$repo_name" ]; then
+            chosen_path="pages/repo-$repo_name"
+        else
+            chosen_path=""
+            echo "Skipping vault-default-path configuration (no git remote found; use --vault-default-path)."
+        fi
+        if [ -n "$chosen_path" ]; then
+            cmd_set "vault-default-path" "$chosen_path"
+            actual_default_path="$chosen_path"
+        fi
+        echo ""
+
+        # ------------------------------------------ session / memory paths --
+        local chosen_session
+        if [ -n "$opt_session" ]; then
+            chosen_session="$opt_session"
+        elif [ -n "$actual_default_path" ]; then
+            chosen_session="${actual_default_path}/sessions"
+        else
+            chosen_session=""
+            echo "Skipping vault-session-default-path configuration."
+        fi
+        if [ -n "$chosen_session" ]; then
+            cmd_set "vault-session-default-path" "$chosen_session"
+        fi
+        echo ""
+
+        local chosen_memory
+        if [ -n "$opt_memory" ]; then
+            chosen_memory="$opt_memory"
+        elif [ -n "$current_memory_path" ]; then
+            chosen_memory="$current_memory_path"
+            echo "Keeping vault-memory-default-path: $chosen_memory"
+        elif [ -n "$actual_default_path" ]; then
+            chosen_memory="${actual_default_path}/memory"
+        else
+            chosen_memory=""
+            echo "Skipping vault-memory-default-path configuration."
+        fi
+        if [ -n "$chosen_memory" ]; then
+            cmd_set "vault-memory-default-path" "$chosen_memory"
+        fi
+        echo ""
+
+        echo "=== Setup complete ==="
+        echo ""
+        cmd_list
+        return 0
+    fi
 
     if [ -n "$current_vault" ] || [ -n "$current_slug" ] || [ -n "$current_default_path" ] || [ -n "$current_session_path" ] || [ -n "$current_memory_path" ]; then
         echo "Current configuration:"
@@ -196,8 +341,6 @@ cmd_setup() {
         echo ""
     fi
 
-    local repo_name
-    repo_name=$(get_git_repo_name)
     echo "Git repository name: ${repo_name:-<not a git repo>}"
     echo ""
 
@@ -321,7 +464,7 @@ Usage: ai-files config <command> [args]
 Manage ai-files configuration stored in local git config under ${CONFIG_SECTION}.* section.
 
 Commands:
-  setup                      Interactive setup wizard
+  setup [options]            Setup wizard (interactive, or unattended with options)
   list                       Show all ${CONFIG_SECTION}.* config values (default)
   get <key>                  Get a specific value
   set <key> <value>          Set a value (local git config)
@@ -334,11 +477,23 @@ Known keys:
   vault-default-path         Default folder path within vault
   vault-session-default-path Default session folder path within vault
   vault-memory-default-path  Default memory folder path within vault
+
+Setup options (any option or -y switches to unattended mode; prompts and
+obsidian/fzf requirements are skipped, proposals are applied as-is):
+
+  -y, --yes                       Unattended; take all proposals
+  --vault NAME                    Vault name (required unattended unless already set)
+  --project-slug SLUG             Project slug (else keep stored, else skip)
+  --vault-default-path P          Else pages/<slug>/repo-<name> or pages/repo-<name>
+  --vault-session-default-path P  Else <vault-default-path>/sessions
+  --vault-memory-default-path P   Else current value, else <vault-default-path>/memory
+
+Examples:
   ai-files config setup
+  ai-files config setup -y --vault my-vault --project-slug myorg/myapp
   ai-files config set vault my-vault
   ai-files config set project-slug myorg/myapp
   ai-files config set vault-default-path "pages/repo-mine"
-  ai-files config set vault-session-default-path "sessions"
   ai-files config list
   ai-files config get vault
   ai-files config unset vault-default-path
@@ -350,7 +505,7 @@ shift || true
 
 case "$SUB" in
     setup)
-        cmd_setup
+        cmd_setup "$@"
         ;;
     list|ls)
         cmd_list

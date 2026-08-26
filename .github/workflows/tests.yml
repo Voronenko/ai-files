@@ -12,8 +12,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Shellcheck bin scripts
-        run: shellcheck -S warning bin/ai-files-mcp bin/ai-files-setup
+      - name: Install PyYAML (marketplace-update dependency)
+        run: python3 -m pip install --quiet pyyaml
 
-      - name: Run ai-files mcp / setup test suite
-        run: bash tests/run-tests.sh
+      - name: Install yq (skills tools dependency)
+        run: |
+          sudo curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64" -o /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Shellcheck bin scripts
+        run: shellcheck -S warning bin/ai-files-mcp bin/ai-files-setup bin/ai-files-config bin/ai-files-marketplace bin/ai-files-marketplace-install bin/ai-files-skills-add bin/ai-files-skills-explore bin/ai-files-skills-sync bin/ai-files-skill-enable bin/ai-files-skill-disable bin/ai-files-update
+
+      - name: Run integration suites
+        run: |
+          fail=0
+          # Guard: every shell suite in tests/ must be matched by the loop
+          # below — a misnamed file would otherwise never run in CI.
+          for f in tests/*.sh; do
+            case "$f" in
+              tests/run-tests.sh|tests/test-*.sh) ;;
+              *) echo "::error::suite not matched by CI loop: $f"; fail=1 ;;
+            esac
+          done
+          for s in tests/run-tests.sh tests/test-*.sh; do
+            echo "::group::==> $s"
+            bash "$s" || fail=1
+            echo "::endgroup::"
+          done
+          exit $fail
