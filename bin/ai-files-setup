@@ -10,7 +10,9 @@ set -euo pipefail
 #   3) Relink agent folders                        (ai-files update link-*)
 #   4) Initialize graphify                         (copy .graphifyignore)
 #   5) Create missing dotfile templates            (.mcp.json, opencode.json, zcode.json)
-#   6) Suggest .gitignore for untracked setup files
+#   6) Register known MCP servers when missing     (ai-files mcp add <name>)
+#      + shared memory DB proposal for nested checkouts (<repo>/<clone>)
+#   7) Suggest .gitignore for untracked setup files
 
 # Resolve the real path of the script, even if invoked via symlink (same as bin/ai-files).
 SCRIPT_PATH="$0"
@@ -97,12 +99,12 @@ run_ai_files() {
 # Step 0: bootstrap .ai-files/ when missing.
 step0_bootstrap() {
     if [[ -d ".ai-files" ]]; then
-        print_info "[0/6] .ai-files/ present — skipping bootstrap."
+        print_info "[0/7] .ai-files/ present — skipping bootstrap."
         return 0
     fi
-    print_warning "[0/6] .ai-files/ is missing — running 'ai-files update files'."
+    print_warning "[0/7] .ai-files/ is missing — running 'ai-files update files'."
     run_ai_files update files
-    print_success "[0/6] .ai-files/ bootstrapped."
+    print_success "[0/7] .ai-files/ bootstrapped."
 }
 
 # Step 1: sync .ai-files/VERSION from dist/ when stale.
@@ -111,29 +113,29 @@ step1_version_sync() {
     local dist_vf="${AI_FILES_HOME}/dist/.ai-files/VERSION"
 
     if [[ ! -f "$local_vf" ]]; then
-        print_warning "[1/6] $local_vf not found — cannot check version."
+        print_warning "[1/7] $local_vf not found — cannot check version."
         return 0
     fi
     if [[ ! -f "$dist_vf" ]]; then
-        print_warning "[1/6] dist version file not found ($dist_vf) — skipping version check."
+        print_warning "[1/7] dist version file not found ($dist_vf) — skipping version check."
         return 0
     fi
 
     if cmp -s "$local_vf" "$dist_vf"; then
         local v
         v="$(grep '^VERSION=' "$local_vf" | head -1 || true)"
-        print_info "[1/6] VERSION up to date (${v:-matches dist})."
+        print_info "[1/7] VERSION up to date (${v:-matches dist})."
         return 0
     fi
 
-    print_warning "[1/6] .ai-files/VERSION differs from $dist_vf:"
+    print_warning "[1/7] .ai-files/VERSION differs from $dist_vf:"
     echo "    repo:  $(grep '^VERSION=' "$local_vf" | head -1 || echo '<missing>')"
     echo "    dist:  $(grep '^VERSION=' "$dist_vf" | head -1 || echo '<missing>')"
     if confirm "Update ai-files setup ('ai-files update files')?"; then
         run_ai_files update files
-        print_success "[1/6] ai-files setup updated."
+        print_success "[1/7] ai-files setup updated."
     else
-        print_warning "[1/6] Skipping update."
+        print_warning "[1/7] Skipping update."
     fi
 }
 
@@ -151,16 +153,16 @@ step2_obsidian() {
     done
 
     if [[ ${#missing[@]} -eq 0 ]]; then
-        print_info "[2/6] Obsidian integration configured — current config:"
+        print_info "[2/7] Obsidian integration configured — current config:"
         run_ai_files config
         return 0
     fi
 
-    print_warning "[2/6] Obsidian integration not fully configured (missing: ${missing[*]})."
+    print_warning "[2/7] Obsidian integration not fully configured (missing: ${missing[*]})."
     if confirm "Configure obsidian integration ('ai-files config setup')?"; then
         run_ai_files config setup
     else
-        print_warning "[2/6] Skipping obsidian configuration."
+        print_warning "[2/7] Skipping obsidian configuration."
     fi
 }
 
@@ -177,16 +179,16 @@ step3_relink() {
     done
 
     if [[ ${#missing[@]} -eq 0 ]]; then
-        print_info "[3/6] Agent folders all present. Available commands:"
+        print_info "[3/7] Agent folders all present. Available commands:"
         for cmd in "${RELINK_COMMANDS[@]}"; do
             echo "    ai-files update $cmd"
         done
         return 0
     fi
 
-    print_warning "[3/6] Missing agent folders: ${missing[*]}."
-    if ! confirm "[3/6] Relink agent folders?"; then
-        print_warning "[3/6] Skipping relink."
+    print_warning "[3/7] Missing agent folders: ${missing[*]}."
+    if ! confirm "[3/7] Relink agent folders?"; then
+        print_warning "[3/7] Skipping relink."
         return 0
     fi
     for cmd in "${RELINK_COMMANDS[@]}"; do
@@ -205,27 +207,27 @@ step3_relink() {
 # Step 4: initialize graphify when graphify-out/ is absent.
 step4_graphify() {
     if [[ -d "graphify-out" ]]; then
-        print_info "[4/6] graphify-out/ present — skipping."
+        print_info "[4/7] graphify-out/ present — skipping."
         return 0
     fi
     if [[ -e ".graphifyignore" ]]; then
-        print_info "[4/6] .graphifyignore already present — step completed."
+        print_info "[4/7] .graphifyignore already present — step completed."
         return 0
     fi
 
-    print_warning "[4/6] graphify-out/ not found."
+    print_warning "[4/7] graphify-out/ not found."
     if ! confirm "Initialize graphify (copy .graphifyignore to repo root)?"; then
-        print_warning "[4/6] Skipping graphify initialization."
+        print_warning "[4/7] Skipping graphify initialization."
         return 0
     fi
 
     local src="${AI_FILES_HOME}/.graphifyignore"
     if [[ ! -f "$src" ]]; then
-        print_error "[4/6] Template not found: $src"
+        print_error "[4/7] Template not found: $src"
         return 1
     fi
     cp "$src" "./.graphifyignore"
-    print_success "[4/6] Copied .graphifyignore to repo root."
+    print_success "[4/7] Copied .graphifyignore to repo root."
 }
 
 # Step 5: create missing dotfile templates.
@@ -235,25 +237,80 @@ step5_dotfiles() {
     local f src
     for f in "${DOTFILE_TEMPLATES[@]}"; do
         if [[ -e "$f" ]]; then
-            print_info "[5/6] $f present — skipping."
+            print_info "[5/7] $f present — skipping."
             continue
         fi
         src="${AI_FILES_HOME}/$f"
         if [[ ! -f "$src" ]]; then
-            print_warning "[5/6] Template not found for $f: $src"
+            print_warning "[5/7] Template not found for $f: $src"
             continue
         fi
-        if confirm "[5/6] Create $f from template?"; then
+        if confirm "[5/7] Create $f from template?"; then
             cp "$src" "./$f"
-            print_success "[5/6] Created $f."
+            print_success "[5/7] Created $f."
         else
-            print_warning "[5/6] Skipped $f."
+            print_warning "[5/7] Skipped $f."
         fi
     done
 }
 
 # Files this setup may create or link that typically should not be tracked.
 GITIGNORE_CANDIDATES=(.claude/ .graphifyignore .kilo/ .mcp.json .opencode/ .specify/ opencode.json zcode.json)
+
+# Step 6: register known MCP servers when missing. 'ai-files mcp add <name>'
+# writes .mcp.json (primary) and syncs the converted entry into opencode.json
+# and zcode.json in one run, so all agent configs stay in step. The server
+# catalog lives in ai-files-mcp ('mcp known' / 'mcp has') — this step only
+# probes it, so new built-ins are offered without editing setup.
+step6_mcp_servers() {
+    local known name
+    known="$(run_ai_files mcp known 2>/dev/null || true)"
+    if [[ -z "$known" ]]; then
+        print_warning "[6/7] Cannot query known MCP servers ('ai-files mcp known') — skipping."
+        return 0
+    fi
+
+    local missing=()
+    while IFS= read -r name; do
+        [[ -z "$name" ]] && continue
+        if run_ai_files mcp has "$name" >/dev/null 2>&1; then
+            continue
+        fi
+        missing+=("$name")
+    done <<< "$known"
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        print_info "[6/7] Known MCP servers registered — current state:"
+        run_ai_files mcp list
+    else
+        if [[ ! -f ".mcp.json" ]]; then
+            print_warning "[6/7] .mcp.json absent — registering a server bootstraps the MCP config files."
+        fi
+        for name in "${missing[@]}"; do
+            if confirm "[6/7] Register '${name}' MCP server (writes .mcp.json, opencode.json, zcode.json)?"; then
+                if run_ai_files mcp add "$name"; then
+                    print_success "  ${name} registered."
+                else
+                    print_warning "  Registering '${name}' failed."
+                fi
+            else
+                print_info "  Skipped ${name}."
+            fi
+        done
+    fi
+
+    # Nested checkout (<git-repo-name>/<clone-folder>, matched via remote
+    # origin): offer to share the repo-memory database between sibling clones
+    # via ../.ai-files-shared/.
+    if run_ai_files mcp shared-memory --check >/dev/null 2>&1; then
+        print_warning "[6/7] Nested checkout detected ($(basename "$(dirname "$PWD")")/$(basename "$PWD"))."
+        if confirm "[6/7] Use shared memory DB at ../.ai-files-shared/memory.db?"; then
+            run_ai_files mcp shared-memory -y
+        else
+            print_info "[6/7] Keeping per-repo memory DB."
+        fi
+    fi
+}
 
 # Pick the ignore file: prefer .gitignore.local when it exists as a symlink
 # pointing to ./.git/info/exclude; otherwise fall back to .gitignore.
@@ -269,9 +326,9 @@ pick_ignore_file() {
     echo ".gitignore"
 }
 
-# Step 6 (final): if any setup file is untracked, suggest adding it to the
+# Step 7 (final): if any setup file is untracked, suggest adding it to the
 # ignore file (prefers .gitignore.local → ./.git/info/exclude over .gitignore).
-step6_gitignore() {
+step7_gitignore() {
     local untracked
     untracked="$(git status --porcelain | sed -n 's/^?? //p' || true)"
 
@@ -284,20 +341,20 @@ step6_gitignore() {
     done
 
     if [[ ${#found[@]} -eq 0 ]]; then
-        print_info "[6/6] No untracked setup files — nothing to add to the ignore file."
+        print_info "[7/7] No untracked setup files — nothing to add to the ignore file."
         return 0
     fi
 
     local ignore_file
     ignore_file="$(pick_ignore_file)"
 
-    print_warning "[6/6] Untracked setup files:"
+    print_warning "[7/7] Untracked setup files:"
     local f
     for f in "${found[@]}"; do
         echo "    $f"
     done
     if ! confirm "Add them to ${ignore_file}?"; then
-        print_warning "[6/6] Skipping ignore update."
+        print_warning "[7/7] Skipping ignore update."
         return 0
     fi
 
@@ -325,7 +382,9 @@ Steps:
   3  Relink agent folders                        (ai-files update link-*)
   4  Initialize graphify                         (copy .graphifyignore)
   5  Create missing dotfile templates            (.mcp.json, opencode.json, zcode.json)
-  6  Suggest ignore entries for untracked setup files (.gitignore / .gitignore.local)
+  6  Register known MCP servers when missing     (.mcp.json / opencode.json / zcode.json)
+     + shared memory DB proposal for nested checkouts (<x>/<x>)
+  7  Suggest ignore entries for untracked setup files (.gitignore / .gitignore.local)
 
 Options:
   -h, --help   Show this help and exit
@@ -358,7 +417,8 @@ main() {
     step3_relink
     step4_graphify
     step5_dotfiles
-    step6_gitignore
+    step6_mcp_servers
+    step7_gitignore
 
     echo ""
     print_success "Setup complete."

@@ -136,7 +136,13 @@ The `ai-files` is a command-line interface that provides various utilities for m
 
 ### ai-files mcp
 
-Configure and manage MCP (Model Context Protocol) servers. This utility helps you add, remove, list, and manage MCP server configurations in `~/.kilo/mcp.json`.
+Configure and manage MCP (Model Context Protocol) servers across three project config files:
+
+- `.mcp.json` — **primary** (Claude/Kilo format, source of truth)
+- `opencode.json` — secondary (`mcp` section, opencode format)
+- `zcode.json` — secondary (`mcp.servers`, zcode format)
+
+Every mutating command (`add`, `add-json`, `remove`) writes the primary first, then applies the equivalent converted change to both secondaries in the same run. Unrelated keys (e.g. `permission`, `lsp` in `opencode.json`) are merged, never overwritten; missing files are created from skeletons. The per-server `autoApprove` list is stored in `.mcp.json` only — opencode/zcode do not support it. Re-syncing an existing server preserves its secondary `enabled` flag, so a deliberately disabled server stays disabled. Before writing, all three config files are validated as JSON to avoid partial multi-file updates.
 
 **Usage:**
 ```bash
@@ -148,19 +154,33 @@ ai-files mcp <command> [options]
 | Command | Description |
 |---------|-------------|
 | `serve [options] -- <cmd> [args...]` | Start an MCP stdio server with environment variables |
-| `add [options] <name> <cmd|url> [...]` | Add MCP server entry with specified transport |
-| `remove <name>` | Remove MCP server by name |
-| `list` | List all configured MCP servers |
-| `get <name>` | Get details about a specific server |
+| `add [-y] [--dry-run] <name> <cmd|url> [...]` | Add MCP server entry with specified transport |
+| `add [-y] [--dry-run] <known-name>` | Register a built-in server (`repo-memory`, `ssh-manager`) into all configs |
+| `remove [-y] [--dry-run] <name>` | Remove MCP server from all configs (asks for confirmation unless `-y`) |
+| `list` | List servers with per-file presence (`✓` in sync, `~` diverged, `-` absent) |
+| `get <name>` | Get details about a specific server (primary) |
 | `add-json <name> <json>` | Add server via raw JSON configuration |
+| `sync [-y] [--dry-run]` | Propagate `.mcp.json` entries into `opencode.json` / `zcode.json`; reports secondary-only servers untouched |
+| `shared-memory [-y] [--dry-run] [--check]` | Shared memory DB for nested checkouts (see below) |
+| `known` | Print built-in server names (one per line) |
+| `has <name>` | Exit-code probe: 0 when `<name>` exists in `.mcp.json` |
+| `opencode [src] [dst]` | One-shot import into `opencode.json` (backward compatible) |
 | `help` | Show help message |
 
 **Options for `add` command:**
-- `--transport http|sse|stdio` - Specify transport type (required)
+- `--transport http|sse|stdio` - Specify transport type (required unless adding a known server by name)
 - `--env NAME=VALUE` - Add environment variable (can repeat)
+- `-y, --yes` - Auto-confirm prompts
+- `--dry-run` - Show what would be written without modifying files
 - `--` - End of options marker
 
 **Examples:**
+
+Register built-in servers by name (writes all three configs):
+```bash
+ai-files mcp add repo-memory
+ai-files mcp add ssh-manager -y
+```
 
 Add HTTP transport server:
 ```bash
@@ -177,7 +197,7 @@ Add stdio transport server with environment variables:
 ai-files mcp add --transport stdio git --env TOKEN=AA -- npx -y git-mcp-server
 ```
 
-List all configured servers:
+List servers across all configs:
 ```bash
 ai-files mcp list
 ```
@@ -192,10 +212,28 @@ Remove a server:
 ai-files mcp remove git
 ```
 
+Repair drift between the primary and the other configs:
+```bash
+ai-files mcp sync            # interactive
+ai-files mcp sync -y         # auto-confirm
+ai-files mcp sync --dry-run  # preview only
+```
+
 Start MCP server with custom environment:
 ```bash
 ai-files mcp serve --env XYZ=111 -- ./server-binary --stdio
 ```
+
+**Nested checkouts & shared memory DB**
+
+When a repository is checked out inside a folder named after the repo itself — `<git-repo-name>/<clone-folder>` (e.g. `premapp-backend/mig-repo` or `premapp-backend/premapp-backend`); the repo name is taken from the remote origin URL, falling back to the checkout folder name — sibling clones under the same parent can share one memory database:
+
+```bash
+ai-files mcp shared-memory          # detect + propose migration
+ai-files mcp shared-memory --check  # silent exit code probe (0 = nested)
+```
+
+It creates `<parent>/.ai-files-shared/`, rewrites `MCP_MEMORY_SQLITE_PATH` from `.ai-files/memory.db` to `../.ai-files-shared/memory.db` in every config that still uses the default path (custom paths are reported but never touched), and offers to copy an existing database using a consistent `sqlite3 .backup` snapshot (raw-copy fallback when sqlite3 is unavailable). `ai-files mcp add repo-memory` proposes the shared path automatically when a nested checkout is detected.
 
 ### ai-files memory
 
@@ -488,7 +526,8 @@ ai-files setup
 3. Relink agent folders — per-agent y/N for `link-claude`, `link-kilo`, `link-opencode`, `link-specify`
 4. Initialize graphify — copies `.graphifyignore` to the repo root when `graphify-out/` is absent (a present `.graphifyignore` counts as done)
 5. Create missing dotfile templates — `.mcp.json`, `opencode.json`, `zcode.json` copied from the ai-files install root
-6. Suggest ignore entries for untracked setup files (`.claude/`, `.graphifyignore`, `.kilo/`, `.mcp.json`, `.opencode/`, `.specify/`, `opencode.json`, `zcode.json`) — written to `.gitignore.local` (symlink to `./.git/info/exclude`) when present, else `.gitignore`
+6. Register known MCP servers when missing — offers `ai-files mcp add repo-memory` / `add ssh-manager` (each writes `.mcp.json`, `opencode.json`, `zcode.json` in one run); when the repo is a nested checkout (`<git-repo-name>/<clone-folder>`), additionally proposes migrating repo-memory to the shared `../.ai-files-shared/memory.db`
+7. Suggest ignore entries for untracked setup files (`.claude/`, `.graphifyignore`, `.kilo/`, `.mcp.json`, `.opencode/`, `.specify/`, `opencode.json`, `zcode.json`) — written to `.gitignore.local` (symlink to `./.git/info/exclude`) when present, else `.gitignore`
 
 ### ai-files version
 

@@ -1,6 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ai-files-mcp: configure and manage MCP servers across the three project
+# agent config files:
+#
+#   .mcp.json      PRIMARY (Claude/Kilo):  .mcpServers.<name>
+#                  {type, command, args[], env{}, autoApprove[]}
+#   opencode.json  SECONDARY (opencode):   .mcp.<name>
+#                  {type:"local", command:[cmd,...args], environment{}, enabled}
+#   zcode.json     SECONDARY (zcode):      .mcp.servers.<name>
+#                  {type:"stdio", command, args[], environment{}, enabled}
+#
+# .mcp.json is the source of truth. Mutating commands (add/add-json/remove)
+# write the primary first, then apply the equivalent converted change to both
+# secondary files (skeletons are created on demand; unrelated top-level keys
+# are merged, never overwritten). autoApprove is stored in .mcp.json only —
+# opencode/zcode do not support it.
+#
+# 'sync' repairs drift from the primary into the secondaries; 'list' shows
+# per-file presence. 'shared-memory' handles nested checkouts — a repo cloned
+# into a folder named after the repo itself (<git-repo-name>/<clone-folder>,
+# matched via remote origin, e.g. premapp-backend/mig-repo) — by pointing
+# repo-memory at ../.ai-files-shared/memory.db.
+
 get_git_root() {
     git rev-parse --show-toplevel 2>/dev/null || echo ""
 }
@@ -10,134 +32,700 @@ if [[ -z "$GIT_ROOT" ]]; then
     echo "Error: Not in a git repository" >&2
     exit 1
 fi
-CONFIG="${GIT_ROOT}/.mcp.json"
-mkdir -p "$(dirname "$CONFIG")"
 
-ensure_config_exists() {
+CONFIG="${GIT_ROOT}/.mcp.json"
+CONFIG_OPENCODE="${GIT_ROOT}/opencode.json"
+CONFIG_ZCODE="${GIT_ROOT}/zcode.json"
+
+SERVER_MEMORY="repo-memory"
+
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+print_info()    { echo -e "${BLUE}ℹ️  $1${NC}"; }
+print_success() { echo -e "${GREEN}✅ $1${NC}"; }
+# Diagnostics go to stderr so stdout stays parseable even when function output
+# is captured (e.g. compute_sqlite_path inside $(...)).
+print_warning() { echo -e "${YELLOW}⚠️  $1${NC}" >&2; }
+print_error()   { echo -e "${RED}❌ $1${NC}" >&2; }
+
+AUTO_YES=false
+DRY_RUN=false
+
+# y/N confirm (default no unless overridden). Honors AUTO_YES (-y); under
+# --dry-run it never blocks and callers gate the actual writes themselves.
+confirm() {
+    local prompt="$1"
+    local default="${2:-n}"
+    if [[ "$AUTO_YES" == "true" ]]; then
+        return 0
+    fi
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_info "(dry-run) would ask: $prompt"
+        return 0
+    fi
+    local response
+    while true; do
+        if [ "$default" = "y" ]; then
+            read -p "$prompt [Y/n]: " response || response=""
+        else
+            read -p "$prompt [y/N]: " response || response=""
+        fi
+        case "$response" in
+            [Yy][Ee][Ss]|[Yy]) return 0 ;;
+            [Nn][Oo]|[Nn]) return 1 ;;
+            "")
+                [ "$default" = "y" ] && return 0
+                [ "$default" = "n" ] && return 1
+                ;;
+        esac
+        echo "Please answer yes or no." >&2
+    done
+}
+
+############################################
+# File helpers (skeletons, atomic writes)
+############################################
+
+ensure_primary() {
     if [[ ! -f "$CONFIG" ]]; then
-        echo '{ "mcpServers": {} }' > "$CONFIG"
+        printf '{\n  "mcpServers": {}\n}\n' > "$CONFIG"
     fi
 }
 
-show_mcp_help() {
-    cat <<EOF
-Usage: ai-files mcp [options] [command]
+ensure_opencode() {
+    [[ -f "$CONFIG_OPENCODE" ]] && return 0
+    cat > "$CONFIG_OPENCODE" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {}
+}
+JSON
+}
 
-Configure and manage MCP servers
+ensure_zcode() {
+    [[ -f "$CONFIG_ZCODE" ]] && return 0
+    cat > "$CONFIG_ZCODE" <<'JSON'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {}
+  }
+}
+JSON
+}
 
-Commands:
-  serve [options] -- <cmd> [args...]     Start an MCP stdio server
-  add [options] <name> <cmd|url> [...]   Add MCP server entry
-  remove <name>                          Remove MCP server
-  list                                   List configured MCP servers
-  get <name>                             Get details about a server
-  add-json <name> <json>                 Add server via JSON
-  opencode [src] [dst]                   Import to .opencode/opencode.json
-  help                                   Show this help
+# Apply a jq filter to a JSON file and replace it atomically: temp file lives
+# NEXT TO the target (same-filesystem rename, no truncation window) and a
+# failed jq run never touches the original. Existing permissions are kept.
+jq_apply() { # <file> <filter> [jq args...]
+    local file="$1" filter="$2"
+    shift 2
+    local tmp
+    tmp="$(mktemp "$(dirname "$file")/.jqtmp.XXXXXX")" || return 1
+    if ! jq "$@" "$filter" "$file" > "$tmp"; then
+        rm -f "$tmp"
+        print_error "jq failed while updating $(basename "$file")"
+        return 1
+    fi
+    [[ -f "$file" ]] && chmod --reference="$file" "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$file"
+}
 
-Options for 'add':
-  --transport http|sse|stdio
-  --env NAME=VALUE      (can repeat)
-  --   end of options
+############################################
+# Readers / presence checks
+############################################
 
-Examples:
-  ai-files mcp add --transport http sentry https://mcp.sentry.dev/mcp
-  ai-files mcp add --transport sse asana https://mcp.asana.com/sse
-  ai-files mcp add --transport stdio git --env TOKEN=AA -- npx -y git-mcp-server
+primary_get() { # <name> -> compact JSON or empty
+    [[ -f "$CONFIG" ]] || return 0
+    jq -c --arg n "$1" '(.mcpServers[$n] // empty)' "$CONFIG" 2>/dev/null || true
+}
 
-Launching:
-  ai-files mcp serve --env XYZ=111 -- ./server-binary --stdio
-EOF
+opencode_get() {
+    [[ -f "$CONFIG_OPENCODE" ]] || return 0
+    jq -c --arg n "$1" '(.mcp[$n] // empty)' "$CONFIG_OPENCODE" 2>/dev/null || true
+}
+
+zcode_get() {
+    [[ -f "$CONFIG_ZCODE" ]] || return 0
+    jq -c --arg n "$1" '(.mcp.servers[$n] // empty)' "$CONFIG_ZCODE" 2>/dev/null || true
+}
+
+primary_has() {
+    [[ -f "$CONFIG" ]] && jq -e --arg n "$1" '(.mcpServers[$n] // null) != null' "$CONFIG" >/dev/null 2>&1
+}
+
+opencode_has() {
+    [[ -f "$CONFIG_OPENCODE" ]] && jq -e --arg n "$1" '(.mcp[$n] // null) != null' "$CONFIG_OPENCODE" >/dev/null 2>&1
+}
+
+zcode_has() {
+    [[ -f "$CONFIG_ZCODE" ]] && jq -e --arg n "$1" '(.mcp.servers[$n] // null) != null' "$CONFIG_ZCODE" >/dev/null 2>&1
+}
+
+primary_names() {
+    if [[ -f "$CONFIG" ]]; then
+        jq -r '.mcpServers | keys[]?' "$CONFIG" 2>/dev/null || true
+    fi
+}
+
+opencode_names() {
+    if [[ -f "$CONFIG_OPENCODE" ]]; then
+        jq -r '.mcp | keys[]?' "$CONFIG_OPENCODE" 2>/dev/null || true
+    fi
+}
+
+zcode_names() {
+    if [[ -f "$CONFIG_ZCODE" ]]; then
+        jq -r '.mcp.servers | keys[]?' "$CONFIG_ZCODE" 2>/dev/null || true
+    fi
+}
+
+############################################
+# Format converters (.mcp.json entry -> secondary entries)
+############################################
+
+convert_to_opencode() { # primary JSON on stdin -> opencode JSON on stdout
+    jq 'del(.autoApprove)
+        | if ((.type // .transport) == "stdio")
+          then ({ type: "local",
+                  command: ([.command] + (.args // [])),
+                  enabled: true }
+                + (if (.env // null) != null then { environment: .env } else {} end))
+          else (if (.transport // null) != null and (.type // null) == null
+                then . + { type: .transport } | del(.transport)
+                else .
+                end)
+          end'
+}
+
+convert_to_zcode() { # primary JSON on stdin -> zcode JSON on stdout
+    jq 'del(.autoApprove)
+        | if ((.type // .transport) == "stdio")
+          then ({ type: "stdio",
+                  command: .command,
+                  args: (.args // []),
+                  enabled: true }
+                + (if (.env // null) != null then { environment: .env } else {} end))
+          else (if (.transport // null) != null and (.type // null) == null
+                then . + { type: .transport } | del(.transport)
+                else .
+                end)
+          end'
+}
+
+############################################
+# Writers / removers (all gated by --dry-run)
+############################################
+
+write_primary_entry() { # <name> <primary-json>
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_info "  (dry-run) would write '$1' to .mcp.json"
+        return 0
+    fi
+    ensure_primary
+    local entry
+    entry="$(printf '%s' "$2" | jq '(if (.transport // null) != null and (.type // null) == null then . + { type: .transport } else . end) | del(.transport)')"
+    jq_apply "$CONFIG" '.mcpServers[$name] = $entry' --arg name "$1" --argjson entry "$entry"
+    print_success "  .mcp.json: wrote '$1'"
+}
+
+write_opencode_entry() { # <name> <primary-json>
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_info "  (dry-run) would sync '$1' into opencode.json"
+        return 0
+    fi
+    ensure_opencode
+    local entry
+    entry="$(printf '%s' "$2" | convert_to_opencode)"
+    # Re-syncing must not flip a deliberately disabled server back on: keep an
+    # existing `enabled` value, regenerate everything else. has("enabled") is
+    # used because jq's `//` treats a legitimate `false` as empty.
+    jq_apply "$CONFIG_OPENCODE" \
+        '.mcp[$name] as $old
+         | (if ($old | type == "object" and has("enabled")) then $old.enabled else null end) as $en
+         | .mcp = ((.mcp // {}) + { ($name): ($entry * (if $en != null then { enabled: $en } else {} end)) })' \
+        --arg name "$1" --argjson entry "$entry"
+    print_success "  opencode.json: synced '$1' (converted)"
+}
+
+write_zcode_entry() { # <name> <primary-json>
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_info "  (dry-run) would sync '$1' into zcode.json"
+        return 0
+    fi
+    ensure_zcode
+    local entry
+    entry="$(printf '%s' "$2" | convert_to_zcode)"
+    jq_apply "$CONFIG_ZCODE" \
+        '.mcp.servers[$name] as $old
+         | (if ($old | type == "object" and has("enabled")) then $old.enabled else null end) as $en
+         | .mcp = ((.mcp // {}) + { servers: (((.mcp // {}).servers // {}) + { ($name): ($entry * (if $en != null then { enabled: $en } else {} end)) }) })' \
+        --arg name "$1" --argjson entry "$entry"
+    print_success "  zcode.json: synced '$1' (converted)"
+}
+
+# Fail before the first write when an existing target config is not valid
+# JSON — otherwise a mid-run jq failure leaves .mcp.json updated while the
+# broken secondary stays stale.
+preflight_validate() {
+    local f rc=0
+    for f in "$CONFIG" "$CONFIG_OPENCODE" "$CONFIG_ZCODE"; do
+        [[ -f "$f" ]] || continue
+        if ! jq -e . "$f" >/dev/null 2>&1; then
+            print_error "Cannot parse $f — fix or remove it before changing MCP servers."
+            rc=1
+        fi
+    done
+    return $rc
+}
+
+apply_entry_everywhere() { # <name> <primary-json>
+    preflight_validate || return 1
+    local rc=0
+    write_primary_entry "$1" "$2"    || rc=1
+    write_opencode_entry "$1" "$2"   || rc=1
+    write_zcode_entry "$1" "$2"      || rc=1
+    if printf '%s' "$2" | jq -e 'has("autoApprove")' >/dev/null 2>&1; then
+        print_info "  autoApprove stored in .mcp.json only (not supported by opencode/zcode)."
+    fi
+    return $rc
+}
+
+remove_from_primary() { # <name>
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_info "  (dry-run) would remove '$1' from .mcp.json"
+        return 0
+    fi
+    jq_apply "$CONFIG" 'del(.mcpServers[$name])' --arg name "$1"
+}
+
+remove_from_opencode() { # <name>
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_info "  (dry-run) would remove '$1' from opencode.json"
+        return 0
+    fi
+    jq_apply "$CONFIG_OPENCODE" '.mcp = ((.mcp // {}) | del(.[$name]))' --arg name "$1"
+}
+
+remove_from_zcode() { # <name>
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_info "  (dry-run) would remove '$1' from zcode.json"
+        return 0
+    fi
+    jq_apply "$CONFIG_ZCODE" '.mcp = ((.mcp // {}) + { servers: (((.mcp // {}).servers // {}) | del(.[$name])) })' --arg name "$1"
+}
+
+# Compare a secondary entry against the conversion of the primary entry.
+# `enabled` is excluded: it is preserved from the secondary config on re-sync
+# and may legitimately differ from the freshly converted value.
+opencode_entry_matches() { # <name> <primary-json>
+    local expected actual
+    expected="$(printf '%s' "$2" | convert_to_opencode | jq -Sc 'del(.enabled)')"
+    actual="$(opencode_get "$1" | jq -Sc 'del(.enabled)' 2>/dev/null || true)"
+    [[ -n "$expected" && "$actual" == "$expected" ]]
+}
+
+zcode_entry_matches() { # <name> <primary-json>
+    local expected actual
+    expected="$(printf '%s' "$2" | convert_to_zcode | jq -Sc 'del(.enabled)')"
+    actual="$(zcode_get "$1" | jq -Sc 'del(.enabled)' 2>/dev/null || true)"
+    [[ -n "$expected" && "$actual" == "$expected" ]]
+}
+
+############################################
+# Nested checkout detection & shared memory DB
+############################################
+
+SHARED_DIR_NAME=".ai-files-shared"
+SHARED_DB_REL="../${SHARED_DIR_NAME}/memory.db"
+DEFAULT_DB_REL=".ai-files/memory.db"
+
+# Repo identity: the remote origin URL wins (a clone folder may be renamed,
+# e.g. premapp-backend/mig-repo); fall back to the checkout folder name when
+# no remote is configured.
+repo_name() {
+    local url base
+    url="$(git -C "$GIT_ROOT" config --get remote.origin.url 2>/dev/null || true)"
+    if [[ -n "$url" ]]; then
+        url="${url%.git}"
+        base="${url##*[/:]}"
+        echo "$base"
+    else
+        basename "$GIT_ROOT"
+    fi
+}
+
+# True when the repo is checked out inside a folder named after the repo
+# itself: <git-repo-name>/<clone-folder> (e.g. .../premapp-backend/mig-repo).
+is_nested_checkout() {
+    [[ -n "${GIT_ROOT:-}" ]] || return 1
+    local parent
+    parent="$(dirname "$GIT_ROOT")"
+    [[ "$parent" == "/" ]] && return 1
+    [[ "$(basename "$parent")" == "$(repo_name)" ]]
+}
+
+nested_checkout_label() {
+    echo "$(basename "$(dirname "$GIT_ROOT")")/$(basename "$GIT_ROOT") ($(repo_name))"
+}
+
+compute_sqlite_path() {
+    if is_nested_checkout; then
+        print_warning "Nested checkout detected: $(nested_checkout_label)"
+        if confirm "Use shared memory DB (${SHARED_DB_REL}) instead of ${DEFAULT_DB_REL}?" "y"; then
+            if [[ "$DRY_RUN" != "true" ]]; then
+                mkdir -p "$(dirname "$GIT_ROOT")/${SHARED_DIR_NAME}"
+            fi
+            echo "$SHARED_DB_REL"
+            return 0
+        fi
+    fi
+    echo "$DEFAULT_DB_REL"
+}
+
+sqlite_path_in() { # <kind: primary|opencode|zcode> -> configured path or empty
+    case "$1" in
+        primary)
+            [[ -f "$CONFIG" ]] || return 0
+            jq -r --arg n "$SERVER_MEMORY" '(.mcpServers[$n].env.MCP_MEMORY_SQLITE_PATH // empty)' "$CONFIG" 2>/dev/null || true
+            ;;
+        opencode)
+            [[ -f "$CONFIG_OPENCODE" ]] || return 0
+            jq -r --arg n "$SERVER_MEMORY" '(.mcp[$n].environment.MCP_MEMORY_SQLITE_PATH // empty)' "$CONFIG_OPENCODE" 2>/dev/null || true
+            ;;
+        zcode)
+            [[ -f "$CONFIG_ZCODE" ]] || return 0
+            jq -r --arg n "$SERVER_MEMORY" '(.mcp.servers[$n].environment.MCP_MEMORY_SQLITE_PATH // empty)' "$CONFIG_ZCODE" 2>/dev/null || true
+            ;;
+    esac
+}
+
+set_sqlite_path_in() { # <kind> <new-path>
+    case "$1" in
+        primary)
+            jq_apply "$CONFIG" \
+                'if (.mcpServers[$n].env.MCP_MEMORY_SQLITE_PATH // null) != null then .mcpServers[$n].env.MCP_MEMORY_SQLITE_PATH = $p else . end' \
+                --arg n "$SERVER_MEMORY" --arg p "$2"
+            ;;
+        opencode)
+            jq_apply "$CONFIG_OPENCODE" \
+                'if (.mcp[$n].environment.MCP_MEMORY_SQLITE_PATH // null) != null then .mcp[$n].environment.MCP_MEMORY_SQLITE_PATH = $p else . end' \
+                --arg n "$SERVER_MEMORY" --arg p "$2"
+            ;;
+        zcode)
+            jq_apply "$CONFIG_ZCODE" \
+                'if (.mcp.servers[$n].environment.MCP_MEMORY_SQLITE_PATH // null) != null then .mcp.servers[$n].environment.MCP_MEMORY_SQLITE_PATH = $p else . end' \
+                --arg n "$SERVER_MEMORY" --arg p "$2"
+            ;;
+    esac
+}
+
+############################################
+# Known-server catalog (built-in definitions)
+############################################
+
+known_server_names() {
+    echo "$SERVER_MEMORY ssh-manager"
+}
+
+is_known_server() {
+    case " $(known_server_names) " in
+        *" $1 "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+known_repo_memory_json() {
+    local db
+    db="$(compute_sqlite_path)"
+    jq -n --arg db "$db" '{
+        type: "stdio",
+        command: "memory",
+        args: ["server"],
+        env: {
+            MCP_MEMORY_SQLITE_PATH: $db,
+            MCP_MEMORY_STORAGE_BACKEND: "sqlite_vec",
+            MCP_ALLOW_ANONYMOUS_ACCESS: "true",
+            PYTHONUNBUFFERED: "1"
+        },
+        autoApprove: [
+            "mcp__repo-memory__memory_store",
+            "mcp__repo-memory__memory_store_session",
+            "mcp__repo-memory__memory_list",
+            "mcp__repo-memory__memory_search",
+            "mcp__repo-memory__memory_detail",
+            "mcp__repo-memory__memory_explore",
+            "mcp__repo-memory__memory_update",
+            "mcp__repo-memory__memory_delete",
+            "mcp__repo-memory__memory_graph",
+            "mcp__repo-memory__memory_ingest",
+            "mcp__repo-memory__memory_harvest",
+            "mcp__repo-memory__memory_distill",
+            "mcp__repo-memory__memory_consolidate",
+            "mcp__repo-memory__memory_cleanup",
+            "mcp__repo-memory__memory_conflicts",
+            "mcp__repo-memory__memory_resolve",
+            "mcp__repo-memory__unquarantine_memory",
+            "mcp__repo-memory__get_quarantined_memories",
+            "mcp__repo-memory__memory_quality",
+            "mcp__repo-memory__memory_health",
+            "mcp__repo-memory__memory_stats",
+            "mcp__repo-memory__mistake_note_add",
+            "mcp__repo-memory__mistake_note_search",
+            "mcp__repo-memory__mistake_note_update",
+            "mcp__repo-memory__mistake_note_delete",
+            "mcp__repo-memory__commit_session_legacy",
+            "mcp__repo-memory__get_bootstrap_profile",
+            "mcp__repo-memory__get_onboarding_guide"
+        ]
+    }'
+}
+
+known_ssh_manager_json() {
+    jq -n '{
+        type: "stdio",
+        command: "mcp-ssh-manager",
+        args: [],
+        autoApprove: [
+            "mcp__ssh-manager__ssh_execute",
+            "mcp__ssh-manager__ssh_list_servers",
+            "mcp__ssh-manager__ssh_upload",
+            "mcp__ssh-manager__ssh_download",
+            "mcp__ssh-manager__ssh_sync",
+            "mcp__ssh-manager__ssh_alias"
+        ]
+    }'
+}
+
+known_server_json() { # <name> -> canonical primary-format JSON
+    case "$1" in
+        repo-memory) known_repo_memory_json ;;
+        ssh-manager) known_ssh_manager_json ;;
+        *) return 1 ;;
+    esac
+}
+
+# Exit-code probe used by ai-files-setup: does <name> exist in the primary?
+cmd_has() {
+    [[ $# -ge 1 ]] || { echo "name required"; exit 1; }
+    if primary_has "$1"; then
+        exit 0
+    fi
+    exit 1
 }
 
 ############################################
 # add-json
 ############################################
+
 mcp_add_json() {
     local name="$1"
     local json="$2"
 
-    ensure_config_exists
-    jq ".mcpServers.\"$name\" = $json" "$CONFIG" | sponge "$CONFIG"
+    if ! printf '%s' "$json" | jq -e . >/dev/null 2>&1; then
+        print_error "Invalid JSON: $json"
+        exit 1
+    fi
 
-    echo "Added MCP server: $name"
+    apply_entry_everywhere "$name" "$json"
 }
 
 ############################################
 # list
 ############################################
-mcp_list() {
-    ensure_config_exists
-    jq -r '.mcpServers | keys[]?' "$CONFIG"
+
+cmd_list() {
+    local union
+    union="$( { primary_names; opencode_names; zcode_names; } | sort -u )"
+
+    if [[ -z "$union" ]]; then
+        print_info "No MCP servers configured."
+        return 0
+    fi
+
+    printf "%-24s %-10s %-14s %-12s\n" "SERVER" ".mcp.json" "opencode.json" "zcode.json"
+    local name p o z json
+    while IFS= read -r name; do
+        [[ -z "$name" ]] && continue
+        json="$(primary_get "$name")"
+        if [[ -n "$json" ]]; then p="✓"; else p="-"; fi
+        if [[ -z "$json" ]]; then
+            if opencode_has "$name"; then o="✓"; else o="-"; fi
+            if zcode_has "$name"; then z="✓"; else z="-"; fi
+        else
+            if ! [[ -f "$CONFIG_OPENCODE" ]] || ! opencode_has "$name"; then o="-"
+            elif opencode_entry_matches "$name" "$json"; then o="✓"
+            else o="~"; fi
+            if ! [[ -f "$CONFIG_ZCODE" ]] || ! zcode_has "$name"; then z="-"
+            elif zcode_entry_matches "$name" "$json"; then z="✓"
+            else z="~"; fi
+        fi
+        printf "%-24s %-10s %-14s %-12s\n" "$name" "$p" "$o" "$z"
+    done <<< "$union"
+    echo ""
+    echo "  ✓ present & in sync   ~ present but differs from .mcp.json   - absent"
 }
 
 ############################################
 # get
 ############################################
+
 mcp_get() {
     local name="$1"
-    ensure_config_exists
+    ensure_primary
     jq ".mcpServers.\"$name\"" "$CONFIG"
+    if primary_has "$name"; then
+        local json
+        json="$(primary_get "$name")"
+        if [[ -f "$CONFIG_OPENCODE" ]] && opencode_has "$name"; then
+            opencode_entry_matches "$name" "$json" || print_warning "  opencode.json entry differs from .mcp.json ('ai-files mcp sync' fixes this)"
+        else
+            print_warning "  '$name' missing in opencode.json ('ai-files mcp sync' adds it)"
+        fi
+        if [[ -f "$CONFIG_ZCODE" ]] && zcode_has "$name"; then
+            zcode_entry_matches "$name" "$json" || print_warning "  zcode.json entry differs from .mcp.json ('ai-files mcp sync' fixes this)"
+        else
+            print_warning "  '$name' missing in zcode.json ('ai-files mcp sync' adds it)"
+        fi
+    fi
 }
 
 ############################################
 # remove
 ############################################
+
 mcp_remove() {
-    local name="$1"
-    ensure_config_exists
-    jq "del(.mcpServers.\"$name\")" "$CONFIG" | sponge "$CONFIG"
-    echo "Removed MCP server: $name"
-}
-
-############################################
-# add (FULL IMPLEMENTATION)
-############################################
-mcp_add() {
-    local transport=""
-    declare -A envvars
     local name=""
-    local commandOrUrl=""
-    local -a command_args=()
-
-    # Parse options
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --transport)
-                transport="$2"
-                shift 2
-                ;;
-            --env)
-                env_line="$2"
-                if [[ "$env_line" != *=* ]]; then
-                    echo "Invalid env format: $env_line"
-                    exit 1
-                fi
-                key="${env_line%%=*}"
-                val="${env_line#*=}"
-                envvars["$key"]="$val"
-                shift 2
-                ;;
-            --)
-                shift
-                command_args=("$@")
-                break
-                ;;
+            -y|--yes) AUTO_YES=true; shift ;;
+            --dry-run) DRY_RUN=true; shift ;;
+            -h|--help) show_mcp_help; return 0 ;;
             *)
-                if [[ -z "$name" ]]; then
-                    name="$1"
-                elif [[ -z "$commandOrUrl" ]]; then
-                    commandOrUrl="$1"
-                else
-                    command_args+=("$1")
-                fi
+                if [[ -z "$name" ]]; then name="$1"; else print_error "Unexpected argument: $1"; exit 1; fi
                 shift
                 ;;
         esac
     done
+    [[ -n "$name" ]] || { echo "name required"; exit 1; }
+
+    local -a plans=()
+    primary_has "$name"   && plans+=(".mcp.json")
+    opencode_has "$name"  && plans+=("opencode.json")
+    zcode_has "$name"     && plans+=("zcode.json")
+
+    if [[ ${#plans[@]} -eq 0 ]]; then
+        print_warning "'$name' not found in any MCP config."
+        exit 1
+    fi
+
+    printf "Removing '%s' from: %s\n" "$name" "${plans[*]}"
+    if ! confirm "Proceed with removal?"; then
+        print_info "Aborted — nothing removed."
+        return 0
+    fi
+
+    if primary_has "$name"; then
+        remove_from_primary "$name"
+    fi
+    if opencode_has "$name"; then
+        remove_from_opencode "$name"
+    fi
+    if zcode_has "$name"; then
+        remove_from_zcode "$name"
+    fi
+    print_success "Removed '$name' from ${#plans[@]} config(s)."
+}
+
+############################################
+# add (built-in names + FULL custom implementation)
+############################################
+
+mcp_add() {
+    local transport=""
+    declare -A envvars
+    local -a positionals=()
+
+    # Option-aware parse (values consumed together with their flags).
+    local -a args=("$@")
+    local i=0
+    local n=${#args[@]}
+    while (( i < n )); do
+        case "${args[$i]}" in
+            -y|--yes)
+                AUTO_YES=true
+                i=$((i+1))
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                i=$((i+1))
+                ;;
+            --transport|-t)
+                [[ $((i+1)) -lt $n ]] || { echo "--transport requires a value"; exit 1; }
+                transport="${args[$((i+1))]}"
+                i=$((i+2))
+                ;;
+            --env|-e)
+                [[ $((i+1)) -lt $n ]] || { echo "--env requires NAME=VALUE"; exit 1; }
+                local env_line="${args[$((i+1))]}"
+                if [[ "$env_line" != *=* ]]; then
+                    echo "Invalid env format: $env_line"
+                    exit 1
+                fi
+                envvars["${env_line%%=*}"]="${env_line#*=}"
+                i=$((i+2))
+                ;;
+            --)
+                while (( $((i+1)) < n )); do
+                    positionals+=("${args[$((i+1))]}")
+                    i=$((i+1))
+                done
+                break
+                ;;
+            *)
+                positionals+=("${args[$i]}")
+                i=$((i+1))
+                ;;
+        esac
+    done
+
+    # Built-in registration: `add <known-name>` with no transport/command.
+    if [[ -z "$transport" && ${#positionals[@]} -ge 1 ]] && is_known_server "${positionals[0]}"; then
+        local known="${positionals[0]}"
+        if [[ ${#positionals[@]} -gt 1 ]]; then
+            print_error "'$known' is a built-in server; extra arguments are not allowed."
+            exit 1
+        fi
+        print_info "Registering built-in MCP server '$known' ..."
+        local json
+        json="$(known_server_json "$known")"
+        apply_entry_everywhere "$known" "$json"
+        return 0
+    fi
+
+    if [[ ${#positionals[@]} -lt 1 ]]; then
+        echo "Usage: ai-files mcp add [--transport http|sse|stdio] <name> <cmd|url> [...]" >&2
+        echo "Or register a built-in: ai-files mcp add $(known_server_names)" >&2
+        exit 1
+    fi
+
+    local name="${positionals[0]}"
+    local commandOrUrl=""
+    local -a command_args=()
+    if [[ ${#positionals[@]} -ge 2 ]]; then
+        commandOrUrl="${positionals[1]}"
+    fi
+    if [[ ${#positionals[@]} -gt 2 ]]; then
+        command_args=("${positionals[@]:2}")
+    fi
 
     if [[ -z "$transport" ]]; then
         echo "--transport is required"
+        echo "Known servers registrable by name: $(known_server_names)"
         exit 1
     fi
 
@@ -148,44 +736,32 @@ mcp_add() {
                 exit 1
             fi
             local json
-            json="$(jq -n \
-                --arg url "$commandOrUrl" \
-                --arg tr "$transport" \
-                '{
-                    transport: $tr,
-                    url: $url
-                }'
-            )"
+            json="$(jq -n --arg tr "$transport" --arg url "$commandOrUrl" '{ type: $tr, url: $url }')"
             ;;
         stdio)
             if [[ -z "$commandOrUrl" ]]; then
                 echo "Command required for stdio transport"
                 exit 1
             fi
-            # env → array of { "NAME": "VALUE" }
-            local envjson
-            if (( ${#envvars[@]} > 0 )); then
-                envjson=$(printf '%s\n' "${!envvars[@]}" | jq -Rn '
-                    [inputs | {key: ., val: env.vars[.] }] |
-                    map({( .key ): .val})
-                ' vars="$(declare -p envvars)")
-            else
-                envjson="null"
+            local envobj="{}"
+            local k
+            for k in "${!envvars[@]}"; do
+                envobj="$(jq --arg k "$k" --arg v "${envvars[$k]}" '. + { ($k): $v }' <<< "$envobj")"
+            done
+            local argsjson="[]"
+            if (( ${#command_args[@]} > 0 )); then
+                argsjson="$(jq -Rn '[inputs]' <<< "$(printf '%s\n' "${command_args[@]}")")"
             fi
-
-            local json
             json="$(jq -n \
                 --arg tr "stdio" \
                 --arg cmd "$commandOrUrl" \
-                --argjson env "$(jq -n "$(for k in "${!envvars[@]}"; do printf '.%s="%s" ' "$k" "${envvars[$k]}"; done)")" \
-                --argjson args "$(printf '%s\n' "${command_args[@]}" | jq -R . | jq -s .)" \
-                '{
-                    transport: $tr,
-                    command: $cmd,
-                    args: $args,
-                    env: (if ($env|length)==0 then null else $env end)
-                }'
-            )"
+                --argjson args "$argsjson" \
+                --argjson env "$envobj" \
+                '{ type: $tr,
+                   command: $cmd,
+                   args: $args,
+                   env: (if ($env | length) == 0 then null else $env end) }
+                 | with_entries(select(.value != null))')"
             ;;
         *)
             echo "Unsupported transport: $transport"
@@ -193,12 +769,192 @@ mcp_add() {
             ;;
     esac
 
-    mcp_add_json "$name" "$json"
+    apply_entry_everywhere "$name" "$json"
+}
+
+############################################
+# sync (primary -> secondaries)
+############################################
+
+cmd_sync() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -y|--yes) AUTO_YES=true; shift ;;
+            --dry-run) DRY_RUN=true; shift ;;
+            -h|--help) show_mcp_help; return 0 ;;
+            *) print_error "Unknown sync option: $1"; exit 1 ;;
+        esac
+    done
+
+    ensure_primary
+    preflight_validate || return 1
+
+    # Hoist names out of the stream: confirm() below reads stdin, so a
+    # `while ... done < <(names)` redirect would feed server names to it as
+    # answers (a server named "y" would approve its own sync).
+    local -a names=()
+    mapfile -t names < <(primary_names)
+
+    local updated=0 name json
+    for name in "${names[@]}"; do
+        [[ -z "$name" ]] && continue
+        json="$(primary_get "$name")"
+        [[ -z "$json" ]] && continue
+
+        if [[ -f "$CONFIG_OPENCODE" ]] && opencode_has "$name"; then
+            if ! opencode_entry_matches "$name" "$json"; then
+                confirm "Update diverging '$name' entry in opencode.json?" && { write_opencode_entry "$name" "$json"; updated=$((updated+1)); }
+            fi
+        else
+            confirm "Add '$name' to opencode.json?" && { write_opencode_entry "$name" "$json"; updated=$((updated+1)); }
+        fi
+
+        if [[ -f "$CONFIG_ZCODE" ]] && zcode_has "$name"; then
+            if ! zcode_entry_matches "$name" "$json"; then
+                confirm "Update diverging '$name' entry in zcode.json?" && { write_zcode_entry "$name" "$json"; updated=$((updated+1)); }
+            fi
+        else
+            confirm "Add '$name' to zcode.json?" && { write_zcode_entry "$name" "$json"; updated=$((updated+1)); }
+        fi
+    done
+
+    local secondary_only
+    secondary_only="$(comm -13 <(primary_names | sort -u) <( { opencode_names; zcode_names; } | sort -u) || true)"
+    if [[ -n "$secondary_only" ]]; then
+        print_warning "Servers defined only outside .mcp.json (left untouched):"
+        while IFS= read -r name; do
+            [[ -z "$name" ]] && continue
+            echo "    $name"
+        done <<< "$secondary_only"
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_info "(dry-run) sync complete — no files were modified."
+    elif [[ $updated -eq 0 ]]; then
+        print_success "All configs already in sync with .mcp.json."
+    else
+        print_success "Synced $updated change(s) from .mcp.json."
+    fi
+}
+
+############################################
+# shared-memory (nested checkout migration)
+############################################
+
+cmd_shared_memory() {
+    local check_only=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -y|--yes) AUTO_YES=true; shift ;;
+            --dry-run) DRY_RUN=true; shift ;;
+            --check) check_only=true; shift ;;
+            -h|--help) show_mcp_help; return 0 ;;
+            *) print_error "Unknown shared-memory option: $1"; exit 1 ;;
+        esac
+    done
+
+    if [[ "$check_only" == "true" ]]; then
+        is_nested_checkout
+        return $?
+    fi
+
+    if ! is_nested_checkout; then
+        print_info "Not a nested checkout (no <git-repo-name>/<clone-folder> parent match) — nothing to do."
+        return 0
+    fi
+
+    local parent_name
+    parent_name="$(basename "$(dirname "$GIT_ROOT")")"
+    # Shared FOLDER next to the repo checkout (never the db file itself):
+    # <parent>/.ai-files-shared/
+    local shared_dir
+    shared_dir="$(dirname "${GIT_ROOT}/${SHARED_DB_REL}")"
+    print_warning "Nested checkout detected: $(nested_checkout_label)"
+
+    # Without the shared folder, rewrites would point configs at a nonexistent
+    # path and the DB copy would fail mid-run — skip the whole migration
+    # instead so configs stay consistent.
+    local have_shared_dir=false
+    if [[ -d "$shared_dir" ]]; then
+        print_info "Shared folder already present: ${parent_name}/${SHARED_DIR_NAME}/"
+        have_shared_dir=true
+    elif confirm "Create shared memory folder '${parent_name}/${SHARED_DIR_NAME}/'?"; then
+        if [[ "$DRY_RUN" != "true" ]]; then
+            mkdir -p "$shared_dir"
+        fi
+        print_success "Created ${parent_name}/${SHARED_DIR_NAME}/"
+        have_shared_dir=true
+    else
+        print_warning "Shared folder not created — skipping DB path rewrite and copy."
+    fi
+
+    if [[ "$have_shared_dir" != "true" ]]; then
+        return 0
+    fi
+
+    preflight_validate || return 1
+
+    local kind current changed=0
+    for kind in primary opencode zcode; do
+        current="$(sqlite_path_in "$kind")"
+        if [[ -z "$current" ]]; then
+            continue
+        fi
+        if [[ "$current" == "$SHARED_DB_REL" ]]; then
+            print_info "$kind config already uses the shared DB path."
+            continue
+        fi
+        if [[ "$current" != "$DEFAULT_DB_REL" ]]; then
+            print_warning "$kind config uses a custom DB path ('$current') — left untouched."
+            continue
+        fi
+        if confirm "Rewrite $kind config DB path to '${SHARED_DB_REL}'?"; then
+            if [[ "$DRY_RUN" != "true" ]]; then
+                set_sqlite_path_in "$kind" "$SHARED_DB_REL"
+            fi
+            print_success "$kind config rewritten."
+            changed=$((changed+1))
+        else
+            print_warning "$kind config left unchanged."
+        fi
+    done
+
+    local old_db="${GIT_ROOT}/${DEFAULT_DB_REL}"
+    local new_db="${shared_dir%/}/memory.db"
+    if [[ -f "$old_db" && ! -f "$new_db" ]]; then
+        if confirm "Copy existing database into the shared location?"; then
+            if [[ "$DRY_RUN" != "true" ]]; then
+                # sqlite3 .backup takes a consistent snapshot even while a
+                # memory server has the db open; raw cp of db+wal can tear.
+                # Never copy -shm — it is process-local shared memory.
+                if command -v sqlite3 >/dev/null 2>&1 && sqlite3 "$old_db" ".backup '$new_db'" 2>/dev/null; then
+                    :
+                else
+                    print_warning "Consistent snapshot unavailable — falling back to raw copy (close the memory server first)."
+                    rm -f "$new_db"
+                    cp "$old_db" "$new_db"
+                    [[ -f "${old_db}-wal" ]] && cp "${old_db}-wal" "${new_db}-wal"
+                fi
+            fi
+            print_success "Copied memory.db to ${parent_name}/${SHARED_DIR_NAME}/"
+        else
+            print_warning "Existing database not copied (server starts fresh in the shared location)."
+        fi
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_info "(dry-run) shared-memory complete — no files were modified."
+    elif [[ $changed -eq 0 ]]; then
+        print_info "No config paths needed rewriting."
+    else
+        print_success "Migrated $changed config(s) to the shared memory DB."
+    fi
 }
 
 ############################################
 # serve (FULL IMPLEMENTATION)
 ############################################
+
 mcp_serve() {
     declare -A envvars
     local -a cmd=()
@@ -241,6 +997,7 @@ mcp_serve() {
 ############################################
 # opencode (IMPORT TO OPENCODE CONFIG)
 ############################################
+
 mcp_opencode() {
     local SRC="${1:-${GIT_ROOT}/.mcp.json}"
     local DST="${2:-${GIT_ROOT}/opencode.json}"
@@ -291,20 +1048,64 @@ JSON
         )
     ' "$SRC" > "$tmp"
 
-    local merged
-    merged="$(mktemp)"
+    jq_apply "$DST" '.mcp = ((.mcp // {}) + $imported[0])' --slurpfile imported "$tmp"
 
-    jq --slurpfile imported "$tmp" '
-      .mcp = (
-        (.mcp // {})
-        + $imported[0]
-      )
-    ' "$DST" > "$merged"
-
-    mv "$merged" "$DST"
     rm -f "$tmp"
 
     echo "Imported MCP servers from $SRC into $DST"
+}
+
+############################################
+# HELP
+############################################
+
+show_mcp_help() {
+    cat <<EOF
+Usage: ai-files mcp [options] [command]
+
+Configure and manage MCP servers across three project configs:
+  .mcp.json (PRIMARY), opencode.json, zcode.json
+
+Mutations are applied to all three files: .mcp.json is written first, then the
+converted entry is merged into opencode.json and zcode.json (unrelated keys
+are preserved; missing files are created). autoApprove is kept in .mcp.json
+only — opencode/zcode do not support it.
+
+Commands:
+  serve [options] -- <cmd> [args...]     Start an MCP stdio server
+  add [-y] [--dry-run] <name> <cmd|url> [...]   Add MCP server entry
+  add [-y] [--dry-run] <known-name>      Register a built-in server
+  add-json <name> <json>                 Add server via JSON
+  remove [-y] [--dry-run] <name>         Remove server from all configs (asks unless -y)
+  list                                   List servers with per-file presence
+  get <name>                             Get details about a server
+  sync [-y] [--dry-run]                  Propagate .mcp.json to other configs
+  shared-memory [-y] [--dry-run] [--check]  Shared DB for nested (<repo>/<clone>) checkouts
+  known                                  Print built-in server names (one per line)
+  has <name>                             Exit 0 when <name> exists in .mcp.json
+  opencode [src] [dst]                   Import to opencode.json
+  help                                   Show this help
+
+Known servers (registerable by name):
+  repo-memory   memory CLI server with sqlite_vec backend + autoApprove set
+  ssh-manager   SSH management server + autoApprove set
+
+Options for 'add':
+  --transport http|sse|stdio
+  --env NAME=VALUE      (can repeat)
+  --                    end of options
+
+Examples:
+  ai-files mcp add repo-memory                       # built-in, all 3 configs
+  ai-files mcp add ssh-manager -y
+  ai-files mcp add --transport http sentry https://mcp.sentry.dev/mcp
+  ai-files mcp add --transport stdio git --env TOKEN=AA -- npx -y git-mcp-server
+  ai-files mcp sync --dry-run                        # preview drift repair
+  ai-files mcp shared-memory                         # migrate to ../.ai-files-shared
+
+Launching:
+  ai-files mcp serve --env XYZ=111 -- ./server-binary --stdio
+EOF
 }
 
 ############################################
@@ -318,15 +1119,14 @@ case "$SUB" in
         show_mcp_help
         ;;
     list)
-        mcp_list
+        cmd_list "$@"
         ;;
     get)
         [[ $# -lt 1 ]] && { echo "name required"; exit 1; }
         mcp_get "$1"
         ;;
     remove)
-        [[ $# -lt 1 ]] && { echo "name required"; exit 1; }
-        mcp_remove "$1"
+        mcp_remove "$@"
         ;;
     add-json)
         [[ $# -lt 2 ]] && { echo "name and json required"; exit 1; }
@@ -337,6 +1137,19 @@ case "$SUB" in
         ;;
     serve)
         mcp_serve "$@"
+        ;;
+    sync)
+        cmd_sync "$@"
+        ;;
+    shared-memory)
+        cmd_shared_memory "$@"
+        ;;
+    known)
+        known_server_names
+        ;;
+    has)
+        shift
+        cmd_has "$@"
         ;;
     opencode)
         mcp_opencode "$@"
