@@ -12,11 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install PyYAML (marketplace-update dependency)
+        run: python3 -m pip install --quiet pyyaml
+
       - name: Shellcheck bin scripts
-        run: shellcheck -S warning bin/ai-files-mcp bin/ai-files-setup bin/ai-files-config
+        run: shellcheck -S warning bin/ai-files-mcp bin/ai-files-setup bin/ai-files-config bin/ai-files-marketplace bin/ai-files-marketplace-install
 
       - name: Run ai-files mcp / setup test suite
         run: bash tests/run-tests.sh
 
       - name: Run ai-files config test suite
         run: bash tests/test-config.sh
+
+      - name: Run ai-files marketplace test suite
+        run: bash tests/test-marketplace.sh

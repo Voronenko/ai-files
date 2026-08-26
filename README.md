@@ -544,6 +544,16 @@ ai-files version
 3. In detached HEAD state, returns `detached-commit_hash`
 4. If not in a git repository, returns `unknown`
 
+**Examples:**
+
+```bash
+ai-files version
+# Output: v1.2.3 (if on tag)
+# Output: main-abc1234 (if on branch)
+# Output: detached-abc1234 (if detached HEAD)
+# Output: unknown (if not in git repo)
+```
+
 ### Tests
 
 The MCP tooling ships with an integration suite covering the three-config
@@ -555,21 +565,16 @@ the nested-checkout shared-memory migration:
 bash tests/run-tests.sh     # needs bash, git, jq; sqlite3 optional
 ```
 
-Fixtures run in a self-cleaning temp workspace outside the checkout.
 `tests/test-config.sh` covers `ai-files config` the same way, including its
-unattended setup mode. Both suites execute on every push to `master` and on
-pull requests via `.github/workflows/tests.yml`, together with `shellcheck`
-over the modified scripts.
+unattended setup mode. `tests/test-marketplace.sh` covers the Claude
+marketplace tooling: dispatcher routing, unattended install flows via a fake
+`claude` CLI (argument assertions, failure injection), and `marketplace.json`
+generation.
 
-**Examples:**
-
-```bash
-ai-files version
-# Output: v1.2.3 (if on tag)
-# Output: main-abc1234 (if on branch)
-# Output: detached-abc1234 (if detached HEAD)
-# Output: unknown (if not in git repo)
-```
+Fixtures run in a self-cleaning temp workspace outside the checkout. All three
+suites execute on every push to `master` and on pull requests via
+`.github/workflows/tests.yml`, together with `shellcheck` over the modified
+scripts.
 
 ## Commands
 
