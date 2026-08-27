@@ -20,6 +20,13 @@ done
 BASE="$(mktemp -d "${TMPDIR:-/tmp}/ai-files-add-test.XXXXXX")"
 trap 'rm -rf "$BASE"' EXIT
 
+if ! command -v fzf >/dev/null 2>&1; then
+    mkdir -p "$BASE/fakebin"
+    printf '#!/bin/sh\nexit 0\n' > "$BASE/fakebin/fzf"
+    chmod +x "$BASE/fakebin/fzf"
+    export PATH="$BASE/fakebin:$PATH"
+fi
+
 FIX="$BASE/repo"
 mkdir -p "$FIX"
 git -C "$FIX" init -q
