@@ -3,11 +3,21 @@
 # ai-files-skills-add - Install Claude Code skills from git repositories
 #
 # This script discovers, lists, and installs skills from git repositories to
-# .claude/skills/ (project-local) or ~/.claude/skills/ (global).
+# .ai-files/skills/ (project-local, then linked into agent dirs and recorded
+# in skills-lock.json) or ~/.claude/skills/ (global, untracked by the lock).
 #
 # Usage: ai-files-skills-add <REPO_SOURCE> [OPTIONS]
 
 set -euo pipefail
+
+# Resolve script location (sibling scripts: ai-files-skill-enable, ai-files-skills-lock)
+SCRIPT_PATH="$0"
+while [ -h "$SCRIPT_PATH" ]; do
+    DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$DIR/$SCRIPT_PATH"
+done
+SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
 
 #=============================================================================
 # EXIT CODE CONSTANTS
@@ -144,7 +154,7 @@ resolve_target_dir() {
     if [[ "$GLOBAL_MODE" == true ]]; then
         target_dir="$HOME/.claude/skills/"
     else
-        target_dir="$PWD/.claude/skills/"
+        target_dir="$PWD/.ai-files/skills/"
     fi
 
     echo "$target_dir"
@@ -446,6 +456,161 @@ install_copy() {
     cp -r "$source_path" "$target_path" 2>/dev/null
 }
 
+#=============================================================================
+# FETCH ENGINE (gh | git clone)
+#=============================================================================
+
+# Which engine fetches skill files: "gh" when the gh CLI has skills support,
+# else "git" (copy from the already-cloned repository).
+# Override with AI_FILES_SKILLS_ENGINE=gh|git|auto (default auto).
+skills_engine() {
+    case "${AI_FILES_SKILLS_ENGINE:-auto}" in
+        gh|git)
+            echo "${AI_FILES_SKILLS_ENGINE}"
+            ;;
+        *)
+            if command -v gh &>/dev/null && gh skill install --help &>/dev/null; then
+                echo "gh"
+            else
+                echo "git"
+            fi
+            ;;
+    esac
+}
+
+# Print the OWNER/REPO spec for github-shaped sources; empty for everything
+# else (local paths, gitlab, file:// — gh cannot handle those).
+gh_spec_from_source() {
+    local raw="$REPO_SOURCE"
+    if [[ "$raw" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+        echo "$raw"
+    elif [[ "$raw" =~ ^https?://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+) ]]; then
+        echo "${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}"
+    elif [[ "$raw" =~ ^git@github\.com:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+) ]]; then
+        echo "${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}"
+    fi
+    return 0
+}
+
+# gh may name the installed directory by its own convention; locate the dir
+# whose SKILL.md frontmatter name matches and rename it to our sanitized name.
+# Arguments:
+#   $1 - Target directory
+#   $2 - Frontmatter skill name
+#   $3 - Sanitized skill name
+normalize_gh_install() {
+    local target_dir="$1"
+    local want_name="$2"
+    local sanitized="$3"
+
+    [[ -e "$target_dir/$sanitized" ]] && return 0
+
+    local skill_md found=""
+    while IFS= read -r -d '' skill_md; do
+        local fm_name
+        fm_name=$(extract_front_matter "$skill_md" | yq '.name' 2>/dev/null | head -1)
+        if [[ "$fm_name" == "$want_name" ]]; then
+            found="$(dirname "$skill_md")"
+            break
+        fi
+    done < <(find "$target_dir" -mindepth 2 -maxdepth 2 -name "SKILL.md" -print0 2>/dev/null)
+
+    if [[ -n "$found" ]]; then
+        mv "$found" "$target_dir/$sanitized" 2>/dev/null || true
+    fi
+    return 0
+}
+
+# Fetch a skill into the target directory (project mode).
+# Prefers `gh skill install` (source metadata + version pinning); falls back
+# to copying from the repository already cloned in TEMP_DIR.
+# Arguments:
+#   $1 - Source skill path (inside TEMP_DIR)
+#   $2 - Target directory
+#   $3 - Sanitized skill name
+#   $4 - Frontmatter skill name (gh selector fallback)
+# Returns:
+#   0 on success, 1 on failure
+fetch_skill() {
+    local source_path="$1"
+    local target_dir="$2"
+    local sanitized_name="$3"
+    local skill_name="$4"
+
+    local gh_spec
+    gh_spec="$(gh_spec_from_source)"
+    if [[ "$(skills_engine)" == "gh" && -n "$gh_spec" ]]; then
+        local repo_rel selector
+        repo_rel="${source_path#"$TEMP_DIR"/}"
+        [[ "$repo_rel" == "$source_path" ]] && repo_rel=""
+        if [[ -n "$repo_rel" ]]; then
+            selector="$repo_rel"
+        else
+            selector="$skill_name"
+        fi
+        if gh skill install "$gh_spec" "$selector" --dir "$target_dir" --force >/dev/null 2>&1; then
+            normalize_gh_install "$target_dir" "$skill_name" "$sanitized_name"
+            if [[ -e "$target_dir/$sanitized_name" ]]; then
+                return 0
+            fi
+            echo "    (gh install did not produce '$sanitized_name', using clone)" >&2
+        else
+            echo "    (gh skill install failed, using clone)" >&2
+        fi
+    fi
+
+    cp -r "$source_path" "$target_dir/$sanitized_name" 2>/dev/null
+}
+
+#=============================================================================
+# LOCK FILE + AGENT LINKING (project mode)
+#=============================================================================
+
+# Record the installed skill in skills-lock.json.
+# Arguments:
+#   $1 - Sanitized skill name (lock key)
+#   $2 - Source skill path (inside TEMP_DIR, used to derive skillPath)
+lock_add_entry() {
+    local sanitized_name="$1"
+    local source_path="$2"
+
+    [[ "$GLOBAL_MODE" == true ]] && return 0
+
+    local rel skill_path="SKILL.md" lock_dir
+    rel="${source_path#"$TEMP_DIR"/}"
+    [[ "$rel" == "$source_path" ]] && rel=""   # repo-root skill
+    [[ -n "$rel" ]] && skill_path="$rel/SKILL.md"
+
+    lock_dir="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || echo "$PWD")"
+    # ponytail: lock at git toplevel but skills at $PWD — run from repo root;
+    # per-subdir locks if that ever bites.
+    if ! "$SELF_DIR/ai-files-skills-lock" --dir "$lock_dir" --skills-dir "$PWD/.ai-files/skills" \
+        add "$sanitized_name" --source "$REPO_SOURCE" --skill-path "$skill_path"; then
+        echo "Warning: failed to update skills-lock.json (install succeeded)" >&2
+    fi
+}
+
+# Link the installed skill into agent directories (.claude/.kilo/.opencode/.agents).
+# Arguments:
+#   $1 - Sanitized skill name
+enable_skill_links() {
+    local sanitized_name="$1"
+
+    [[ "$GLOBAL_MODE" == true ]] && return 0
+
+    local script_root
+    script_root="$(cd "$SELF_DIR/.." && pwd)"
+    if [[ "$script_root" != "$(cd "$PWD" && pwd)" ]]; then
+        echo "Warning: installed into $PWD/.ai-files/skills but the ai-files scripts live in $script_root." >&2
+        echo "         Run 'ai-files skill enable $sanitized_name' from $PWD to link agent directories." >&2
+        return 0
+    fi
+
+    if ! "$SELF_DIR/ai-files-skill-enable" "$sanitized_name"; then
+        echo "Warning: failed to link $sanitized_name into agent directories" >&2
+    fi
+}
+
 # Install a skill to the target directory
 # Arguments:
 #   $1 - Skill name
@@ -500,27 +665,38 @@ install_skill() {
 
     echo "==> Installing $sanitized_name..."
 
-    # Install based on method
+    # Install based on mode/method
     local install_result=1
 
-    if [[ "$INSTALL_METHOD" == "symlink" ]]; then
-        if install_symlink "$source_path" "$target_dir" "$sanitized_name"; then
-            install_result=0
+    if [[ "$GLOBAL_MODE" == true ]]; then
+        # Global mode: ~/.claude/skills, symlink/copy methods apply.
+        if [[ "$INSTALL_METHOD" == "symlink" ]]; then
+            if install_symlink "$source_path" "$target_dir" "$sanitized_name"; then
+                install_result=0
+            else
+                # Fallback to copy on symlink failure
+                echo "    (symlink failed, using copy mode)"
+                if install_copy "$source_path" "$target_dir" "$sanitized_name"; then
+                    install_result=0
+                fi
+            fi
         else
-            # Fallback to copy on symlink failure
-            echo "    (symlink failed, using copy mode)"
             if install_copy "$source_path" "$target_dir" "$sanitized_name"; then
                 install_result=0
             fi
         fi
     else
-        if install_copy "$source_path" "$target_dir" "$sanitized_name"; then
+        # Project mode: fetch into .ai-files/skills (gh engine when available,
+        # else copy from the already-cloned repository).
+        if fetch_skill "$source_path" "$target_dir" "$sanitized_name" "$skill_name"; then
             install_result=0
         fi
     fi
 
     if [[ $install_result -eq 0 ]]; then
         echo "    Installed $sanitized_name"
+        lock_add_entry "$sanitized_name" "$source_path"
+        enable_skill_links "$sanitized_name"
         return 0
     else
         error "Failed to install $sanitized_name"
@@ -635,6 +811,11 @@ Usage: ai-files-skills-add <REPO_SOURCE> [OPTIONS]
 
 Install Claude Code skills from git repositories.
 
+Project mode (default) installs into .ai-files/skills/ of the current
+directory, records each skill in skills-lock.json (vercel-labs compatible)
+and links it into the agent skill directories (.claude/.kilo/.opencode/.agents)
+via ai-files-skill-enable.
+
 Arguments:
   REPO_SOURCE          Repository source (URL, shorthand, or path)
                        Examples: vercel-labs/agent-skills
@@ -646,16 +827,17 @@ Options:
                         If name is omitted and fzf is available,
                         shows interactive selection
   -a, --all            Install all available skills
-  -g, --global         Install to global directory (~/.claude/skills/)
+  -g, --global         Install to global directory (~/.claude/skills/);
+                        not recorded in skills-lock.json
   -y, --yes            Skip confirmation prompts (non-interactive mode)
-  -m, --method <mode>  Installation method: symlink|copy (default: symlink)
+  -m, --method <mode>  Global mode only: symlink|copy (default: symlink)
   -h, --help           Show this help message
 
 Examples:
   # List available skills
   ai-files-skills-add vercel-labs/agent-skills --list
 
-  # Install specific skill
+  # Install specific skill (project: .ai-files/skills + lock + agent links)
   ai-files-skills-add vercel-labs/agent-skills --skill frontend-design
 
   # Install multiple skills
@@ -673,6 +855,8 @@ Examples:
 Environment Variables:
   INSTALL_INTERNAL_SKILLS    Include skills marked as internal (default: 0)
   SKILLS_CLONE_TIMEOUT       Git clone timeout in seconds (default: 300)
+  AI_FILES_SKILLS_ENGINE     Fetch engine: gh|git|auto (default auto — use
+                             `gh skill install` when gh has skills support)
 
 For more information, see the project documentation.
 EOF

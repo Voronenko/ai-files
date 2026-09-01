@@ -335,7 +335,7 @@ ai-files obsidian-add -t "work,ideas" ./note.md -o
 
 ### ai-files skills-add
 
-Install Claude Code skills from git repositories. This utility discovers, lists, and installs skills to either project-local (`.claude/skills/`) or global (`~/.claude/skills/`) directories.
+Install Claude Code skills from git repositories. Project mode (default) installs into `.ai-files/skills/`, records each skill in the committed `skills-lock.json` (vercel-labs compatible), and links it across the agent skill directories (`.claude/`, `.kilo/`, `.opencode/`, `.agents/`). Global mode (`--global`) targets `~/.claude/skills/` and is not lock-tracked.
 
 **Usage:**
 ```bash
@@ -353,14 +353,15 @@ ai-files skills-add <REPO_SOURCE> [OPTIONS]
 | `-l, --list` | List available skills without installing |
 | `-s, --skill <name>` | Install specific skill(s) (repeatable) |
 | `-a, --all` | Install all available skills |
-| `-g, --global` | Install to global directory (`~/.claude/skills/`) |
+| `-g, --global` | Install to global directory (`~/.claude/skills/`); no lock entry, no agent links |
 | `-y, --yes` | Skip confirmation prompts (non-interactive mode) |
-| `-m, --method <mode>` | Installation method: `symlink` or `copy` (default: symlink) |
+| `-m, --method <mode>` | Global mode only: `symlink` or `copy` (default: symlink) |
 | `-h, --help` | Show help message |
 
 **Environment Variables:**
 - `INSTALL_INTERNAL_SKILLS` - Include skills marked as internal (default: 0)
 - `SKILLS_CLONE_TIMEOUT` - Git clone timeout in seconds (default: 300)
+- `AI_FILES_SKILLS_ENGINE` - Fetch engine: `gh|git|auto` (default auto — use `gh skill install` when the `gh` CLI has skills support)
 
 **Examples:**
 
@@ -369,14 +370,9 @@ List available skills:
 ai-files skills-add vercel-labs/agent-skills --list
 ```
 
-Install specific skill:
+Install specific skill (project: `.ai-files/skills` + lock entry + agent links):
 ```bash
 ai-files skills-add vercel-labs/agent-skills --skill frontend-design
-```
-
-Install multiple skills:
-```bash
-ai-files skills-add vercel-labs/agent-skills --skill frontend-design --skill skill-creator
 ```
 
 Install all skills globally:
@@ -389,10 +385,25 @@ Non-interactive installation (CI/CD):
 ai-files skills-add vercel-labs/agent-skills --skill frontend-design --yes
 ```
 
-Install using copy method instead of symlink:
+### ai-files skills lock / install / remove
+
+`skills-lock.json` at the repository root records every external skill
+installed into `.ai-files/skills/` (which is gitignored and wiped by dist
+rebuilds) — source, repo-relative `skillPath`, and a `computedHash` — in the
+vercel-labs/skills format. Commit it.
+
 ```bash
-ai-files skills-add vercel-labs/agent-skills --skill frontend-design --method copy
+ai-files skills lock list          # inspect entries
+ai-files skills lock init          # audit .agents/skills for untracked skills
+ai-files skills install            # restore missing locked skills + link agents
+ai-files skills install --force    # also reinstall drifted ones (re-stamps hashes)
+ai-files skills remove <name>      # unlink + delete skill + drop lock entry
 ```
+
+Every `skills add` / `skills remove` action refreshes the lock automatically.
+See [docs/ai-files-skills-lock.md](docs/ai-files-skills-lock.md),
+[docs/ai-files-skills-install.md](docs/ai-files-skills-install.md) and
+[docs/ai-files-skills-remove.md](docs/ai-files-skills-remove.md).
 
 ### ai-files worktree
 
@@ -568,7 +579,8 @@ bash tests/run-tests.sh     # needs bash, git, jq; sqlite3 optional
 Every other CLI utility ships its own suite: `test-config.sh` (unattended
 setup modes), `test-marketplace.sh` (dispatcher routing, install flows via a
 fake `claude` CLI, `marketplace.json` generation), and one suite per skills
-tool — `test-skills-add.sh`, `test-skills-explore.sh`, `test-skills-sync.sh`,
+tool — `test-skills-add.sh`, `test-skills-install.sh`, `test-skills-remove.sh`,
+`test-skills-lock.sh`, `test-skills-explore.sh`, `test-skills-sync.sh`,
 `test-skill-enable.sh`, `test-skill-disable.sh` — and `test-update.sh` covers
 the `ai-files update` sync/link subcommands (protection rules, default-skill
 linking, legacy `.specify` migration).

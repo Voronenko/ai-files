@@ -1,0 +1,381 @@
+#!/usr/bin/env python3
+#
+# ai-files-skills-lock - Manage vercel-labs-compatible skills-lock.json
+#
+# The lock file records which external skills are installed into
+# .ai-files/skills/ and where they came from, so a fresh clone or a dist
+# rebuild can restore them via ai-files-skills-install.
+#
+# Format is byte-compatible with vercel-labs/skills src/local-lock.ts:
+#   { "version": 1, "skills": { "<name>": { "source": ..., "computedHash": ... } } }
+# sorted keys, 2-space indent, trailing newline, timestamp-free.
+#
+# Divergence: the lock key is the sanitized skill directory name (not the
+# SKILL.md frontmatter name) because skill resolution works by directory.
+#
+# Depends ONLY on the Python standard library (argparse, hashlib, json, os,
+# re, subprocess, sys) — no pip/PyYAML or other add-on packages.
+#
+# Usage: ai-files-skills-lock [--dir <lockdir>] [--skills-dir <dir>] <COMMAND>
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+
+LOCK_FILE = "skills-lock.json"
+VERSION = 1
+
+GITHUB_SHORTHAND = re.compile(r"^[^/\s]+/[^/\s]+$")
+GITHUB_URL = re.compile(r"^https?://github\.com/([^/\s]+)/([^/\s#]+?)(?:\.git)?(?:/[^#]*)?(?:#(.+))?$")
+
+
+def warn(message):
+    print(f"Warning: {message}", file=sys.stderr)
+
+
+def die(message, code=2):
+    print(f"Error: {message}", file=sys.stderr)
+    sys.exit(code)
+
+
+def empty_lock():
+    return {"version": VERSION, "skills": {}}
+
+
+def default_lock_dir():
+    cwd = os.getcwd()
+    try:
+        out = subprocess.run(
+            ["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return cwd
+
+
+def read_lock(lockdir):
+    try:
+        with open(os.path.join(lockdir, LOCK_FILE), encoding="utf-8") as f:
+            parsed = json.load(f)
+    except (OSError, ValueError):
+        return empty_lock()  # missing or corrupt (e.g. merge-conflict markers)
+    if not isinstance(parsed, dict):
+        return empty_lock()
+    version = parsed.get("version")
+    skills = parsed.get("skills")
+    if not isinstance(version, int) or isinstance(version, bool) or version < VERSION:
+        return empty_lock()
+    if not isinstance(skills, dict):
+        return empty_lock()
+    for entry in skills.values():
+        if (isinstance(entry, dict) and entry.get("sourceType") == "local"
+                and isinstance(entry.get("source"), str)
+                and not os.path.isabs(entry["source"])):
+            entry["source"] = os.path.normpath(os.path.join(lockdir, entry["source"]))
+    return parsed
+
+
+def portable_local(source, lockdir):
+    rel = os.path.relpath(os.path.abspath(source), os.path.abspath(lockdir))
+    rel = rel.replace(os.sep, "/")
+    if not rel:
+        return "."
+    if rel == ".." or rel.startswith("../"):
+        return rel
+    return "./" + rel
+
+
+def write_lock(lockdir, lock):
+    skills = {}
+    for key in sorted(lock.get("skills", {})):
+        entry = dict(lock["skills"][key])
+        if entry.get("sourceType") == "local" and isinstance(entry.get("source"), str):
+            entry["source"] = portable_local(entry["source"], lockdir)
+        skills[key] = entry
+    doc = {"version": lock.get("version", VERSION), "skills": skills}
+    with open(os.path.join(lockdir, LOCK_FILE), "w", encoding="utf-8") as f:
+        f.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+
+
+def collation_key(rel):
+    """Sort key approximating JS String#localeCompare (ICU root collation):
+    case-insensitive primary, lowercase-before-uppercase tiebreak, then raw.
+    vercel's local-lock.ts sorts with localeCompare; plain byte sort diverges
+    whenever SKILL.md meets lowercase subdirs (references/* < SKILL.md).
+    Verified equal to node on 17/17 real skill trees; exotic leading
+    punctuation (e.g. '_' vs digits) can still diverge from ICU."""
+    return (rel.casefold(), [c.isupper() for c in rel], rel)
+
+
+def compute_skill_folder_hash(skill_dir):
+    files = []
+
+    def walk(directory):
+        try:
+            entries = list(os.scandir(directory))
+        except OSError:
+            return
+        for entry in entries:
+            if entry.is_symlink():
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                if entry.name in (".git", "node_modules"):
+                    continue
+                walk(entry.path)
+            elif entry.is_file(follow_symlinks=False):
+                rel = os.path.relpath(entry.path, skill_dir).replace(os.sep, "/")
+                files.append((rel, entry.path))
+
+    walk(skill_dir)
+    digest = hashlib.sha256()
+    for rel, path in sorted(files, key=lambda item: collation_key(item[0])):
+        digest.update(rel.encode("utf-8"))
+        with open(path, "rb") as f:
+            digest.update(f.read())
+    return digest.hexdigest()
+
+
+def classify_source(raw):
+    """Map a user-provided source spec onto (partial) lock entry fields."""
+    raw = raw.strip()
+    if raw.startswith("file://"):
+        raw = raw[len("file://"):]
+    if os.path.isdir(raw):
+        return {"source": os.path.abspath(raw), "sourceType": "local"}
+    match = GITHUB_URL.match(raw)
+    if match:
+        entry = {"source": f"{match.group(1)}/{match.group(2)}", "sourceType": "github"}
+        if match.group(3):
+            entry["ref"] = match.group(3)
+        return entry
+    if GITHUB_SHORTHAND.match(raw):
+        return {"source": raw, "sourceType": "github"}
+    return {"source": raw, "sourceUrl": raw, "sourceType": "git"}
+
+
+def build_entry(source, source_url, ref, source_type, skill_path, computed_hash):
+    # Field order matches vercel's LocalSkillLockEntry declaration.
+    entry = {"source": source}
+    if source_url:
+        entry["sourceUrl"] = source_url
+    if ref:
+        entry["ref"] = ref
+    entry["sourceType"] = source_type
+    if skill_path:
+        entry["skillPath"] = skill_path
+    entry["computedHash"] = computed_hash
+    return entry
+
+
+def clone_source(entry):
+    if entry.get("sourceType") == "github":
+        return f"https://github.com/{entry['source']}"
+    return entry.get("sourceUrl") or entry.get("source", "")
+
+
+def skill_dir_rel(entry):
+    skill_path = entry.get("skillPath", "")
+    if skill_path.endswith("/SKILL.md"):
+        return skill_path[: -len("/SKILL.md")]
+    return ""
+
+
+def cmd_add(args, lockdir, skills_dir):
+    lock = read_lock(lockdir)
+    classified = classify_source(args.source)
+    target = os.path.join(skills_dir, args.name)
+    if args.hash:
+        computed = args.hash
+    elif os.path.isdir(target):
+        computed = compute_skill_folder_hash(target)
+    else:
+        die(f"cannot hash {target}: not found (pass --hash)")
+    existing = lock["skills"].get(args.name)
+    if existing and existing.get("source") != classified["source"]:
+        warn(f"{args.name}: replacing entry with different source "
+             f"(was {existing.get('source')!r}, now {classified['source']!r})")
+    lock["skills"][args.name] = build_entry(
+        classified["source"], classified.get("sourceUrl"),
+        args.ref or classified.get("ref"), classified["sourceType"],
+        args.skill_path, computed,
+    )
+    write_lock(lockdir, lock)
+    return 0
+
+
+def cmd_remove(args, lockdir, _skills_dir):
+    lock = read_lock(lockdir)
+    if args.name not in lock["skills"]:
+        print(f"Error: {args.name} not found in {LOCK_FILE}", file=sys.stderr)
+        return 1
+    del lock["skills"][args.name]
+    write_lock(lockdir, lock)
+    return 0
+
+
+def cmd_list(args, lockdir, _skills_dir):
+    lock = read_lock(lockdir)
+    if args.json:
+        print(json.dumps(lock, indent=2, ensure_ascii=False))
+        return 0
+    for name in sorted(lock["skills"]):
+        entry = lock["skills"][name]
+        print(f"{name}\t{entry.get('sourceType', '?')}\t{entry.get('source', '?')}")
+    return 0
+
+
+def cmd_missing(_args, lockdir, skills_dir):
+    lock = read_lock(lockdir)
+    for name in sorted(lock["skills"]):
+        if not os.path.isdir(os.path.join(skills_dir, name)):
+            print(name)
+    return 0
+
+
+def cmd_plan(args, lockdir, skills_dir):
+    """Emit pipe-separated rows for skills that need (re)installation:
+    name|clone_source|skill_dir_rel|raw_source|skill_path|source_type|ref
+    ('|' not tab: bash read collapses empty tab-separated fields, and
+    repo-root skills legitimately have an empty skill_dir_rel)."""
+    lock = read_lock(lockdir)
+    for name in sorted(lock["skills"]):
+        entry = lock["skills"][name]
+        source_type = entry.get("sourceType", "")
+        if source_type in ("local", "node_modules", "well-known"):
+            warn(f"{name}: skipping {source_type} entry (not remotely installable)")
+            continue
+        target = os.path.join(skills_dir, name)
+        if os.path.isdir(target) and not args.force:
+            if compute_skill_folder_hash(target) != entry.get("computedHash"):
+                warn(f"{name}: on-disk hash differs from lock (drift); use --force to reinstall")
+            continue
+        print("|".join([
+            name, clone_source(entry), skill_dir_rel(entry),
+            entry.get("source", ""), entry.get("skillPath", ""), source_type,
+            entry.get("ref", ""),
+        ]))
+    return 0
+
+
+def cmd_refresh(_args, lockdir, skills_dir):
+    lock = read_lock(lockdir)
+    changed = False
+    for name in sorted(lock["skills"]):
+        entry = lock["skills"][name]
+        target = os.path.join(skills_dir, name)
+        if not os.path.isdir(target):
+            warn(f"{name}: dropped from lock (skill directory missing)")
+            del lock["skills"][name]
+            changed = True
+        elif compute_skill_folder_hash(target) != entry.get("computedHash"):
+            warn(f"{name}: hash drift (on-disk differs from lock); "
+                 f"reinstall or re-add to re-stamp")
+    if changed:
+        write_lock(lockdir, lock)
+    return 0
+
+
+def is_repo_owned(lockdir, name, real_source):
+    if os.path.exists(os.path.join(lockdir, "skills", name, "SKILL.md")):
+        return True
+    vendor = os.path.join(lockdir, "vendor", "skills")
+    if os.path.isdir(vendor):
+        for root, dirs, _files in os.walk(vendor):
+            dirs[:] = [d for d in dirs if d != ".git"]
+            if os.path.basename(root) == name and os.path.exists(os.path.join(root, "SKILL.md")):
+                return True
+    if real_source.startswith(os.path.join(lockdir, ".ai-files", "dotclaude") + os.sep):
+        return True
+    return False
+
+
+def cmd_init(_args, lockdir, skills_dir):
+    """Audit .agents/skills/: report untracked skills. Writes nothing —
+    unknown-origin skills cannot be safely recorded (re-add them instead)."""
+    lock = read_lock(lockdir)
+    agents_dir = os.path.join(lockdir, ".agents", "skills")
+    if not os.path.isdir(agents_dir):
+        warn(f"no {os.path.join('.agents', 'skills')} directory found")
+        return 0
+    skills_root = os.path.abspath(skills_dir)
+    for name in sorted(os.listdir(agents_dir)):
+        path = os.path.join(agents_dir, name)
+        if not os.path.islink(path):
+            continue
+        real = os.path.realpath(path)
+        if name in lock["skills"]:
+            print(f"tracked:   {name}")
+            continue
+        if not real.startswith(skills_root + os.sep):
+            continue  # link points elsewhere (e.g. dotclaude) — not an external install
+        if is_repo_owned(lockdir, name, real):
+            continue  # repo-owned skill, managed by make build
+        print(f"SKIPPED (unknown origin): {name} — re-add via "
+              f"'ai-files-skills-add <repo> --skill <name>' to record its source")
+    return 0
+
+
+def cmd_hash(args, _lockdir, _skills_dir):
+    if not os.path.isdir(args.directory):
+        die(f"not a directory: {args.directory}")
+    print(compute_skill_folder_hash(args.directory))
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="ai-files-skills-lock",
+        description="Manage vercel-labs-compatible skills-lock.json",
+    )
+    parser.add_argument("--dir", help="lock directory (default: git root of cwd)")
+    parser.add_argument("--skills-dir", help="installed skills dir (default: <dir>/.ai-files/skills)")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("add", help="add or update a skill entry")
+    p.add_argument("name")
+    p.add_argument("--source", required=True, help="repo spec or local path the skill came from")
+    p.add_argument("--skill-path", help="repo-relative path to SKILL.md")
+    p.add_argument("--ref", help="branch or tag ref")
+    p.add_argument("--hash", help="precomputed hash (default: hash skills-dir/name)")
+
+    p = sub.add_parser("remove", help="remove a skill entry")
+    p.add_argument("name")
+
+    p = sub.add_parser("list", help="list entries")
+    p.add_argument("--json", action="store_true")
+
+    sub.add_parser("missing", help="list entries with no installed directory")
+
+    p = sub.add_parser("plan", help="emit TSV install plan for skills-install")
+    p.add_argument("--force", action="store_true", help="include hash-drifting skills")
+
+    sub.add_parser("refresh", help="drop entries whose directory vanished; report drift")
+
+    sub.add_parser("init", help="audit .agents/skills for untracked skills")
+
+    p = sub.add_parser("hash", help="print computed hash of a skill directory")
+    p.add_argument("directory")
+
+    args = parser.parse_args()
+
+    lockdir = os.path.abspath(args.dir) if args.dir else default_lock_dir()
+    skills_dir = (os.path.abspath(args.skills_dir) if args.skills_dir
+                  else os.path.join(lockdir, ".ai-files", "skills"))
+
+    handlers = {
+        "add": cmd_add, "remove": cmd_remove, "list": cmd_list,
+        "missing": cmd_missing, "plan": cmd_plan, "refresh": cmd_refresh,
+        "init": cmd_init, "hash": cmd_hash,
+    }
+    sys.exit(handlers[args.command](args, lockdir, skills_dir))
+
+
+if __name__ == "__main__":
+    main()

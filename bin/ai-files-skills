@@ -62,6 +62,9 @@ Interactive skill management using fzf.
 
 Subcommands:
   add <REPO> [OPTIONS]    Install skills from a git repository
+  install [OPTIONS]       Restore skills recorded in skills-lock.json
+  remove <NAME>           Remove a skill + its skills-lock.json entry
+  lock <COMMAND>          Inspect/modify skills-lock.json
   explore <REPO> [OPTIONS] Explore a repo and generate gilt config
   sync [OPTIONS]          Sync skills from agents.yaml to agent dirs
 
