@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+#
+# ai-files-skills-install - Install skills listed in skills-lock.json
+#
+# Reads skills-lock.json (vercel-labs compatible) at the project root,
+# installs missing skills into .ai-files/skills/, links them into the agent
+# skill directories (.claude/.kilo/.opencode/.agents) via ai-files-skill-enable,
+# and re-stamps their lock hashes. Idempotent: present, hash-matching skills
+# are skipped.
+#
+# Usage: ai-files-skills-install [OPTIONS]
+
+set -euo pipefail
+
+#=============================================================================
+# EXIT CODE CONSTANTS
+#=============================================================================
+
+readonly EXIT_SUCCESS=0
+readonly EXIT_EXPECTED_FAILURE=1
+readonly EXIT_ERROR=2
+readonly EXIT_PERMISSION=3
+
+#=============================================================================
+# LOCATION + OPTIONS
+#=============================================================================
+
+# Resolve script location (sibling scripts: ai-files-skill-enable, ai-files-skills-lock)
+SCRIPT_PATH="$0"
+while [ -h "$SCRIPT_PATH" ]; do
+    DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$DIR/$SCRIPT_PATH"
+done
+SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+PROJECT_ROOT="$(cd "$SELF_DIR/.." && pwd)"
+
+FORCE=false
+TEMP_ROOT=""
+SKILLS_DIR=""
+declare -A SOURCE_CLONES=()
+
+cleanup() {
+    local exit_code=$?
+    if [[ -n "${TEMP_ROOT:-}" ]] && [[ -d "$TEMP_ROOT" ]]; then
+        rm -rf "$TEMP_ROOT"
+    fi
+    exit "$exit_code"
+}
+
+trap cleanup EXIT INT ERR
+
+error() {
+    echo "Error: $1" >&2
+}
+
+#=============================================================================
+# PREREQUISITES + ENGINE
+#=============================================================================
+
+check_git() {
+    if ! command -v git &>/dev/null; then
+        error "git is not installed"
+        exit "$EXIT_ERROR"
+    fi
+}
+
+# Which engine fetches skill files: "gh" when the gh CLI has skills support,
+# else "git" clone. Override with AI_FILES_SKILLS_ENGINE=gh|git|auto.
+skills_engine() {
+    case "${AI_FILES_SKILLS_ENGINE:-auto}" in
+        gh|git)
+            echo "${AI_FILES_SKILLS_ENGINE}"
+            ;;
+        *)
+            if command -v gh &>/dev/null && gh skill install --help &>/dev/null; then
+                echo "gh"
+            else
+                echo "git"
+            fi
+            ;;
+    esac
+}
+
+#=============================================================================
+# FETCH HELPERS
+#=============================================================================
+
+create_temp_root() {
+    TEMP_ROOT="$(mktemp -d -t skills-install-XXXXXX 2>/dev/null || mktemp -d)" || {
+        error "Cannot create temporary directory"
+        exit "$EXIT_ERROR"
+    }
+}
+
+# Clone a lock source (once per source#ref) into the temp root.
+# On success sets CLONE_RESULT to the clone directory; returns 1 on failure.
+# (No stdout capture — the cache must survive across calls, so a command
+# substitution subshell would throw the assignments away.)
+# Arguments:
+#   $1 - Clone URL
+#   $2 - Ref (branch/tag, may be empty)
+#   $3 - Cache key (raw source#ref)
+clone_lock_source() {
+    local url="$1" ref="$2" key="$3" dir
+
+    if [[ -n "${SOURCE_CLONES[$key]:-}" ]]; then
+        CLONE_RESULT="${SOURCE_CLONES[$key]}"
+        return 0
+    fi
+
+    dir="$TEMP_ROOT/src${#SOURCE_CLONES[@]}"
+    local args=(--depth 1 --quiet)
+    # ponytail: --branch needs a tag/branch, not a SHA; full clone if SHAs matter
+    [[ -n "$ref" ]] && args+=(--branch "$ref")
+
+    echo "==> Cloning $url${ref:+ (ref $ref)}..." >&2
+    if ! timeout "${SKILLS_CLONE_TIMEOUT:-300}" git clone "${args[@]}" "$url" "$dir" 2>/dev/null; then
+        return 1
+    fi
+
+    SOURCE_CLONES[$key]="$dir"
+    CLONE_RESULT="$dir"
+    return 0
+}
+
+# Install one skill via gh, renaming gh's directory to the lock key name.
+# Arguments:
+#   $1 - gh spec (owner/repo)
+#   $2 - Selector (repo-relative skill dir, or skill name)
+#   $3 - Skills directory
+#   $4 - Ref to pin (may be empty)
+#   $5 - Expected (lock key) name
+# Returns: 0 on success, 1 on failure
+gh_install_skill() {
+    local spec="$1" selector="$2" skills_dir="$3" ref="$4" expected="$5"
+    local before after new_dir
+
+    before="$(ls -A "$skills_dir" 2>/dev/null | sort || true)"
+
+    local args=(skill install "$spec" "$selector" --dir "$skills_dir" --force)
+    [[ -n "$ref" ]] && args+=(--pin "$ref")
+    if ! gh "${args[@]}" >/dev/null 2>&1; then
+        return 1
+    fi
+
+    if [[ ! -e "$skills_dir/$expected" ]]; then
+        # gh named the directory differently; rename the newly created one
+        after="$(ls -A "$skills_dir" 2>/dev/null | sort || true)"
+        new_dir="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | head -1 || true)"
+        if [[ -n "$new_dir" && -d "$skills_dir/$new_dir" ]]; then
+            mv "$skills_dir/$new_dir" "$skills_dir/$expected" 2>/dev/null || true
+        fi
+    fi
+
+    [[ -e "$skills_dir/$expected" ]]
+}
+
+#=============================================================================
+# INSTALL
+#=============================================================================
+
+# Install one planned skill.
+# Arguments (from `skills-lock plan` pipe-separated columns):
+#   $1 name (raw lock key)  $2 clone_source  $3 skill_dir_rel  $4 raw_source
+#   $5 skill_path  $6 source_type  $7 ref  $8 engine  $9 dir (sanitized)
+install_planned_skill() {
+    local name="$1" clone_url="$2" rel="$3" raw="$4"
+    local skill_path="$5" source_type="$6" ref="$7" engine="$8" dir="$9"
+    local target="$SKILLS_DIR/$dir"
+    local src_dir=""
+
+    echo "==> Installing $name..."
+
+    if [[ "$engine" == "gh" && "$source_type" == "github" ]]; then
+        local selector="$name"
+        [[ -n "$rel" ]] && selector="$rel"
+        if ! gh_install_skill "$raw" "$selector" "$SKILLS_DIR/" "$ref" "$dir"; then
+            echo "    (gh skill install failed, using git clone)" >&2
+            engine="git"
+        fi
+    fi
+
+    if [[ "$engine" == "git" ]]; then
+        if ! clone_lock_source "$clone_url" "$ref" "$raw#$ref"; then
+            error "Cannot clone $clone_url for skill '$name'"
+            return 1
+        fi
+        src_dir="$CLONE_RESULT"
+        [[ -e "$target" ]] && rm -rf "$target"
+        if [[ -n "$rel" ]]; then
+            if ! cp -r "$src_dir/$rel" "$target" 2>/dev/null; then
+                error "Cannot copy skill '$name' from clone"
+                return 1
+            fi
+        else
+            # Repo-root skill: materialize the tree without .git
+            if ! { mkdir -p "$target" && git -C "$src_dir" archive HEAD | tar -x -C "$target"; }; then
+                error "Cannot extract skill '$name' from clone"
+                return 1
+            fi
+        fi
+    fi
+
+    if [[ ! -e "$target" ]]; then
+        error "Skill '$name' was not installed"
+        return 1
+    fi
+
+    if ! "$SELF_DIR/ai-files-skill-enable" "$dir" >/dev/null 2>&1; then
+        echo "Warning: failed to link $dir into agent directories" >&2
+    fi
+
+    # Re-stamp the lock entry (hash, and any metadata drift) under its raw key
+    local lock_args=(--dir "$PROJECT_ROOT" --skills-dir "$SKILLS_DIR"
+        add "$name" --source "$raw")
+    [[ -n "$skill_path" ]] && lock_args+=(--skill-path "$skill_path")
+    [[ -n "$ref" ]] && lock_args+=(--ref "$ref")
+    if ! "$SELF_DIR/ai-files-skills-lock" "${lock_args[@]}"; then
+        echo "Warning: failed to re-stamp $name in skills-lock.json" >&2
+    fi
+
+    echo "    Installed $name (directory: $dir)"
+    return 0
+}
+
+#=============================================================================
+# COMMAND-LINE ARGUMENT PARSING / USAGE
+#=============================================================================
+
+show_usage() {
+    cat <<'EOF'
+Usage: ai-files-skills-install [OPTIONS]
+
+Install skills listed in skills-lock.json into .ai-files/skills/ and link
+them into the agent skill directories. Missing skills are fetched; present
+skills with a matching hash are skipped.
+
+Options:
+  -f, --force   Reinstall skills even if present (restores lock hashes)
+  -y, --yes     Accepted for symmetry; this command never prompts
+  -h, --help    Show this help message
+
+Environment Variables:
+  SKILLS_CLONE_TIMEOUT       Git clone timeout in seconds (default: 300)
+  AI_FILES_SKILLS_ENGINE     Fetch engine: gh|git|auto (default auto — use
+                             `gh skill install` when gh has skills support)
+
+Exit codes:
+  0  success (or nothing to install)
+  1  at least one skill failed to install
+  2  usage error
+  3  cannot create skills directory
+
+Examples:
+  # Restore skills recorded in skills-lock.json (fresh clone / after rebuild)
+  ai-files skills install
+
+  # Reinstall everything, restoring lock hashes
+  ai-files skills install --force
+EOF
+}
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --force|-f)
+                FORCE=true
+                ;;
+            --yes|-y)
+                # never prompts; accepted for script symmetry
+                ;;
+            --help|-h)
+                show_usage
+                exit "$EXIT_SUCCESS"
+                ;;
+            -*)
+                error "Unknown option: $1"
+                show_usage
+                exit "$EXIT_ERROR"
+                ;;
+            *)
+                error "Unexpected argument: $1"
+                show_usage
+                exit "$EXIT_ERROR"
+                ;;
+        esac
+        shift
+    done
+}
+
+#=============================================================================
+# MAIN
+#=============================================================================
+
+main() {
+    parse_arguments "$@"
+    check_git
+
+    local lock="$SELF_DIR/ai-files-skills-lock"
+    SKILLS_DIR="$PROJECT_ROOT/.ai-files/skills"
+
+    local plan_args=(--dir "$PROJECT_ROOT" --skills-dir "$SKILLS_DIR" plan)
+    [[ "$FORCE" == true ]] && plan_args+=(--force)
+
+    local plan engine
+    plan="$("$lock" "${plan_args[@]}")" || plan=""
+    engine="$(skills_engine)"
+
+    if [[ -z "$plan" ]]; then
+        echo "==> No skills to install (lock empty or up to date)"
+        exit "$EXIT_SUCCESS"
+    fi
+
+    if ! mkdir -p "$SKILLS_DIR" 2>/dev/null; then
+        error "Cannot create directory: $SKILLS_DIR"
+        exit "$EXIT_PERMISSION"
+    fi
+
+    create_temp_root
+
+    local installed=0 failed=0
+    local name clone_url rel raw skill_path source_type ref
+
+    while IFS='|' read -r name clone_url rel raw skill_path source_type ref dir; do
+        [[ -z "$name" ]] && continue
+        if install_planned_skill "$name" "$clone_url" "$rel" "$raw" \
+                "$skill_path" "$source_type" "$ref" "$engine" "$dir"; then
+            ((installed++)) || true
+        else
+            ((failed++)) || true
+        fi
+    done <<< "$plan"
+
+    echo ""
+    echo "==> Installed $installed skill(s), $failed failed"
+
+    [[ "$failed" -eq 0 ]] || exit "$EXIT_EXPECTED_FAILURE"
+    exit "$EXIT_SUCCESS"
+}
+
+main "$@"

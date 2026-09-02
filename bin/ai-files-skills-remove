@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+#
+# ai-files-skills-remove - Remove a skill installed into .ai-files/skills
+#
+# Unlinks the skill from the agent skill directories, deletes it from
+# .ai-files/skills/, and removes its skills-lock.json entry.
+#
+# Usage: ai-files-skills-remove <SKILL_NAME> [OPTIONS]
+
+set -euo pipefail
+
+#=============================================================================
+# EXIT CODE CONSTANTS
+#=============================================================================
+
+readonly EXIT_SUCCESS=0
+readonly EXIT_EXPECTED_FAILURE=1
+readonly EXIT_ERROR=2
+
+#=============================================================================
+# LOCATION + OPTIONS
+#=============================================================================
+
+# Resolve script location (sibling scripts: ai-files-skill-disable, ai-files-skills-lock)
+SCRIPT_PATH="$0"
+while [ -h "$SCRIPT_PATH" ]; do
+    DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$DIR/$SCRIPT_PATH"
+done
+SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+PROJECT_ROOT="$(cd "$SELF_DIR/.." && pwd)"
+
+SKILL_NAME=""
+
+error() {
+    echo "Error: $1" >&2
+}
+
+#=============================================================================
+# USAGE / ARGUMENTS
+#=============================================================================
+
+show_usage() {
+    cat <<'EOF'
+Usage: ai-files-skills-remove <SKILL_NAME>
+
+Remove a skill: unlink it from the agent skill directories
+(.claude/.kilo/.opencode/.agents), delete .ai-files/skills/<name>/ and drop
+its entry from skills-lock.json.
+
+Options:
+  -h, --help    Show this help message
+
+Exit codes:
+  0  removed (or already absent everywhere except one of the two stores)
+  1  nothing to remove (no skill directory and no lock entry)
+  2  usage error
+EOF
+}
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_usage
+                exit "$EXIT_SUCCESS"
+                ;;
+            -*)
+                error "Unknown option: $1"
+                show_usage
+                exit "$EXIT_ERROR"
+                ;;
+            *)
+                if [[ -n "$SKILL_NAME" ]]; then
+                    error "Unexpected argument: $1"
+                    exit "$EXIT_ERROR"
+                fi
+                SKILL_NAME="$1"
+                ;;
+        esac
+        shift
+    done
+
+    # The name feeds an rm -rf path — reject anything that could escape
+    # .ai-files/skills (empty, absolute, or containing .. segments).
+    case "$SKILL_NAME" in
+        ""|/*|*..*)
+            error "Invalid skill name: '$SKILL_NAME'"
+            exit "$EXIT_ERROR"
+            ;;
+    esac
+}
+
+#=============================================================================
+# MAIN
+#=============================================================================
+
+main() {
+    parse_arguments "$@"
+
+    local lock="$SELF_DIR/ai-files-skills-lock"
+    local dir
+    dir="$("$lock" --dir "$PROJECT_ROOT" dir "$SKILL_NAME")"
+    local skill_dir="$PROJECT_ROOT/.ai-files/skills/$dir"
+    local had_dir=false had_entry=false
+
+    if [[ -d "$skill_dir" ]] || [[ -L "$skill_dir" ]]; then
+        had_dir=true
+    fi
+
+    # 1. Unlink agent directories (source must still exist for resolution;
+    #    enable/disable resolve by sanitized directory name)
+    if ! "$SELF_DIR/ai-files-skill-disable" "$dir"; then
+        echo "Warning: disable reported failures (skill may not have been linked)" >&2
+    fi
+
+    # 2. Delete the skill directory
+    if [[ "$had_dir" == true ]]; then
+        rm -rf "$skill_dir"
+        echo "Removed $skill_dir"
+    fi
+
+    # 3. Drop the lock entry
+    if "$lock" --dir "$PROJECT_ROOT" remove "$SKILL_NAME" 2>/dev/null; then
+        had_entry=true
+        echo "Removed $SKILL_NAME from skills-lock.json"
+    fi
+
+    if [[ "$had_dir" == false && "$had_entry" == false ]]; then
+        error "Nothing to remove: no .ai-files/skills/$dir directory and no lock entry"
+        exit "$EXIT_EXPECTED_FAILURE"
+    fi
+
+    exit "$EXIT_SUCCESS"
+}
+
+main "$@"
