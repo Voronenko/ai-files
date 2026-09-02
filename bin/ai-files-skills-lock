@@ -10,8 +10,9 @@
 #   { "version": 1, "skills": { "<name>": { "source": ..., "computedHash": ... } } }
 # sorted keys, 2-space indent, trailing newline, timestamp-free.
 #
-# Divergence: the lock key is the sanitized skill directory name (not the
-# SKILL.md frontmatter name) because skill resolution works by directory.
+# Divergence from vercel (minimal): we never emit wellKnownDigest, subagents
+# or the download sourceType. Lock keys are raw frontmatter skill names and
+# installed directories are sanitizeName(key) — same invariant as their CLI.
 #
 # Depends ONLY on the Python standard library (argparse, hashlib, json, os,
 # re, subprocess, sys) — no pip/PyYAML or other add-on packages.
@@ -29,8 +30,22 @@ import sys
 LOCK_FILE = "skills-lock.json"
 VERSION = 1
 
-GITHUB_SHORTHAND = re.compile(r"^[^/\s]+/[^/\s]+$")
-GITHUB_URL = re.compile(r"^https?://github\.com/([^/\s]+)/([^/\s#]+?)(?:\.git)?(?:/[^#]*)?(?:#(.+))?$")
+GITHUB_SHORTHAND = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_./-]+)?$")
+WELLKNOWN_EXCLUDED_HOSTS = ("github.com", "gitlab.com", "raw.githubusercontent.com")
+
+
+def sanitize_name(name):
+    """Port of vercel-labs sanitizeName (installer.ts): lowercase, collapse
+    runs of [^a-z0-9._]+ to one '-', strip leading/trailing [.-], cap 255,
+    fallback 'unnamed-skill'. Idempotent — old sanitized keys map to
+    themselves, which is what makes pre-existing locks need no migration."""
+    sanitized = re.sub(r"[^a-z0-9._]+", "-", name.lower())
+    sanitized = re.sub(r"^[.-]+|[.-]+$", "", sanitized)
+    return sanitized[:255] or "unnamed-skill"
+
+
+def dir_for_key(key):
+    return sanitize_name(key)
 
 
 def warn(message):
@@ -142,22 +157,84 @@ def compute_skill_folder_hash(skill_dir):
     return digest.hexdigest()
 
 
+def looks_like_git_source(spec):
+    return bool(re.match(r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+|https?://|git@|ssh://)", spec)) \
+        or spec.endswith(".git")
+
+
 def classify_source(raw):
-    """Map a user-provided source spec onto (partial) lock entry fields."""
+    """Map a user-provided source spec onto (partial) lock entry fields,
+    mirroring vercel-labs source-parser.ts classification."""
     raw = raw.strip()
-    if raw.startswith("file://"):
-        raw = raw[len("file://"):]
-    if os.path.isdir(raw):
-        return {"source": os.path.abspath(raw), "sourceType": "local"}
-    match = GITHUB_URL.match(raw)
-    if match:
-        entry = {"source": f"{match.group(1)}/{match.group(2)}", "sourceType": "github"}
-        if match.group(3):
-            entry["ref"] = match.group(3)
+
+    # Scheme prefixes normalize and recurse
+    if raw.startswith("github:"):
+        return classify_source(raw[len("github:"):])
+    if raw.startswith("gitlab:"):
+        return classify_source("https://gitlab.com/" + raw[len("gitlab:"):].lstrip("/"))
+
+    probe = raw[len("file://"):] if raw.startswith("file://") else raw
+    if os.path.isdir(probe):
+        return {"source": os.path.abspath(probe), "sourceType": "local"}
+
+    # ref fragment (git-looking sources only)
+    ref = ""
+    if "#" in raw:
+        head, frag = raw.split("#", 1)
+        if looks_like_git_source(head):
+            raw, ref = head, frag
+
+    # github.com URLs (incl. /tree/<ref>[/subpath])
+    m = re.match(r"^https?://github\.com/([A-Za-z0-9_.-]+)/([^/#\s]+?)"
+                 r"(?:\.git)?(?:/tree/([^/#\s]+)(?:/[^#\s]*)?)?/?$", raw)
+    if m:
+        entry = {"source": f"{m.group(1)}/{m.group(2)}", "sourceType": "github"}
+        tree_ref = m.group(3) or ""
+        if ref or tree_ref:
+            entry["ref"] = ref or tree_ref
         return entry
-    if GITHUB_SHORTHAND.match(raw):
-        return {"source": raw, "sourceType": "github"}
-    return {"source": raw, "sourceUrl": raw, "sourceType": "git"}
+
+    # gitlab.com URLs (incl. subgroups and /-/tree/<ref>[/subpath])
+    m = re.match(r"^https?://(?:www\.)?gitlab\.com/([^#/\s][^#\s]*?)"
+                 r"(?:\.git)?(?:/-/tree/([^/#\s]+)(?:/[^#\s]*)?)?/?$", raw)
+    if m:
+        path = m.group(1).strip("/")
+        url = f"https://gitlab.com/{path}.git"
+        entry = {"source": url, "sourceUrl": url, "sourceType": "gitlab"}
+        tree_ref = m.group(2) or ""
+        if ref or tree_ref:
+            entry["ref"] = ref or tree_ref
+        return entry
+
+    # loose github fallback: any github.com/owner/repo… → owner/repo
+    m = re.match(r"^https?://github\.com/([A-Za-z0-9_.-]+)/([^/#\s]+)", raw)
+    if m:
+        repo = m.group(2)
+        if repo.endswith(".git"):
+            repo = repo[:-4]
+        return {"source": f"{m.group(1)}/{repo}", "sourceType": "github"}
+
+    # bare owner/repo shorthand (optionally with subpath) → github host
+    if GITHUB_SHORTHAND.match(raw) and ":" not in raw:
+        entry = {"source": "/".join(raw.split("/")[:2]), "sourceType": "github"}
+        if ref:
+            entry["ref"] = ref
+        return entry
+
+    # other-host https URL not ending .git → well-known registry
+    m = re.match(r"^https?://([^/\s#]+)", raw)
+    if m and not raw.endswith(".git"):
+        host = m.group(1).lower()
+        if host.startswith("www."):
+            host = host[4:]
+        if host not in WELLKNOWN_EXCLUDED_HOSTS:
+            return {"source": host, "sourceUrl": raw, "sourceType": "well-known"}
+
+    # everything else (SSH, other git hosts, .git URLs, bare names) → git
+    entry = {"source": raw, "sourceUrl": raw, "sourceType": "git"}
+    if ref:
+        entry["ref"] = ref
+    return entry
 
 
 def build_entry(source, source_url, ref, source_type, skill_path, computed_hash):
@@ -190,7 +267,7 @@ def skill_dir_rel(entry):
 def cmd_add(args, lockdir, skills_dir):
     lock = read_lock(lockdir)
     classified = classify_source(args.source)
-    target = os.path.join(skills_dir, args.name)
+    target = os.path.join(skills_dir, sanitize_name(args.name))
     if args.hash:
         computed = args.hash
     elif os.path.isdir(target):
@@ -201,6 +278,12 @@ def cmd_add(args, lockdir, skills_dir):
     if existing and existing.get("source") != classified["source"]:
         warn(f"{args.name}: replacing entry with different source "
              f"(was {existing.get('source')!r}, now {classified['source']!r})")
+    new_dir = sanitize_name(args.name)
+    for other in lock["skills"]:
+        if other != args.name and sanitize_name(other) == new_dir:
+            warn(f"directory collision: '{other}' also maps to '{new_dir}' "
+                 f"— last install wins (matches vercel behavior)")
+            break
     lock["skills"][args.name] = build_entry(
         classified["source"], classified.get("sourceUrl"),
         args.ref or classified.get("ref"), classified["sourceType"],
@@ -210,12 +293,27 @@ def cmd_add(args, lockdir, skills_dir):
     return 0
 
 
+def resolve_lock_key(skills, name):
+    """Exact key match, else the unique key with the same sanitized dir
+    (parity with vercel resolveSkillsToRemove)."""
+    if name in skills:
+        return name
+    target = sanitize_name(name)
+    matches = [k for k in skills if sanitize_name(k) == target]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        warn(f"ambiguous: multiple lock keys map to '{target}': {', '.join(matches)}")
+    return None
+
+
 def cmd_remove(args, lockdir, _skills_dir):
     lock = read_lock(lockdir)
-    if args.name not in lock["skills"]:
+    key = resolve_lock_key(lock["skills"], args.name)
+    if key is None:
         print(f"Error: {args.name} not found in {LOCK_FILE}", file=sys.stderr)
         return 1
-    del lock["skills"][args.name]
+    del lock["skills"][key]
     write_lock(lockdir, lock)
     return 0
 
@@ -234,14 +332,14 @@ def cmd_list(args, lockdir, _skills_dir):
 def cmd_missing(_args, lockdir, skills_dir):
     lock = read_lock(lockdir)
     for name in sorted(lock["skills"]):
-        if not os.path.isdir(os.path.join(skills_dir, name)):
+        if not os.path.isdir(os.path.join(skills_dir, sanitize_name(name))):
             print(name)
     return 0
 
 
 def cmd_plan(args, lockdir, skills_dir):
     """Emit pipe-separated rows for skills that need (re)installation:
-    name|clone_source|skill_dir_rel|raw_source|skill_path|source_type|ref
+    name|clone_source|skill_dir_rel|raw_source|skill_path|source_type|ref|dir
     ('|' not tab: bash read collapses empty tab-separated fields, and
     repo-root skills legitimately have an empty skill_dir_rel)."""
     lock = read_lock(lockdir)
@@ -251,7 +349,8 @@ def cmd_plan(args, lockdir, skills_dir):
         if source_type in ("local", "node_modules", "well-known"):
             warn(f"{name}: skipping {source_type} entry (not remotely installable)")
             continue
-        target = os.path.join(skills_dir, name)
+        skill_dir = sanitize_name(name)
+        target = os.path.join(skills_dir, skill_dir)
         if os.path.isdir(target) and not args.force:
             if compute_skill_folder_hash(target) != entry.get("computedHash"):
                 warn(f"{name}: on-disk hash differs from lock (drift); use --force to reinstall")
@@ -259,7 +358,7 @@ def cmd_plan(args, lockdir, skills_dir):
         print("|".join([
             name, clone_source(entry), skill_dir_rel(entry),
             entry.get("source", ""), entry.get("skillPath", ""), source_type,
-            entry.get("ref", ""),
+            entry.get("ref", ""), skill_dir,
         ]))
     return 0
 
@@ -269,7 +368,7 @@ def cmd_refresh(_args, lockdir, skills_dir):
     changed = False
     for name in sorted(lock["skills"]):
         entry = lock["skills"][name]
-        target = os.path.join(skills_dir, name)
+        target = os.path.join(skills_dir, sanitize_name(name))
         if not os.path.isdir(target):
             warn(f"{name}: dropped from lock (skill directory missing)")
             del lock["skills"][name]
@@ -305,12 +404,13 @@ def cmd_init(_args, lockdir, skills_dir):
         warn(f"no {os.path.join('.agents', 'skills')} directory found")
         return 0
     skills_root = os.path.abspath(skills_dir)
+    known_dirs = {sanitize_name(k) for k in lock["skills"]}
     for name in sorted(os.listdir(agents_dir)):
         path = os.path.join(agents_dir, name)
         if not os.path.islink(path):
             continue
         real = os.path.realpath(path)
-        if name in lock["skills"]:
+        if name in known_dirs:
             print(f"tracked:   {name}")
             continue
         if not real.startswith(skills_root + os.sep):
@@ -326,6 +426,11 @@ def cmd_hash(args, _lockdir, _skills_dir):
     if not os.path.isdir(args.directory):
         die(f"not a directory: {args.directory}")
     print(compute_skill_folder_hash(args.directory))
+    return 0
+
+
+def cmd_dir(args, _lockdir, _skills_dir):
+    print(sanitize_name(args.name))
     return 0
 
 
@@ -363,6 +468,9 @@ def main():
     p = sub.add_parser("hash", help="print computed hash of a skill directory")
     p.add_argument("directory")
 
+    p = sub.add_parser("dir", help="print the sanitized directory name for a skill name")
+    p.add_argument("name")
+
     args = parser.parse_args()
 
     lockdir = os.path.abspath(args.dir) if args.dir else default_lock_dir()
@@ -372,7 +480,7 @@ def main():
     handlers = {
         "add": cmd_add, "remove": cmd_remove, "list": cmd_list,
         "missing": cmd_missing, "plan": cmd_plan, "refresh": cmd_refresh,
-        "init": cmd_init, "hash": cmd_hash,
+        "init": cmd_init, "hash": cmd_hash, "dir": cmd_dir,
     }
     sys.exit(handlers[args.command](args, lockdir, skills_dir))
 

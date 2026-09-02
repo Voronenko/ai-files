@@ -51,8 +51,8 @@ expect "l2 2-space indent" grep -q '^  "version": 1,$' "$P/skills-lock.json"
 expect "l2 trailing newline" test -z "$(tail -c1 "$P/skills-lock.json")"
 expect "l2 github shorthand classified" \
     python3 -c "import json;e=json.load(open('$P/skills-lock.json'))['skills']['b-demo'];assert e['sourceType']=='github' and e['source']=='octo/widgets' and 'sourceUrl' not in e and 'ref' not in e"
-expect "l2 gitlab url classified as git with sourceUrl" \
-    python3 -c "import json;e=json.load(open('$P/skills-lock.json'))['skills']['a-demo'];assert e['sourceType']=='git' and e['sourceUrl']=='https://gitlab.com/x/y.git'"
+expect "l2 gitlab url classified as gitlab with canonical .git source/sourceUrl" \
+    python3 -c "import json;e=json.load(open('$P/skills-lock.json'))['skills']['a-demo'];assert e['sourceType']=='gitlab' and e['source']=='https://gitlab.com/x/y.git' and e['sourceUrl']=='https://gitlab.com/x/y.git'"
 
 echo "=== L3: idempotent rewrite is byte-identical ==="
 cp "$P/skills-lock.json" "$BASE/before.json"
@@ -126,6 +126,51 @@ expect "l10 missing lists only entries without a dir" test "$OUT" = "gone"
 lock_in "$P3" refresh >/dev/null 2>&1
 expect "l10 refresh drops vanished entries" \
     python3 -c "import json;d=json.load(open('$P3/skills-lock.json'));assert list(d['skills'])==['there']"
+
+echo "=== L11: dir subcommand — vercel sanitizeName port ==="
+expect "l11 Fancy.Pkg! -> fancy.pkg" test "$("$LOCK" dir 'Fancy.Pkg!')" = "fancy.pkg"
+expect "l11 Alpha Tools -> alpha-tools" test "$("$LOCK" dir 'Alpha Tools')" = "alpha-tools"
+expect "l11 '..' falls back to unnamed-skill" test "$("$LOCK" dir '..')" = "unnamed-skill"
+expect "l11 dots and underscores kept" test "$("$LOCK" dir 'a_b.C d')" = "a_b.c-d"
+expect "l11 idempotent on sanitized input (zero-migration proof)" \
+    test "$("$LOCK" dir 'fancy.pkg')" = "fancy.pkg"
+
+echo "=== L12: classification parity (well-known, refs, prefixes) ==="
+run_lock add wk --source https://example.com/foo --hash deadbeef
+expect "l12 other-host https (no .git) is well-known with hostname source" \
+    python3 -c "import json;e=json.load(open('$P/skills-lock.json'))['skills']['wk'];assert e['sourceType']=='well-known' and e['source']=='example.com' and e['sourceUrl']=='https://example.com/foo' and 'ref' not in e"
+run_lock add frag --source octo/widgets#v1.2.0 --hash deadbeef
+expect "l12 shorthand #ref splits into ref" \
+    python3 -c "import json;e=json.load(open('$P/skills-lock.json'))['skills']['frag'];assert e['sourceType']=='github' and e['source']=='octo/widgets' and e['ref']=='v1.2.0'"
+run_lock add gltree --source "https://gitlab.com/grp/sub/r/-/tree/v2" --hash deadbeef
+expect "l12 gitlab /-/tree ref parsed" \
+    python3 -c "import json;e=json.load(open('$P/skills-lock.json'))['skills']['gltree'];assert e['sourceType']=='gitlab' and e['source']=='https://gitlab.com/grp/sub/r.git' and e['ref']=='v2'"
+run_lock add pref --source "gitlab:octo/tools" --hash deadbeef
+expect "l12 gitlab: prefix normalized" \
+    python3 -c "import json;e=json.load(open('$P/skills-lock.json'))['skills']['pref'];assert e['sourceType']=='gitlab' and e['source']=='https://gitlab.com/octo/tools.git'"
+run_lock add ghtree --source "https://github.com/o/r/tree/v9/skills/x" --hash deadbeef
+expect "l12 github /tree ref parsed" \
+    python3 -c "import json;e=json.load(open('$P/skills-lock.json'))['skills']['ghtree'];assert e['sourceType']=='github' and e['source']=='o/r' and e['ref']=='v9'"
+
+echo "=== L13: raw-key add maps to sanitized dir; plan emits dir column ==="
+P4="$BASE/keys"; SD4="$P4/.ai-files/skills"; mkdir -p "$SD4/fancy.pkg"
+printf -- '---\nname: Fancy.Pkg!\ndescription: d\n---\nx\n' > "$SD4/fancy.pkg/SKILL.md"
+lock_in "$P4" add 'Fancy.Pkg!' --source octo/widgets --skill-path skills/fancy/SKILL.md --hash deadbeef >/dev/null 2>&1
+expect "l13 raw key stored verbatim" \
+    python3 -c "import json;d=json.load(open('$P4/skills-lock.json'));assert 'Fancy.Pkg!' in d['skills']"
+OUT=$(lock_in "$P4" missing)
+expect "l13 missing maps key to sanitized dir (present → not missing)" test "$OUT" = ""
+rm -rf "$SD4/fancy.pkg"
+OUT=$(lock_in "$P4" plan)
+expect "l13 plan row ends with dir column fancy.pkg" \
+    bash -c "printf '%s' \"\$OUT\" | grep -q 'fancy.pkg\$'"
+OUT=$(lock_in "$P4" missing)
+expect "l13 missing once sanitized dir removed" test "$OUT" = "Fancy.Pkg!"
+
+echo "=== L14: remove resolves by sanitized dir (vercel parity) ==="
+lock_in "$P4" remove fancy.pkg >/dev/null 2>&1
+expect "l14 remove 'fancy.pkg' dropped key 'Fancy.Pkg!'" \
+    python3 -c "import json;d=json.load(open('$P4/skills-lock.json'));assert 'Fancy.Pkg!' not in d['skills']"
 
 echo ""
 echo "================================"

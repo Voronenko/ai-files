@@ -86,12 +86,12 @@ run_add "$SRC" --all --yes
 expect "a3 exits 0 and reports install count" \
     bash -c "test \$RC -eq 0 && printf '%s' \"\$OUT\" | grep -q 'Installed 3 skill(s)'"
 expect "a3 sanitized directory names present" \
-    bash -c "test -d '$WORK/.ai-files/skills/alpha-tools' && test -d '$WORK/.ai-files/skills/beta-tools' && test -d '$WORK/.ai-files/skills/fancy-pkg'"
+    bash -c "test -d '$WORK/.ai-files/skills/alpha-tools' && test -d '$WORK/.ai-files/skills/beta-tools' && test -d '$WORK/.ai-files/skills/fancy.pkg'"
 expect "a3 real directories (not symlinks) with SKILL.md" \
     bash -c "test ! -L '$WORK/.ai-files/skills/alpha-tools' && test -f '$WORK/.ai-files/skills/alpha-tools/SKILL.md'"
 expect "a3 internal not installed" test ! -e "$WORK/.ai-files/skills/secret-internal"
 expect "a3 skills-lock.json written with local source and skillPath" \
-    python3 -c "import json,re;d=json.load(open('$WORK/skills-lock.json'));e=d['skills']['alpha-tools'];assert d['version']==1 and e['sourceType']=='local' and e['skillPath']=='skills/tools-alpha/SKILL.md' and re.fullmatch('[0-9a-f]{64}',e['computedHash'])"
+    python3 -c "import json,re;d=json.load(open('$WORK/skills-lock.json'));e=d['skills']['Alpha Tools'];assert d['version']==1 and e['sourceType']=='local' and e['skillPath']=='skills/tools-alpha/SKILL.md' and re.fullmatch('[0-9a-f]{64}',e['computedHash'])"
 expect "a3 no agent links when scripts live elsewhere" \
     bash -c "test ! -e '$WORK/.claude' && test ! -e '$WORK/.agents'"
 grep -q "ai-files skill enable" "$BASE/add.err" && ok "a3 mismatch warning printed to stderr" \
@@ -102,7 +102,7 @@ run_add "$SRC" --all --yes
 expect "a4 exits 0 with skip notices" \
     bash -c "test \$RC -eq 0 && test \"\$(printf '%s' \"\$OUT\" | grep -c 'already installed')\" -ge 3"
 expect "a4 directory set unchanged" \
-    bash -c "[ \"\$(ls '$WORK/.ai-files/skills/' | sort)\" = \"\$(printf '%s\n' alpha-tools beta-tools fancy-pkg | sort)\" ]"
+    bash -c "[ \"\$(ls '$WORK/.ai-files/skills/' | sort)\" = \"\$(printf '%s\n' alpha-tools beta-tools fancy.pkg | sort)\" ]"
 
 echo "=== A5: project mode always materializes real directories ==="
 new_work a5copy
@@ -114,9 +114,9 @@ echo "=== A6: repeatable --skill selects subset ==="
 new_work a6sel
 run_add "$SRC" --yes --skill "Alpha Tools" --skill "Fancy.Pkg!"
 expect "a6 only requested skills installed" \
-    bash -c "test \$RC -eq 0 && test -d '$WORK/.ai-files/skills/alpha-tools' && test -d '$WORK/.ai-files/skills/fancy-pkg' && test ! -e '$WORK/.ai-files/skills/beta-tools'"
+    bash -c "test \$RC -eq 0 && test -d '$WORK/.ai-files/skills/alpha-tools' && test -d '$WORK/.ai-files/skills/fancy.pkg' && test ! -e '$WORK/.ai-files/skills/beta-tools'"
 expect "a6 lock holds only installed skills" \
-    python3 -c "import json;d=json.load(open('$WORK/skills-lock.json'));assert sorted(d['skills'])==['alpha-tools','fancy-pkg']"
+    python3 -c "import json;d=json.load(open('$WORK/skills-lock.json'));assert sorted(d['skills'])==['Alpha Tools','Fancy.Pkg!']"
 
 echo "=== A7: wildcard -s '*' equals --all ==="
 new_work a7wild
@@ -155,7 +155,7 @@ expect "a12 linked in all four agent dirs" \
 expect "a12 agent link resolves to .ai-files source" \
     bash -c "[ \"\$(readlink -f '$P/.agents/skills/alpha-tools')\" = '$P/.ai-files/skills/alpha-tools' ]"
 expect "a12 lock entry present" \
-    python3 -c "import json;d=json.load(open('$P/skills-lock.json'));assert 'alpha-tools' in d['skills']"
+    python3 -c "import json;d=json.load(open('$P/skills-lock.json'));assert 'Alpha Tools' in d['skills']"
 
 echo "=== A13: gh engine delegates fetch to gh skill install ==="
 P="$BASE/proj13"; rm -rf "$P"; mkdir -p "$P/bin" "$P/fakebin"
@@ -189,7 +189,7 @@ grep -q "skill install octo/widgets skills/tools-alpha --dir $P/.ai-files/skills
     || bad "a13 gh received spec, path selector and --dir (got: $(cat "$GHCALLS"))"
 expect "a13 gh-created dir renamed to sanitized name" test -f "$P/.ai-files/skills/alpha-tools/SKILL.md"
 expect "a13 lock records github source" \
-    python3 -c "import json;e=json.load(open('$P/skills-lock.json'))['skills']['alpha-tools'];assert e['sourceType']=='github' and e['source']=='octo/widgets'"
+    python3 -c "import json;e=json.load(open('$P/skills-lock.json'))['skills']['Alpha Tools'];assert e['sourceType']=='github' and e['source']=='octo/widgets'"
 
 echo "=== A14: gh install failure falls back to clone copy ==="
 P="$BASE/proj14"; rm -rf "$P"; mkdir -p "$P/bin" "$P/badgh"
@@ -210,7 +210,36 @@ export OUT RC
 expect "a14 exits 0 despite gh failure" test "$RC" -eq 0
 expect "a14 skill installed from clone after gh failure" test -f "$P/.ai-files/skills/alpha-tools/SKILL.md"
 expect "a14 lock entry recorded" \
-    python3 -c "import json;e=json.load(open('$P/skills-lock.json'))['skills']['alpha-tools'];assert e['sourceType']=='github' and e['source']=='octo/widgets'"
+    python3 -c "import json;e=json.load(open('$P/skills-lock.json'))['skills']['Alpha Tools'];assert e['sourceType']=='github' and e['source']=='octo/widgets'"
+
+echo "=== A15: github source, pure git engine — lock gains github entry ==="
+P="$BASE/proj15"; rm -rf "$P"; mkdir -p "$P/bin"
+cp "$REPO_ROOT/bin/ai-files-skills-add" "$REPO_ROOT/bin/ai-files-skill-enable" "$LOCK" "$P/bin/"
+GHHOME="$BASE/ghhome15"; mkdir -p "$GHHOME"
+git config --file "$GHHOME/.gitconfig" url."$SRC".insteadOf "https://github.com/octo/widgets"
+OUT=$(cd "$P" && HOME="$GHHOME" AI_FILES_SKILLS_ENGINE=git \
+    "$P/bin/ai-files-skills-add" octo/widgets --skill "Alpha Tools" --yes </dev/null 2>"$BASE/a15.err"); RC=$?
+export OUT RC
+expect "a15 exits 0" test "$RC" -eq 0
+expect "a15 skill installed from github-shaped source" test -f "$P/.ai-files/skills/alpha-tools/SKILL.md"
+expect "a15 lock updated with github entry, skillPath and real hash" \
+    python3 -c "
+import json,re
+d=json.load(open('$P/skills-lock.json'))
+e=d['skills']['Alpha Tools']
+assert e['sourceType']=='github' and e['source']=='octo/widgets'
+assert e['skillPath']=='skills/tools-alpha/SKILL.md' and 'sourceUrl' not in e
+assert re.fullmatch('[0-9a-f]{64}',e['computedHash'])"
+# adding a second github skill updates (not replaces) the existing lock
+OUT=$(cd "$P" && HOME="$GHHOME" AI_FILES_SKILLS_ENGINE=git \
+    "$P/bin/ai-files-skills-add" octo/widgets --skill "Beta Tools" --yes </dev/null 2>>"$BASE/a15.err"); RC=$?
+export OUT RC
+expect "a15 second add keeps first entry and adds second" \
+    python3 -c "
+import json
+d=json.load(open('$P/skills-lock.json'))
+assert sorted(d['skills'])==['Alpha Tools','Beta Tools']
+assert d['skills']['Alpha Tools']['source']=='octo/widgets'"
 
 echo ""
 echo "================================"

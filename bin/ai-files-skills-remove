@@ -99,16 +99,19 @@ parse_arguments() {
 main() {
     parse_arguments "$@"
 
-    local skill_dir="$PROJECT_ROOT/.ai-files/skills/$SKILL_NAME"
     local lock="$SELF_DIR/ai-files-skills-lock"
+    local dir
+    dir="$("$lock" --dir "$PROJECT_ROOT" dir "$SKILL_NAME")"
+    local skill_dir="$PROJECT_ROOT/.ai-files/skills/$dir"
     local had_dir=false had_entry=false
 
     if [[ -d "$skill_dir" ]] || [[ -L "$skill_dir" ]]; then
         had_dir=true
     fi
 
-    # 1. Unlink agent directories (source must still exist for resolution)
-    if ! "$SELF_DIR/ai-files-skill-disable" "$SKILL_NAME"; then
+    # 1. Unlink agent directories (source must still exist for resolution;
+    #    enable/disable resolve by sanitized directory name)
+    if ! "$SELF_DIR/ai-files-skill-disable" "$dir"; then
         echo "Warning: disable reported failures (skill may not have been linked)" >&2
     fi
 
@@ -125,7 +128,7 @@ main() {
     fi
 
     if [[ "$had_dir" == false && "$had_entry" == false ]]; then
-        error "Nothing to remove: no .ai-files/skills/$SKILL_NAME directory and no lock entry"
+        error "Nothing to remove: no .ai-files/skills/$dir directory and no lock entry"
         exit "$EXIT_EXPECTED_FAILURE"
     fi
 

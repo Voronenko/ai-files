@@ -162,12 +162,12 @@ gh_install_skill() {
 
 # Install one planned skill.
 # Arguments (from `skills-lock plan` pipe-separated columns):
-#   $1 name  $2 clone_source  $3 skill_dir_rel  $4 raw_source
-#   $5 skill_path  $6 source_type  $7 ref  $8 engine
+#   $1 name (raw lock key)  $2 clone_source  $3 skill_dir_rel  $4 raw_source
+#   $5 skill_path  $6 source_type  $7 ref  $8 engine  $9 dir (sanitized)
 install_planned_skill() {
     local name="$1" clone_url="$2" rel="$3" raw="$4"
-    local skill_path="$5" source_type="$6" ref="$7" engine="$8"
-    local target="$SKILLS_DIR/$name"
+    local skill_path="$5" source_type="$6" ref="$7" engine="$8" dir="$9"
+    local target="$SKILLS_DIR/$dir"
     local src_dir=""
 
     echo "==> Installing $name..."
@@ -175,7 +175,7 @@ install_planned_skill() {
     if [[ "$engine" == "gh" && "$source_type" == "github" ]]; then
         local selector="$name"
         [[ -n "$rel" ]] && selector="$rel"
-        if ! gh_install_skill "$raw" "$selector" "$SKILLS_DIR/" "$ref" "$name"; then
+        if ! gh_install_skill "$raw" "$selector" "$SKILLS_DIR/" "$ref" "$dir"; then
             echo "    (gh skill install failed, using git clone)" >&2
             engine="git"
         fi
@@ -207,11 +207,11 @@ install_planned_skill() {
         return 1
     fi
 
-    if ! "$SELF_DIR/ai-files-skill-enable" "$name" >/dev/null 2>&1; then
-        echo "Warning: failed to link $name into agent directories" >&2
+    if ! "$SELF_DIR/ai-files-skill-enable" "$dir" >/dev/null 2>&1; then
+        echo "Warning: failed to link $dir into agent directories" >&2
     fi
 
-    # Re-stamp the lock entry (hash, and any metadata drift)
+    # Re-stamp the lock entry (hash, and any metadata drift) under its raw key
     local lock_args=(--dir "$PROJECT_ROOT" --skills-dir "$SKILLS_DIR"
         add "$name" --source "$raw")
     [[ -n "$skill_path" ]] && lock_args+=(--skill-path "$skill_path")
@@ -220,7 +220,7 @@ install_planned_skill() {
         echo "Warning: failed to re-stamp $name in skills-lock.json" >&2
     fi
 
-    echo "    Installed $name"
+    echo "    Installed $name (directory: $dir)"
     return 0
 }
 
@@ -322,10 +322,10 @@ main() {
     local installed=0 failed=0
     local name clone_url rel raw skill_path source_type ref
 
-    while IFS='|' read -r name clone_url rel raw skill_path source_type ref; do
+    while IFS='|' read -r name clone_url rel raw skill_path source_type ref dir; do
         [[ -z "$name" ]] && continue
         if install_planned_skill "$name" "$clone_url" "$rel" "$raw" \
-                "$skill_path" "$source_type" "$ref" "$engine"; then
+                "$skill_path" "$source_type" "$ref" "$engine" "$dir"; then
             ((installed++)) || true
         else
             ((failed++)) || true

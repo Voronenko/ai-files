@@ -225,6 +225,23 @@ export OUT RC
 expect "i11 exits 0 when gh lacks skills support" test "$RC" -eq 0
 expect "i11 skill installed via clone" test -f "$P/.ai-files/skills/alpha/SKILL.md"
 
+echo "=== I12: raw lock key installs to sanitized dir, re-stamps raw key ==="
+P=$(new_proj i12)
+"$LOCK" --dir "$P" --skills-dir "$P/.ai-files/skills" \
+    add "Fancy.Pkg!" --source octo/widgets --skill-path skills/alpha/SKILL.md --hash deadbeefcafe0123 >/dev/null 2>&1
+run_install "$P"
+expect "i12 exits 0" test "$RC" -eq 0
+expect "i12 installs into sanitized dir fancy.pkg" test -f "$P/.ai-files/skills/fancy.pkg/SKILL.md"
+expect "i12 links sanitized dir in all four agent dirs" \
+    bash -c "for a in claude kilo opencode agents; do test -L '$P'/.\$a/skills/fancy.pkg || exit 1; done"
+expect "i12 re-stamps under raw key Fancy.Pkg! with real hash" \
+    python3 -c "
+import json,re
+d=json.load(open('$P/skills-lock.json'))
+e=d['skills']['Fancy.Pkg!']
+assert e['sourceType']=='github' and e['source']=='octo/widgets'
+assert re.fullmatch('[0-9a-f]{64}',e['computedHash'])"
+
 echo ""
 echo "================================"
 echo "PASS=$PASS FAIL=$FAIL"

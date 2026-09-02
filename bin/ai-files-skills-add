@@ -95,6 +95,14 @@ check_yq() {
     fi
 }
 
+# Check if python3 is available (ai-files-skills-lock dependency)
+check_python3() {
+    if ! command -v python3 &>/dev/null; then
+        error "python3 is not installed (required by ai-files-skills-lock)"
+        exit "$EXIT_ERROR"
+    fi
+}
+
 # Check if fzf utility is available (optional)
 check_fzf() {
     command -v fzf &>/dev/null
@@ -355,32 +363,14 @@ select_skill_with_fzf() {
 # SKILL INSTALLATION
 #=============================================================================
 
-# Sanitize skill name for use as directory name
+# Sanitized directory name for a skill name — vercel-labs sanitizeName,
+# delegated to the python helper so the exact semantics live in one place.
 # Arguments:
 #   $1 - Raw skill name
 # Output:
-#   Sanitized name (lowercase, hyphens only)
+#   Sanitized directory name (lowercase, [a-z0-9._-], dots/underscores kept)
 sanitize_skill_name() {
-    local raw_name="$1"
-    local sanitized
-
-    # Convert to lowercase
-    sanitized="${raw_name,,}"
-
-    # Replace spaces and special chars with hyphens
-    # shellcheck disable=SC2001
-    sanitized=$(echo "$sanitized" | tr -c 'a-z0-9\n' '-')
-
-    # Collapse multiple hyphens
-    while [[ "$sanitized" == *"--"* ]]; do
-        sanitized="${sanitized//--/-}"
-    done
-
-    # Remove leading/trailing hyphens
-    sanitized="${sanitized#-}"
-    sanitized="${sanitized%-}"
-
-    echo "$sanitized"
+    "$SELF_DIR/ai-files-skills-lock" dir "$1"
 }
 
 # Check if a skill is already installed
@@ -568,10 +558,10 @@ fetch_skill() {
 
 # Record the installed skill in skills-lock.json.
 # Arguments:
-#   $1 - Sanitized skill name (lock key)
+#   $1 - Raw skill name (lock key; sanitized dir is derived by the helper)
 #   $2 - Source skill path (inside TEMP_DIR, used to derive skillPath)
 lock_add_entry() {
-    local sanitized_name="$1"
+    local skill_name="$1"
     local source_path="$2"
 
     [[ "$GLOBAL_MODE" == true ]] && return 0
@@ -585,7 +575,7 @@ lock_add_entry() {
     # ponytail: lock at git toplevel but skills at $PWD — run from repo root;
     # per-subdir locks if that ever bites.
     if ! "$SELF_DIR/ai-files-skills-lock" --dir "$lock_dir" --skills-dir "$PWD/.ai-files/skills" \
-        add "$sanitized_name" --source "$REPO_SOURCE" --skill-path "$skill_path"; then
+        add "$skill_name" --source "$REPO_SOURCE" --skill-path "$skill_path"; then
         echo "Warning: failed to update skills-lock.json (install succeeded)" >&2
     fi
 }
@@ -695,7 +685,7 @@ install_skill() {
 
     if [[ $install_result -eq 0 ]]; then
         echo "    Installed $sanitized_name"
-        lock_add_entry "$sanitized_name" "$source_path"
+        lock_add_entry "$skill_name" "$source_path"
         enable_skill_links "$sanitized_name"
         return 0
     else
@@ -1035,6 +1025,7 @@ main() {
     # Check prerequisites
     check_git
     check_yq
+    check_python3
     check_fzf  # Optional, doesn't fail if missing
 
     # Normalize URL

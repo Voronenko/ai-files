@@ -581,7 +581,10 @@ setup modes), `test-marketplace.sh` (dispatcher routing, install flows via a
 fake `claude` CLI, `marketplace.json` generation), and one suite per skills
 tool — `test-skills-add.sh`, `test-skills-install.sh`, `test-skills-remove.sh`,
 `test-skills-lock.sh`, `test-skills-explore.sh`, `test-skills-sync.sh`,
-`test-skill-enable.sh`, `test-skill-disable.sh` — and `test-update.sh` covers
+`test-skill-enable.sh`, `test-skill-disable.sh` — plus
+`test-skills-interop-vercel.sh`, which validates the lock against the native
+vercel-labs `skills` CLI via `npx` (skips gracefully when offline), and
+`test-update.sh` covers
 the `ai-files update` sync/link subcommands (protection rules, default-skill
 linking, legacy `.specify` migration).
 
