@@ -1388,3 +1388,52 @@ install-cli-pi-agent:
 install-opencode-ohmy-slim:
 	bunx oh-my-opencode-slim@latest install
 
+
+
+### tools
+
+install-console-ast-grep:
+	@set -euo pipefail; \
+	MAKEFILE_DIR="$$(cd "$$(dirname "$$(realpath "$(lastword $(MAKEFILE_LIST))")")" && pwd)"; \
+	BIN_DIR="$$MAKEFILE_DIR/bin"; mkdir -p "$$BIN_DIR"; \
+	LATEST_VERSION=$$(curl -s "https://api.github.com/repos/ast-grep/ast-grep/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); \
+	echo "Downloading ast-grep version $$LATEST_VERSION..."; \
+	mkdir -p /tmp/ast-grep; \
+	curl -sLo /tmp/ast-grep/ast-grep.zip "https://github.com/ast-grep/ast-grep/releases/download/$$LATEST_VERSION/app-x86_64-unknown-linux-gnu.zip"; \
+	cd /tmp/ast-grep && unzip -o ast-grep.zip; \
+	mv /tmp/ast-grep/ast-grep "$$BIN_DIR/"; \
+	mv /tmp/ast-grep/sg "$$BIN_DIR/"; \
+	chmod +x "$$BIN_DIR/ast-grep" "$$BIN_DIR/sg"; \
+	rm -rf /tmp/ast-grep; \
+	echo "ast-grep installed successfully to $$BIN_DIR"
+
+install-console-ripgrep:
+	@set -euo pipefail; \
+	MAKEFILE_DIR="$$(cd "$$(dirname "$$(realpath "$(lastword $(MAKEFILE_LIST))")")" && pwd)"; \
+	BIN_DIR="$$MAKEFILE_DIR/bin"; mkdir -p "$$BIN_DIR"; \
+	LATEST_VERSION=$$(curl -s "https://api.github.com/repos/BurntSushi/ripgrep/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); \
+	echo "Downloading ripgrep version $$LATEST_VERSION..."; \
+	tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT INT TERM; \
+	curl -fsSL "https://github.com/BurntSushi/ripgrep/releases/download/$$LATEST_VERSION/ripgrep-$$LATEST_VERSION-x86_64-unknown-linux-musl.tar.gz" -o "$$tmp/rg.tar.gz"; \
+	tar -xzf "$$tmp/rg.tar.gz" -C "$$tmp"; \
+	RG_BIN="$$(find "$$tmp" -type f -name rg -print -quit)"; \
+	test -n "$$RG_BIN" || { echo "rg binary not found in archive" >&2; exit 1; }; \
+	install -m 0755 "$$RG_BIN" "$$BIN_DIR/rg"; \
+	echo "ripgrep $$LATEST_VERSION installed successfully to $$BIN_DIR/rg"
+
+install-console-tgrep:
+	@set -euo pipefail; \
+	MAKEFILE_DIR="$$(cd "$$(dirname "$$(realpath "$(lastword $(MAKEFILE_LIST))")")" && pwd)"; \
+	BIN_DIR="$$MAKEFILE_DIR/bin"; mkdir -p "$$BIN_DIR"; \
+	LATEST_VERSION=$$(curl -s "https://api.github.com/repos/microsoft/tgrep/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/'); \
+	echo "Downloading tgrep version $$LATEST_VERSION..."; \
+	tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT INT TERM; \
+	curl -fsSL "https://github.com/microsoft/tgrep/releases/download/$$LATEST_VERSION/tgrep-$$LATEST_VERSION-x86_64-unknown-linux-musl.tar.gz" -o "$$tmp/tg.tar.gz"; \
+	tar -xzf "$$tmp/tg.tar.gz" -C "$$tmp"; \
+	TG_BIN="$$(find "$$tmp" -type f -name tgrep -print -quit)"; \
+	test -n "$$TG_BIN" || { echo "tgrep binary not found in archive" >&2; exit 1; }; \
+	install -m 0755 "$$TG_BIN" "$$BIN_DIR/tgrep"; \
+	echo "tgrep $$LATEST_VERSION installed successfully to $$BIN_DIR/tgrep"
+
+install-console-greps: install-console-ast-grep install-console-ripgrep install-console-tgrep
+	@echo "✅ all greps installed (ast-grep, ripgrep, tgrep) → $$(cd "$$(dirname "$$(realpath "$(lastword $(MAKEFILE_LIST))")")" && pwd)/bin"

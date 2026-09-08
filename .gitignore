@@ -9,7 +9,9 @@ bin/opencode
 bin/pi
 bin/reasonix
 bin/reasonix-cli
+bin/rg
 bin/rtk
+bin/tgrep
 bin/*.wasm
 .cache
 .claude
