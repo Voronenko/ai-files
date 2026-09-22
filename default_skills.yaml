@@ -20,4 +20,6 @@ default_skills:
   # Vendor skills (namespace/skill)
   - alexknowshtml/teach
   - mattpocock/teach
+  - cathrynlavery/diagram-design
+  - tt-a1i/archify
   # Note: a-template is excluded (it's a template, not meant for production use)
