@@ -346,3 +346,21 @@ repositories:
         dstDir: vendor/skills/callstack/dogfood
       - src: plugins/vendored/.agents/skills/react-native-testing
         dstDir: vendor/skills/callstack/react-native-testing
+
+  - git: https://github.com/cathrynlavery/diagram-design.git
+    version: main
+    sources:
+      - src: skills/diagram-design
+        dstDir: vendor/skills/cathrynlavery/diagram-design
+
+  - git: https://github.com/sickn33/agentic-awesome-skills.git
+    version: main
+    sources:
+      - src: skills/github-actions-advanced
+        dstDir: vendor/skills/sickn33/github-actions-advanced
+
+  - git: https://github.com/tt-a1i/archify.git
+    version: main
+    sources:
+      - src: archify
+        dstDir: vendor/skills/tt-a1i/archify
