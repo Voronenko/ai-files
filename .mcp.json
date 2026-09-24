@@ -54,6 +54,14 @@
         "mcp__ssh-manager__ssh_sync",
         "mcp__ssh-manager__ssh_alias"
       ]
+    },
+    "codegraph": {
+      "type": "stdio",
+      "command": "codegraph",
+      "args": [
+        "serve",
+        "--mcp"
+      ]
     }
   }
 }

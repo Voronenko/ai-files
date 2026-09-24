@@ -5,7 +5,9 @@
       "repo-memory": {
         "type": "stdio",
         "command": "memory",
-        "args": ["server"],
+        "args": [
+          "server"
+        ],
         "enabled": true,
         "environment": {
           "MCP_MEMORY_SQLITE_PATH": ".ai-files/memory.db",
@@ -13,6 +15,15 @@
           "MCP_ALLOW_ANONYMOUS_ACCESS": "true",
           "PYTHONUNBUFFERED": "1"
         }
+      },
+      "codegraph": {
+        "type": "stdio",
+        "command": "codegraph",
+        "args": [
+          "serve",
+          "--mcp"
+        ],
+        "enabled": true
       }
     }
   }

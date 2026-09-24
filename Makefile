@@ -614,6 +614,43 @@ install-graphify:
 	pipx inject graphifyy openai
 	pipx inject graphifyy tree-sitter-hcl
 
+install-codegraph:
+	@set -eu; \
+	mkdir -p ./bin; \
+	os="$$(uname -s)"; \
+	arch="$$(uname -m)"; \
+	case "$$os" in \
+		Linux) os=linux ;; \
+		Darwin) os=darwin ;; \
+		*) echo "Unsupported OS: $$os" >&2; exit 1 ;; \
+	esac; \
+	case "$$arch" in \
+		x86_64|amd64) arch=x64 ;; \
+		arm64|aarch64) arch=arm64 ;; \
+		*) echo "Unsupported architecture: $$arch" >&2; exit 1 ;; \
+	esac; \
+	target="$$os-$$arch"; \
+	version="$$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+		'https://github.com/colbymchenry/codegraph/releases/latest' \
+		| sed -n 's#.*/releases/tag/##p')"; \
+	[ -n "$$version" ] || { \
+		echo "Could not determine latest CodeGraph version" >&2; \
+		exit 1; \
+	}; \
+	url="https://github.com/colbymchenry/codegraph/releases/download/$$version/codegraph-$$target.tar.gz"; \
+	echo "Installing CodeGraph $$version ($$target)..."; \
+	tmp="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	curl -fsSL "$$url" -o "$$tmp/codegraph.tar.gz"; \
+	rm -rf "./bin/.codegraph" ./bin/codegraph-*; \
+	mkdir -p "./bin/.codegraph"; \
+	tar -xzf "$$tmp/codegraph.tar.gz" \
+		-C "./bin/.codegraph" \
+		--strip-components=1; \
+	ln -sfn ".codegraph/bin/codegraph" "./bin/codegraph"; \
+	echo "Installed CodeGraph $$version ($$target)"; \
+	echo "Executable: ./bin/codegraph"
+
 install-spec-bmad:
 	npm install -g bmad-method
 install-spec-bmad-local:

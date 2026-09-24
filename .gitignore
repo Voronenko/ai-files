@@ -4,6 +4,8 @@
 ai-files-*.zip
 bin/agy
 bin/antigravity
+bin/codegraph
+bin/codegraph-linux-x64
 bin/goose
 bin/opencode
 bin/pi
@@ -15,6 +17,7 @@ bin/tgrep
 bin/*.wasm
 .cache
 .claude
+.codegraph/
 .commandcode
 dist/*
 docs/plans/
