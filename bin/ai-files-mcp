@@ -429,14 +429,16 @@ set_sqlite_path_in() { # <kind> <new-path>
 ############################################
 
 known_server_names() {
-    echo "$SERVER_MEMORY ssh-manager"
+    # One per line — consumers (setup step 6, help text) read line-wise.
+    printf '%s\n' "$SERVER_MEMORY" ssh-manager codegraph
 }
 
 is_known_server() {
-    case " $(known_server_names) " in
-        *" $1 "*) return 0 ;;
-        *) return 1 ;;
-    esac
+    local n
+    while IFS= read -r n; do
+        [[ "$n" == "$1" ]] && return 0
+    done < <(known_server_names)
+    return 1
 }
 
 known_repo_memory_json() {
@@ -501,10 +503,20 @@ known_ssh_manager_json() {
     }'
 }
 
+known_codegraph_json() {
+    jq -n '{
+        type: "stdio",
+        command: "codegraph",
+        args: ["serve", "--mcp"],
+        alwaysLoad: true
+    }'
+}
+
 known_server_json() { # <name> -> canonical primary-format JSON
     case "$1" in
         repo-memory) known_repo_memory_json ;;
         ssh-manager) known_ssh_manager_json ;;
+        codegraph)   known_codegraph_json ;;
         *) return 1 ;;
     esac
 }
@@ -1089,6 +1101,7 @@ Commands:
 Known servers (registerable by name):
   repo-memory   memory CLI server with sqlite_vec backend + autoApprove set
   ssh-manager   SSH management server + autoApprove set
+  codegraph     tree-sitter code graph server (codegraph serve --mcp)
 
 Options for 'add':
   --transport http|sse|stdio
@@ -1148,7 +1161,6 @@ case "$SUB" in
         known_server_names
         ;;
     has)
-        shift
         cmd_has "$@"
         ;;
     opencode)

@@ -12,6 +12,7 @@ set -euo pipefail
 #   5) Create missing dotfile templates            (.mcp.json, opencode.json, zcode.json)
 #   6) Register known MCP servers when missing     (ai-files mcp add <name>)
 #      + shared memory DB proposal for nested checkouts (<repo>/<clone>)
+#      + CodeGraph initialization when 'codegraph' MCP server is registered
 #   7) Suggest .gitignore for untracked setup files
 
 # Resolve the real path of the script, even if invoked via symlink (same as bin/ai-files).
@@ -310,6 +311,28 @@ step6_mcp_servers() {
             print_info "[6/7] Keeping per-repo memory DB."
         fi
     fi
+
+    # CodeGraph: offer initialization when its MCP server is registered in
+    # .mcp.json (possibly just added above). Idempotent guard: .codegraph/
+    # already present means the index exists — nothing to initialize.
+    if run_ai_files mcp has codegraph >/dev/null 2>&1; then
+        if [[ -d ".codegraph" ]]; then
+            print_info "[6/7] CodeGraph already initialized (.codegraph/ present)."
+        elif ! command -v codegraph >/dev/null 2>&1; then
+            print_warning "[6/7] 'codegraph' binary not on PATH — install with 'make install-codegraph' (ai-files repo)."
+        elif confirm "[6/7] Initialize CodeGraph for this repo (codegraph install --yes --init --target=auto --location=local)?"; then
+            # --yes keeps it unattended: without it codegraph drops into an
+            # interactive TUI prompt that would eat this script's piped stdin.
+            # Explicit --target/--location flags override the --yes defaults.
+            if codegraph install --yes --init --target=auto --location=local; then
+                print_success "[6/7] CodeGraph initialized."
+            else
+                print_warning "[6/7] CodeGraph initialization failed."
+            fi
+        else
+            print_info "[6/7] Skipping CodeGraph initialization."
+        fi
+    fi
 }
 
 # Pick the ignore file: prefer .gitignore.local when it exists as a symlink
@@ -384,6 +407,7 @@ Steps:
   5  Create missing dotfile templates            (.mcp.json, opencode.json, zcode.json)
   6  Register known MCP servers when missing     (.mcp.json / opencode.json / zcode.json)
      + shared memory DB proposal for nested checkouts (<x>/<x>)
+     + CodeGraph init when 'codegraph' MCP server is registered
   7  Suggest ignore entries for untracked setup files (.gitignore / .gitignore.local)
 
 Options:

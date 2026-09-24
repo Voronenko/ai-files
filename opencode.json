@@ -45,6 +45,15 @@
         "MCP_ALLOW_ANONYMOUS_ACCESS": "true",
         "PYTHONUNBUFFERED": "1"
       }
+    },
+    "codegraph": {
+      "type": "local",
+      "command": [
+        "codegraph",
+        "serve",
+        "--mcp"
+      ],
+      "enabled": true
     }
   }
 }
