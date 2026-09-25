@@ -364,3 +364,11 @@ repositories:
     sources:
       - src: archify
         dstDir: vendor/skills/tt-a1i/archify
+
+  # openclaw/openclaw — test-audit: authoring gate for new tests + audit/campaign
+  # workflows for low-value, implementation-coupled, or duplicative tests
+  - git: https://github.com/openclaw/openclaw.git
+    version: main
+    sources:
+      - src: .agents/skills/test-audit
+        dstDir: vendor/skills/openclaw/test-audit

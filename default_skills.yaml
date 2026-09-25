@@ -22,4 +22,5 @@ default_skills:
   - mattpocock/teach
   - cathrynlavery/diagram-design
   - tt-a1i/archify
+  - openclaw/test-audit
   # Note: a-template is excluded (it's a template, not meant for production use)
