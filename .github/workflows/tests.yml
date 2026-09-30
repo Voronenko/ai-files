@@ -12,7 +12,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install PyYAML (marketplace-update dependency)
         run: python3 -m pip install --quiet pyyaml
@@ -56,7 +56,7 @@ jobs:
 
       - name: Upload test reports (JUnit XML + suite logs)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: junit-test-reports
           path: reports/
@@ -66,7 +66,7 @@ jobs:
       # JUnit rendering — this action is what makes the report "picked up".
       - name: Test report
         if: always()
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@v3
         with:
           name: ai-files test suites
           path: reports/junit.xml
