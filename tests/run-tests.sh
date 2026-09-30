@@ -507,6 +507,37 @@ else
     echo "SKIP t22 (mcp-memory-service pipx env not installed)"
 fi
 
+echo "=== T23: junit-report converter produces valid JUnit XML ==="
+JUNIT="$REPO_ROOT/tests/junit-report.py"
+L23="$BASE/fake-suite.log"; X23="$BASE/fake-junit.xml"; S23="$BASE/fake-summary.md"
+cat > "$L23" <<'LOG23'
+some setup noise
+PASS: first check <with> "xml" & specials
+FAIL: second check
+SKIP tN (optional dependency missing)
+PASS=1 FAIL=1
+LOG23
+python3 "$JUNIT" --out "$X23" --summary "$S23" "$L23" >/dev/null 2>&1
+expect "t23 converter exits 0" test $? -eq 0
+python3 - "$X23" "$S23" <<'PY23' >/dev/null 2>&1
+import sys, xml.dom.minidom
+doc = xml.dom.minidom.parse(sys.argv[1])
+ts = doc.documentElement
+assert ts.tagName == "testsuites" and ts.getAttribute("tests") == "3"
+assert ts.getAttribute("failures") == "1" and ts.getAttribute("skipped") == "1"
+suite, = doc.getElementsByTagName("testsuite")
+cases = doc.getElementsByTagName("testcase")
+assert len(cases) == 3
+names = [c.getAttribute("name") for c in cases]
+assert any("<with>" in n for n in names), names  # XML-escaped round-trip
+assert len(doc.getElementsByTagName("failure")) == 1
+assert len(doc.getElementsByTagName("skipped")) == 1
+summary = open(sys.argv[2]).read()
+assert "| fake-suite | 3 | 1 | 1 |" in summary and "**Total** | **3**" in summary
+PY23
+expect "t23 junit xml valid with correct counts + escaping" test $? -eq 0
+expect_fail "t23 converter requires at least one log" python3 "$JUNIT" --out "$BASE/x.xml"
+
 echo ""
 echo "================================"
 echo "PASS=$PASS FAIL=$FAIL"
