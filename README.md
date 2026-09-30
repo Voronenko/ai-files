@@ -162,6 +162,8 @@ ai-files mcp <command> [options]
 | `add-json <name> <json>` | Add server via raw JSON configuration |
 | `sync [-y] [--dry-run]` | Propagate `.mcp.json` entries into `opencode.json` / `zcode.json`; reports secondary-only servers untouched |
 | `shared-memory [-y] [--dry-run] [--check]` | Shared memory DB for nested checkouts (see below) |
+| `memory-path [-y] [--dry-run] [--check]` | Align the memory DB path across configs (see below) |
+| `memory-import <src.db> [tgt.db] [--execute]` | Merge memories from one `memory.db` into another (dry-run by default) |
 | `known` | Print built-in server names (one per line) |
 | `has <name>` | Exit-code probe: 0 when `<name>` exists in `.mcp.json` |
 | `opencode [src] [dst]` | One-shot import into `opencode.json` (backward compatible) |
@@ -234,6 +236,24 @@ ai-files mcp shared-memory --check  # silent exit code probe (0 = nested)
 ```
 
 It creates `<parent>/.ai-files-shared/`, rewrites `MCP_MEMORY_SQLITE_PATH` from `.ai-files/memory.db` to `../.ai-files-shared/memory.db` in every config that still uses the default path (custom paths are reported but never touched), and offers to copy an existing database using a consistent `sqlite3 .backup` snapshot (raw-copy fallback when sqlite3 is unavailable). `ai-files mcp add repo-memory` proposes the shared path automatically when a nested checkout is detected.
+
+**Sharing the memory DB across projects (`memory-path` / `memory-import`)**
+
+To point several projects at one memory DB, export a global `MCP_MEMORY_SQLITE_PATH` — on every `ai-files setup` run (and via `ai-files mcp memory-path` directly) the desired path is resolved as `MCP_MEMORY_SQLITE_PATH` > stored `aifiles.memory-db-path` git-config key > whatever `.mcp.json` currently uses, compared after normalizing relative paths against the repo root. On drift all three configs are realigned and the used path is pinned into `aifiles.memory-db-path`; `--check` is a silent exit-code probe (0 = in sync) for scripting.
+
+```bash
+ai-files mcp memory-path --check  # 0 = in sync, 1 = drift
+MCP_MEMORY_SQLITE_PATH=~/.ai-files-global/memory.db ai-files mcp memory-path -y
+```
+
+When the path changes and both the old and the new `memory.db` exist, an import (merge) of the old DB into the new one is offered. The same merge is available standalone:
+
+```bash
+ai-files mcp memory-import ../old-repo/.ai-files/memory.db            # dry-run preview
+ai-files mcp memory-import ../old-repo/.ai-files/memory.db --execute  # apply (target defaults to the configured DB)
+```
+
+The merge (`bin/ai-files-mcp-memory-import`, python3) uses the `content_hash` as identity — duplicates are skipped, source row ids are never preserved — and inserts via explicit column lists so service schema changes don't break it. Graph edges and beliefs are merged in a second phase, keeping only edges whose endpoints survived. When both DBs use the same embedding dimension and the mcp-memory-service environment is available (pipx venv auto-detected, or `MCP_MEMORY_PYTHON`), embeddings are copied directly; otherwise imported rows are searchable via exact/FTS but not semantic search until re-stored. Imported rows carry an `imported:<label>` tag and a `merge_id` in their metadata for traceability.
 
 ### ai-files memory
 
@@ -537,7 +557,7 @@ ai-files setup
 3. Relink agent folders — per-agent y/N for `link-claude`, `link-kilo`, `link-opencode`, `link-specify`
 4. Initialize graphify — copies `.graphifyignore` to the repo root when `graphify-out/` is absent (a present `.graphifyignore` counts as done)
 5. Create missing dotfile templates — `.mcp.json`, `opencode.json`, `zcode.json` copied from the ai-files install root
-6. Register known MCP servers when missing — offers `ai-files mcp add repo-memory` / `add ssh-manager` (each writes `.mcp.json`, `opencode.json`, `zcode.json` in one run); when the repo is a nested checkout (`<git-repo-name>/<clone-folder>`), additionally proposes migrating repo-memory to the shared `../.ai-files-shared/memory.db`
+6. Register known MCP servers when missing — offers `ai-files mcp add repo-memory` / `add ssh-manager` (each writes `.mcp.json`, `opencode.json`, `zcode.json` in one run); when the repo is a nested checkout (`<git-repo-name>/<clone-folder>`), additionally proposes migrating repo-memory to the shared `../.ai-files-shared/memory.db`; finally validates the memory DB path on every run — a global `MCP_MEMORY_SQLITE_PATH` env var (or the stored `aifiles.memory-db-path` git-config key) wins over whatever the configs use, realigning all three via `ai-files mcp memory-path` and offering a memory import when both old and new DBs exist
 7. Suggest ignore entries for untracked setup files (`.claude/`, `.graphifyignore`, `.kilo/`, `.mcp.json`, `.opencode/`, `.specify/`, `opencode.json`, `zcode.json`) — written to `.gitignore.local` (symlink to `./.git/info/exclude`) when present, else `.gitignore`
 
 ### ai-files version

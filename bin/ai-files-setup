@@ -12,6 +12,7 @@ set -euo pipefail
 #   5) Create missing dotfile templates            (.mcp.json, opencode.json, zcode.json)
 #   6) Register known MCP servers when missing     (ai-files mcp add <name>)
 #      + shared memory DB proposal for nested checkouts (<repo>/<clone>)
+#      + memory DB path validation (env MCP_MEMORY_SQLITE_PATH vs aifiles.memory-db-path)
 #      + CodeGraph initialization when 'codegraph' MCP server is registered
 #   7) Suggest .gitignore for untracked setup files
 
@@ -312,6 +313,21 @@ step6_mcp_servers() {
         fi
     fi
 
+    # Memory DB path validation on every run: global MCP_MEMORY_SQLITE_PATH /
+    # stored aifiles.memory-db-path vs the path the mcp configs actually use.
+    # Logic lives in ai-files-mcp ('ai-files mcp memory-path'), same
+    # delegation as the shared-memory probe above; ordering gives the global
+    # env var the final say over the nested-checkout default.
+    if run_ai_files mcp has repo-memory >/dev/null 2>&1; then
+        if run_ai_files mcp memory-path --check >/dev/null 2>&1; then
+            run_ai_files mcp memory-path -y   # idempotent: seeds/pins aifiles.memory-db-path
+        elif confirm "[6/7] Realign MCP configs to the desired memory DB path (MCP_MEMORY_SQLITE_PATH / aifiles.memory-db-path)?"; then
+            run_ai_files mcp memory-path -y   # rewrites configs; offers import when both DBs exist
+        else
+            print_info "[6/7] Keeping current memory DB paths."
+        fi
+    fi
+
     # CodeGraph: offer initialization when its MCP server is registered in
     # .mcp.json (possibly just added above). Idempotent guard: .codegraph/
     # already present means the index exists — nothing to initialize.
@@ -407,6 +423,7 @@ Steps:
   5  Create missing dotfile templates            (.mcp.json, opencode.json, zcode.json)
   6  Register known MCP servers when missing     (.mcp.json / opencode.json / zcode.json)
      + shared memory DB proposal for nested checkouts (<x>/<x>)
+     + memory DB path validation (MCP_MEMORY_SQLITE_PATH vs aifiles.memory-db-path)
      + CodeGraph init when 'codegraph' MCP server is registered
   7  Suggest ignore entries for untracked setup files (.gitignore / .gitignore.local)
 

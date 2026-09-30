@@ -21,6 +21,9 @@ jobs:
           sudo curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64" -o /usr/local/bin/yq
           sudo chmod +x /usr/local/bin/yq
 
+      - name: Install mcp-memory-service (service-mode memory-import tests)
+        run: pipx install mcp-memory-service
+
       - name: Shellcheck bin scripts
         run: shellcheck -S warning bin/ai-files-mcp bin/ai-files-setup bin/ai-files-config bin/ai-files-marketplace bin/ai-files-marketplace-install bin/ai-files-skills-add bin/ai-files-skills-install bin/ai-files-skills-remove bin/ai-files-skills-explore bin/ai-files-skills-sync bin/ai-files-skill-enable bin/ai-files-skill-disable bin/ai-files-update
 
