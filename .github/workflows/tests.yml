@@ -2,9 +2,7 @@
 name: tests
 
 "on":
-  push: {} # every commit on every branch
-  pull_request:
-    branches: [master]
+  push: {} # every commit on every branch; for same-repo PRs the push run on the head SHA doubles as the PR check
 
 permissions:
   contents: read
