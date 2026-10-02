@@ -9,6 +9,7 @@ set -euo pipefail
 #   2) Obsidian integration config                 (ai-files config [setup])
 #   3) Relink agent folders                        (ai-files update link-*)
 #   4) Initialize graphify                         (copy .graphifyignore)
+#      + select graphify backend/model             (git config aifiles.graphify-*)
 #   5) Create missing dotfile templates            (.mcp.json, opencode.json, zcode.json)
 #   6) Register known MCP servers when missing     (ai-files mcp add <name>)
 #      + shared memory DB proposal for nested checkouts (<repo>/<clone>)
@@ -206,8 +207,26 @@ step3_relink() {
     done
 }
 
-# Step 4: initialize graphify when graphify-out/ is absent.
-step4_graphify() {
+# Step 4: initialize graphify (.graphifyignore) and validate the graphify
+# backend stored in the repo's git config (aifiles.graphify-backend /
+# aifiles.graphify-model — applied automatically by bin/ai-files-graphify).
+
+# Default model offered when the ollama-local backend is selected.
+# NOTE: on the ollama registry GLM-5.3 / GLM-5.3-Flash / GLM-5.2 exist ONLY as
+# ":cloud" tags (routed to ollama cloud, no local weights) — glm-4.7-flash is
+# the newest GLM Flash that actually pulls and runs on a local GPU.
+GRAPHIFY_DEFAULT_MODEL="glm-4.7-flash"
+
+# Predefined model choices offered first in the selector (installed ollama
+# models are appended dynamically; arbitrary custom names are accepted too).
+GRAPHIFY_PRESET_MODELS=(glm-4.7-flash deepseek-coder-v2:latest)
+
+# Built-in graphify backends (graphify's BACKENDS registry); custom providers
+# from `graphify provider list` are appended dynamically at selection time.
+GRAPHIFY_BUILTIN_BACKENDS=(claude gemini kimi openai deepseek azure bedrock claude-cli ollama)
+
+# Step 4a: initialize graphify when graphify-out/ is absent.
+step4_graphify_init() {
     if [[ -d "graphify-out" ]]; then
         print_info "[4/7] graphify-out/ present — skipping."
         return 0
@@ -230,6 +249,134 @@ step4_graphify() {
     fi
     cp "$src" "./.graphifyignore"
     print_success "[4/7] Copied .graphifyignore to repo root."
+}
+
+# Step 4b: validate the graphify backend in repo git config; when unset, offer
+# a dynamic selection (built-ins + registered custom providers, ollama-local
+# always offered and default). ollama-local additionally asks for the model.
+# Pick an ollama model: fzf over presets + installed models when interactive
+# (a fully custom typed name is accepted too — fzf --print-query returns the
+# query itself when nothing matches; Esc falls back to the default). Without a
+# tty (or fzf) it degrades to a plain read prompt with the same default.
+select_ollama_model() {
+    local candidates=() seen=" " m
+    for m in "${GRAPHIFY_PRESET_MODELS[@]}" \
+             $(command -v ollama >/dev/null 2>&1 && ollama list </dev/null 2>/dev/null | tail -n +2 | awk '{print $1}'); do
+        [[ -z "$m" || "$seen" == *" $m "* ]] && continue
+        candidates+=("$m")
+        seen="$seen$m "
+    done
+
+    if command -v fzf >/dev/null 2>&1 && [[ -t 0 ]]; then
+        local out pick
+        out="$(printf '%s\n' "${candidates[@]}" \
+               | fzf --print-query --prompt='Ollama model> ' \
+                 --header='select from list · or type any custom name · Esc = default' \
+               2>/dev/null || true)"
+        # Last line = selection when one was made, else the typed query;
+        # abort (Esc) falls back to the default — never a second prompt.
+        pick="$(tail -n 1 <<<"$out" || true)"
+        echo "${pick:-$GRAPHIFY_DEFAULT_MODEL}"
+        return 0
+    fi
+
+    local input=""
+    read -p "Ollama model [${GRAPHIFY_DEFAULT_MODEL}]: " input || input=""
+    echo "${input:-$GRAPHIFY_DEFAULT_MODEL}"
+}
+
+graphify_backend_config() {
+    local current model
+    current="$(git config --local --get aifiles.graphify-backend 2>/dev/null || true)"
+    if [[ -n "$current" ]]; then
+        model="$(git config --local --get aifiles.graphify-model 2>/dev/null || true)"
+        print_info "[4/7] graphify backend configured: ${current}${model:+ (model: ${model})}"
+        return 0
+    fi
+    if ! command -v graphify >/dev/null 2>&1; then
+        print_info "[4/7] graphify not installed (make install-graphify) — skipping backend selection."
+        return 0
+    fi
+
+    # Dynamic options: built-ins + registered custom providers + ollama-local, deduped.
+    # (provider list prints "No custom providers registered." when empty — dropped.)
+    local options=() seen=" " opt
+    for opt in "${GRAPHIFY_BUILTIN_BACKENDS[@]}" \
+               $(graphify provider list </dev/null 2>/dev/null | awk 'NF && $0 !~ /^No / {print $1}') \
+               ollama-local; do
+        [[ "$seen" == *" $opt "* ]] && continue
+        options+=("$opt")
+        seen="$seen$opt "
+    done
+
+    echo "Select graphify backend:"
+    local i default_idx=1
+    for i in "${!options[@]}"; do
+        echo "  $((i+1))) ${options[$i]}"
+        [[ "${options[$i]}" == "ollama-local" ]] && default_idx=$((i+1))
+    done
+
+    local choice
+    while :; do
+        read -p "Backend [${default_idx} = ollama-local]: " choice || choice=""
+        [[ -z "$choice" ]] && choice="$default_idx"
+        if [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#options[@]} )); then
+            break
+        fi
+        echo "Please enter a number between 1 and ${#options[@]}."
+    done
+    local backend="${options[$((choice-1))]}"
+
+    if [[ "$backend" != "ollama-local" ]]; then
+        git config --local aifiles.graphify-backend "$backend"
+        print_success "[4/7] graphify backend set to '$backend'."
+        return 0
+    fi
+
+    # ollama-local: pick the model (fzf/read), then validate ollama can really
+    # use it: installed, or pulled on the spot; a failed pull re-asks.
+    local model="" model_ok=0
+    while [[ "$model_ok" -eq 0 ]]; do
+        model="$(select_ollama_model)"
+        if ! command -v ollama >/dev/null 2>&1; then
+            break   # no local ollama to validate against — trust the name
+        fi
+        if ollama list </dev/null 2>/dev/null | tail -n +2 | awk '{print $1}' | grep -qxF "$model"; then
+            model_ok=1
+        else
+            print_warning "Model '${model}' is not installed locally."
+            if confirm "Pull '${model}' now (ollama pull)?"; then
+                if ollama pull "$model"; then
+                    print_success "Pulled ${model}."
+                    model_ok=1
+                else
+                    print_error "Pull failed — ollama cannot use '${model}'. Pick another model."
+                fi
+            else
+                print_info "Keeping '${model}' unverified (pull later with: ollama pull ${model})."
+                model_ok=1
+            fi
+        fi
+    done
+
+    # Register the provider only when absent — respect an existing setup.
+    # </dev/null: graphify commands drain inherited stdin, which would
+    # otherwise eat the keystrokes meant for the prompts below.
+    if ! graphify provider show ollama-local </dev/null >/dev/null 2>&1; then
+        graphify provider add ollama-local --base-url http://localhost:11434/v1 \
+            --default-model "$model" --env-key OLLAMA_API_KEY < /dev/null
+    else
+        print_info "[4/7] graphify provider 'ollama-local' already registered — keeping it."
+    fi
+    git config --local aifiles.graphify-backend "ollama-local"
+    git config --local aifiles.graphify-model "$model"
+    print_success "[4/7] graphify backend 'ollama-local' (model: ${model}) stored in git config."
+    print_info "Use 'bin/ai-files-graphify' — it applies this backend/model automatically."
+}
+
+step4_graphify() {
+    step4_graphify_init
+    graphify_backend_config
 }
 
 # Step 5: create missing dotfile templates.
@@ -420,6 +567,7 @@ Steps:
   2  Obsidian integration config                 (ai-files config [setup])
   3  Relink agent folders                        (ai-files update link-*)
   4  Initialize graphify                         (copy .graphifyignore)
+     + select graphify backend/model             (git config aifiles.graphify-*)
   5  Create missing dotfile templates            (.mcp.json, opencode.json, zcode.json)
   6  Register known MCP servers when missing     (.mcp.json / opencode.json / zcode.json)
      + shared memory DB proposal for nested checkouts (<x>/<x>)
