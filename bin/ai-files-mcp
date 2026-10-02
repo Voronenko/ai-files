@@ -33,6 +33,16 @@ if [[ -z "$GIT_ROOT" ]]; then
     exit 1
 fi
 
+# Real location of this script even when invoked via symlink — locates sibling
+# helpers such as ai-files-mcp-memory-import (same derivation as bin/ai-files).
+SCRIPT_PATH="$0"
+while [ -h "$SCRIPT_PATH" ]; do
+    DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$DIR/$SCRIPT_PATH"
+done
+SELF_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+
 CONFIG="${GIT_ROOT}/.mcp.json"
 CONFIG_OPENCODE="${GIT_ROOT}/opencode.json"
 CONFIG_ZCODE="${GIT_ROOT}/zcode.json"
@@ -422,6 +432,61 @@ set_sqlite_path_in() { # <kind> <new-path>
                 --arg n "$SERVER_MEMORY" --arg p "$2"
             ;;
     esac
+}
+
+############################################
+# Memory DB path alignment (env var / git config)
+############################################
+
+# Normalize a path for COMPARISON only (never for writing config values):
+# relative paths resolve against GIT_ROOT, then realpath -m collapses the rest.
+# realpath -m is GNU-only — fine, this repo targets Linux (CI is ubuntu).
+norm_path() { # <path> -> absolute path, missing components allowed
+    local p="$1"
+    [[ "$p" == /* ]] || p="${GIT_ROOT}/${p}"
+    realpath -m -- "$p"
+}
+
+stored_memory_path() { # -> value of aifiles.memory-db-path or empty
+    git -C "$GIT_ROOT" config --local --get aifiles.memory-db-path 2>/dev/null || true
+}
+
+store_memory_path() { # <absolute-path> — caller gates on DRY_RUN
+    git -C "$GIT_ROOT" config --local aifiles.memory-db-path "$1"
+}
+
+# Desired memory DB path (raw form), precedence: global MCP_MEMORY_SQLITE_PATH
+# env var > stored aifiles.memory-db-path > whatever the primary config uses
+# (adopted as canonical on first run). May be empty when nothing is configured.
+desired_memory_path_raw() {
+    if [[ -n "${MCP_MEMORY_SQLITE_PATH:-}" ]]; then
+        echo "$MCP_MEMORY_SQLITE_PATH"
+        return 0
+    fi
+    local stored
+    stored="$(stored_memory_path)"
+    if [[ -n "$stored" ]]; then
+        echo "$stored"
+        return 0
+    fi
+    sqlite_path_in primary
+}
+
+# Absolute form of desired_memory_path_raw, or empty when nothing is configured.
+resolve_memory_db_path() {
+    local raw
+    raw="$(desired_memory_path_raw)"
+    [[ -n "$raw" ]] && norm_path "$raw" || true
+}
+
+# Run the python merge sub-helper (no exec — callers may invoke it twice:
+# preview, then --execute).
+memory_import_helper() { # <args...> passthrough
+    if [[ ! -x "$SELF_DIR/ai-files-mcp-memory-import" ]]; then
+        print_error "Helper not found or not executable: $SELF_DIR/ai-files-mcp-memory-import"
+        return 1
+    fi
+    "$SELF_DIR/ai-files-mcp-memory-import" "$@"
 }
 
 ############################################
@@ -964,6 +1029,156 @@ cmd_shared_memory() {
 }
 
 ############################################
+# memory-path (env var / git-config alignment)
+############################################
+
+cmd_memory_path() {
+    local check_only=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -y|--yes) AUTO_YES=true; shift ;;
+            --dry-run) DRY_RUN=true; shift ;;
+            --check) check_only=true; shift ;;
+            -h|--help) show_mcp_help; return 0 ;;
+            *) print_error "Unknown memory-path option: $1"; exit 1 ;;
+        esac
+    done
+
+    local desired_raw
+    desired_raw="$(desired_memory_path_raw)"
+    if [[ -z "$desired_raw" ]]; then
+        print_info "repo-memory is not configured anywhere — nothing to align."
+        return 0
+    fi
+
+    local desired_abs
+    desired_abs="$(norm_path "$desired_raw")"
+
+    # Capture BEFORE any rewrite/store: the previous primary path is the
+    # import source when the path changes.
+    local old_primary prev_stored
+    old_primary="$(sqlite_path_in primary)"
+    prev_stored="$(stored_memory_path)"
+
+    local -a drifted=()
+    local kind current
+    for kind in primary opencode zcode; do
+        current="$(sqlite_path_in "$kind")"
+        [[ -z "$current" ]] && continue
+        if [[ "$(norm_path "$current")" != "$desired_abs" ]]; then
+            drifted+=("$kind")
+        fi
+    done
+
+    if [[ "$check_only" == "true" ]]; then
+        if [[ ${#drifted[@]} -eq 0 ]]; then
+            exit 0
+        fi
+        print_error "Memory DB path drift: configs differ from '${desired_raw}'."
+        exit 1
+    fi
+
+    if [[ ${#drifted[@]} -gt 0 ]]; then
+        preflight_validate || return 1
+        print_warning "Memory DB path drift detected — desired: ${desired_raw}"
+        for kind in "${drifted[@]}"; do
+            echo "    $kind: $(sqlite_path_in "$kind")"
+        done
+        if confirm "Rewrite ${#drifted[@]} config(s) to use '${desired_raw}'?"; then
+            for kind in "${drifted[@]}"; do
+                if [[ "$DRY_RUN" != "true" ]]; then
+                    set_sqlite_path_in "$kind" "$desired_raw"
+                fi
+            done
+            print_success "Rewrote ${#drifted[@]} config(s) to '${desired_raw}'."
+        else
+            print_warning "Configs left unchanged."
+        fi
+    else
+        print_info "Memory DB path already in sync (${desired_raw})."
+    fi
+
+    # Record the used path every run — seeds aifiles.memory-db-path on first
+    # use and keeps it fresh afterwards.
+    if [[ "$DRY_RUN" != "true" ]]; then
+        store_memory_path "$desired_abs"
+    fi
+
+    # Import offer — only when the path actually changed and both DBs exist.
+    local old_raw="$old_primary"
+    [[ -z "$old_raw" ]] && old_raw="$prev_stored"
+    if [[ -n "$old_raw" ]]; then
+        local old_abs
+        old_abs="$(norm_path "$old_raw")"
+        if [[ "$old_abs" != "$desired_abs" && -f "$old_abs" && -f "$desired_abs" ]]; then
+            print_warning "Old and new memory DBs both exist:"
+            echo "    old: $old_abs"
+            echo "    new: $desired_abs"
+            if confirm "Import (merge) memories from the old DB into the new one?"; then
+                if [[ "$DRY_RUN" == "true" ]]; then
+                    memory_import_helper --source "$old_abs" --destination "$desired_abs"
+                elif [[ "$AUTO_YES" == "true" ]]; then
+                    memory_import_helper --source "$old_abs" --destination "$desired_abs" --execute
+                else
+                    memory_import_helper --source "$old_abs" --destination "$desired_abs"
+                    if confirm "Apply the import?"; then
+                        memory_import_helper --source "$old_abs" --destination "$desired_abs" --execute
+                    else
+                        print_info "Import skipped — new DB keeps only its own memories."
+                    fi
+                fi
+            else
+                print_info "Import skipped — new DB keeps only its own memories."
+            fi
+        fi
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        print_info "(dry-run) memory-path complete — no files were modified."
+    fi
+}
+
+############################################
+# memory-import (merge one memory.db into another)
+############################################
+
+cmd_memory_import() {
+    local source="" target=""
+    local -a extra=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -y) extra+=("--yes"); shift ;;
+            --execute|--raw|--yes) extra+=("$1"); shift ;;
+            --label)
+                [[ $# -ge 2 ]] || { print_error "--label requires a value"; exit 1; }
+                extra+=("--label" "$2"); shift 2 ;;
+            -h|--help) show_mcp_help; return 0 ;;
+            *)
+                if [[ -z "$source" ]]; then source="$1"
+                elif [[ -z "$target" ]]; then target="$1"
+                else print_error "Unexpected argument: $1"; exit 1; fi
+                shift
+                ;;
+        esac
+    done
+    [[ -n "$source" ]] || { print_error "source database path required"; exit 1; }
+
+    if [[ -z "$target" ]]; then
+        target="$(resolve_memory_db_path)"
+        [[ -n "$target" ]] || {
+            print_error "no target given and none configured (set MCP_MEMORY_SQLITE_PATH or register repo-memory)"
+            exit 1
+        }
+    else
+        target="$(norm_path "$target")"
+    fi
+
+    # All merge logic lives in the python helper; the wrapper stays dumb.
+    exec "$SELF_DIR/ai-files-mcp-memory-import" \
+        --source "$source" --destination "$target" ${extra[@]+"${extra[@]}"}
+}
+
+############################################
 # serve (FULL IMPLEMENTATION)
 ############################################
 
@@ -1093,6 +1308,8 @@ Commands:
   get <name>                             Get details about a server
   sync [-y] [--dry-run]                  Propagate .mcp.json to other configs
   shared-memory [-y] [--dry-run] [--check]  Shared DB for nested (<repo>/<clone>) checkouts
+  memory-path [-y] [--dry-run] [--check]  Align memory DB path (MCP_MEMORY_SQLITE_PATH env > aifiles.memory-db-path)
+  memory-import <src.db> [tgt.db] [--execute]  Merge memories src→tgt (default: dry-run preview)
   known                                  Print built-in server names (one per line)
   has <name>                             Exit 0 when <name> exists in .mcp.json
   opencode [src] [dst]                   Import to opencode.json
@@ -1115,6 +1332,9 @@ Examples:
   ai-files mcp add --transport stdio git --env TOKEN=AA -- npx -y git-mcp-server
   ai-files mcp sync --dry-run                        # preview drift repair
   ai-files mcp shared-memory                         # migrate to ../.ai-files-shared
+  ai-files mcp memory-path -y                        # realign configs + pin aifiles.memory-db-path
+  ai-files mcp memory-import ../old/memory.db        # preview merge into current DB
+  ai-files mcp memory-import ../old/memory.db --execute
 
 Launching:
   ai-files mcp serve --env XYZ=111 -- ./server-binary --stdio
@@ -1156,6 +1376,12 @@ case "$SUB" in
         ;;
     shared-memory)
         cmd_shared_memory "$@"
+        ;;
+    memory-path)
+        cmd_memory_path "$@"
+        ;;
+    memory-import)
+        cmd_memory_import "$@"
         ;;
     known)
         known_server_names

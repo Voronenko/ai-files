@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ai-files-graphify: graphify wrapper pre-configured from the repo's git config.
+#
+# Reads 'aifiles.graphify-backend' and 'aifiles.graphify-model' (written by
+# 'ai-files setup', step 4) from the LOCAL git config of the current directory.
+# For graphify subcommands that talk to an LLM (extract, label, cluster-only)
+# it injects --backend/--model unless the caller already passed them; every
+# other argument is passed through untouched. Outside a git repo (or with no
+# config stored) it is a plain passthrough.
+#
+# GRAPHIFY_BIN overrides the wrapped binary (handy for testing: GRAPHIFY_BIN=echo).
+
+GRAPHIFY_BIN="${GRAPHIFY_BIN:-graphify}"
+if ! command -v "$GRAPHIFY_BIN" >/dev/null 2>&1; then
+    echo "ai-files-graphify: '$GRAPHIFY_BIN' not found on PATH." >&2
+    echo "Install with: make install-graphify   (ai-files repo)" >&2
+    exit 1
+fi
+
+backend="$(git config --local --get aifiles.graphify-backend 2>/dev/null || true)"
+model="$(git config --local --get aifiles.graphify-model 2>/dev/null || true)"
+
+# True when "$@" already contains the flag (either --flag VALUE or --flag=VALUE).
+has_flag() {
+    local flag="$1"
+    shift
+    local a
+    for a in "$@"; do
+        case "$a" in
+            "$flag"|"$flag="*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+inject=()
+case "${1:-}" in
+    extract|label|cluster-only)
+        if [[ -n "$backend" ]] && ! has_flag --backend "$@"; then
+            inject+=(--backend "$backend")
+        fi
+        if [[ -n "$model" ]] && ! has_flag --model "$@"; then
+            inject+=(--model "$model")
+        fi
+        # graphify custom providers (unlike the built-in 'ollama') require a
+        # non-empty API key env var; local Ollama ignores its value.
+        case "$backend" in
+            ollama|ollama-local) export OLLAMA_API_KEY="${OLLAMA_API_KEY:-ollama}" ;;
+        esac
+        ;;
+esac
+
+exec "$GRAPHIFY_BIN" "$@" ${inject[@]+"${inject[@]}"}

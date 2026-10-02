@@ -39,6 +39,7 @@ printf 'helper\n' > "$DIST/.ai-files/agents/helper.md"
 printf 'rule1\n'   > "$DIST/.ai-files/rules/r1.md"
 printf 'cmd\n'     > "$DIST/.ai-files/commands/cmd1.md"
 printf 'alpha\n'   > "$DIST/.ai-files/dotclaude/commands/alpha.md"
+printf 'perms\n'   > "$DIST/.ai-files/dotclaude/settings.local.json"
 ln -s ../VERSION "$DIST/.ai-files/dotclaude/version-link"
 printf 'k\n' > "$DIST/.ai-files/dotkilo/kfile"
 printf 'o\n' > "$DIST/.ai-files/dotopencode/ofile"
@@ -153,6 +154,8 @@ expect "l1 vendored skills stay unlisted (not linked)" \
     bash -c "test ! -e '$P/.claude/skills/tool-vendor' && test ! -e '$P/.claude/skills/tool'"
 expect "l1 agent linked" \
     test "$(rl "$P/.claude/agents/helper.md")" = "$P/.ai-files/agents/helper.md"
+expect "l1 settings.local.json copied, not symlinked" \
+    bash -c "test -f '$P/.claude/settings.local.json' && test ! -L '$P/.claude/settings.local.json' && test \"\$(cat '$P/.claude/settings.local.json')\" = perms"
 
 echo "=== L-collision: vendored name clash gets namespace suffix ==="
 new_proj l2
@@ -177,6 +180,34 @@ populate
 run_upd link-claude -d -y
 expect "l4 .claude not created" test ! -e "$P/.claude"
 expect "l4 preview announced" bash -c "printf '%s' \"\$OUT\" | grep -q 'Would create directory: .claude'"
+
+echo "=== L5: modified settings.local.json survives -y ==="
+new_proj l5 with-yaml
+populate
+run_upd link-claude -y
+printf 'my-local-perms\n' > "$P/.claude/settings.local.json"
+run_upd link-claude -y
+expect "l5 local edit kept under -y" test "$(cat "$P/.claude/settings.local.json")" = "my-local-perms"
+expect "l5 warns about kept local copy" \
+    bash -c "printf '%s' \"\$OUT\" | grep -q 'locally modified) — keeping local copy'"
+
+echo "=== L6: legacy settings.local.json symlink converted to real copy ==="
+new_proj l6 with-yaml
+populate
+mkdir -p "$P/.claude"
+ln -s ../.ai-files/dotclaude/settings.local.json "$P/.claude/settings.local.json"
+run_upd link-claude -y
+expect "l6 symlink replaced by real file" \
+    bash -c "test -f '$P/.claude/settings.local.json' && test ! -L '$P/.claude/settings.local.json' && test \"\$(cat '$P/.claude/settings.local.json')\" = perms"
+
+echo "=== L7: interactive y overwrites modified settings.local.json ==="
+new_proj l7 with-yaml
+populate
+run_upd link-claude -y
+printf 'my-local-perms\n' > "$P/.claude/settings.local.json"
+OUT=$(cd "$P" && printf 'y\n' | GIT_CONFIG_GLOBAL=/dev/null "$UPDATE" link-claude 2>&1); RC=$?
+expect "l7 exits 0" test "$RC" -eq 0
+expect "l7 confirmed overwrite applied" test "$(cat "$P/.claude/settings.local.json")" = "perms"
 
 echo "=== K: link-kilo ==="
 new_proj k1 with-yaml

@@ -162,6 +162,8 @@ ai-files mcp <command> [options]
 | `add-json <name> <json>` | Add server via raw JSON configuration |
 | `sync [-y] [--dry-run]` | Propagate `.mcp.json` entries into `opencode.json` / `zcode.json`; reports secondary-only servers untouched |
 | `shared-memory [-y] [--dry-run] [--check]` | Shared memory DB for nested checkouts (see below) |
+| `memory-path [-y] [--dry-run] [--check]` | Align the memory DB path across configs (see below) |
+| `memory-import <src.db> [tgt.db] [--execute]` | Merge memories from one `memory.db` into another (dry-run by default) |
 | `known` | Print built-in server names (one per line) |
 | `has <name>` | Exit-code probe: 0 when `<name>` exists in `.mcp.json` |
 | `opencode [src] [dst]` | One-shot import into `opencode.json` (backward compatible) |
@@ -234,6 +236,24 @@ ai-files mcp shared-memory --check  # silent exit code probe (0 = nested)
 ```
 
 It creates `<parent>/.ai-files-shared/`, rewrites `MCP_MEMORY_SQLITE_PATH` from `.ai-files/memory.db` to `../.ai-files-shared/memory.db` in every config that still uses the default path (custom paths are reported but never touched), and offers to copy an existing database using a consistent `sqlite3 .backup` snapshot (raw-copy fallback when sqlite3 is unavailable). `ai-files mcp add repo-memory` proposes the shared path automatically when a nested checkout is detected.
+
+**Sharing the memory DB across projects (`memory-path` / `memory-import`)**
+
+To point several projects at one memory DB, export a global `MCP_MEMORY_SQLITE_PATH` — on every `ai-files setup` run (and via `ai-files mcp memory-path` directly) the desired path is resolved as `MCP_MEMORY_SQLITE_PATH` > stored `aifiles.memory-db-path` git-config key > whatever `.mcp.json` currently uses, compared after normalizing relative paths against the repo root. On drift all three configs are realigned and the used path is pinned into `aifiles.memory-db-path`; `--check` is a silent exit-code probe (0 = in sync) for scripting.
+
+```bash
+ai-files mcp memory-path --check  # 0 = in sync, 1 = drift
+MCP_MEMORY_SQLITE_PATH=~/.ai-files-global/memory.db ai-files mcp memory-path -y
+```
+
+When the path changes and both the old and the new `memory.db` exist, an import (merge) of the old DB into the new one is offered. The same merge is available standalone:
+
+```bash
+ai-files mcp memory-import ../old-repo/.ai-files/memory.db            # dry-run preview
+ai-files mcp memory-import ../old-repo/.ai-files/memory.db --execute  # apply (target defaults to the configured DB)
+```
+
+The merge (`bin/ai-files-mcp-memory-import`, python3) uses the `content_hash` as identity — duplicates are skipped, source row ids are never preserved — and inserts via explicit column lists so service schema changes don't break it. Graph edges and beliefs are merged in a second phase, keeping only edges whose endpoints survived. When both DBs use the same embedding dimension and the mcp-memory-service environment is available (pipx venv auto-detected, or `MCP_MEMORY_PYTHON`), embeddings are copied directly; otherwise imported rows are searchable via exact/FTS but not semantic search until re-stored. Imported rows carry an `imported:<label>` tag and a `merge_id` in their metadata for traceability.
 
 ### ai-files memory
 
@@ -535,9 +555,9 @@ ai-files setup
 1. Sync `.ai-files/VERSION` from `dist/` if stale (`ai-files update files`)
 2. Obsidian integration config — shows current config via `ai-files config`, or offers `ai-files config setup` when the `aifiles.*` keys are missing
 3. Relink agent folders — per-agent y/N for `link-claude`, `link-kilo`, `link-opencode`, `link-specify`
-4. Initialize graphify — copies `.graphifyignore` to the repo root when `graphify-out/` is absent (a present `.graphifyignore` counts as done)
+4. Initialize graphify — copies `.graphifyignore` to the repo root when `graphify-out/` is absent (a present `.graphifyignore` counts as done); then validates the graphify backend stored in repo git config (`aifiles.graphify-backend` / `aifiles.graphify-model`) — when unset, offers a numbered selection over graphify built-ins + registered custom providers (`ollama-local` is the default). Choosing `ollama-local` asks for the model: an fzf picker over presets (`glm-4.7-flash`, `deepseek-coder-v2:latest`) plus installed models, any custom name accepted (plain prompt when fzf is absent); the choice is validated against `ollama list`, offering `ollama pull` on the spot — a failed pull re-asks, declining keeps the name unverified
 5. Create missing dotfile templates — `.mcp.json`, `opencode.json`, `zcode.json` copied from the ai-files install root
-6. Register known MCP servers when missing — offers `ai-files mcp add repo-memory` / `add ssh-manager` (each writes `.mcp.json`, `opencode.json`, `zcode.json` in one run); when the repo is a nested checkout (`<git-repo-name>/<clone-folder>`), additionally proposes migrating repo-memory to the shared `../.ai-files-shared/memory.db`
+6. Register known MCP servers when missing — offers `ai-files mcp add repo-memory` / `add ssh-manager` (each writes `.mcp.json`, `opencode.json`, `zcode.json` in one run); when the repo is a nested checkout (`<git-repo-name>/<clone-folder>`), additionally proposes migrating repo-memory to the shared `../.ai-files-shared/memory.db`; finally validates the memory DB path on every run — a global `MCP_MEMORY_SQLITE_PATH` env var (or the stored `aifiles.memory-db-path` git-config key) wins over whatever the configs use, realigning all three via `ai-files mcp memory-path` and offering a memory import when both old and new DBs exist
 7. Suggest ignore entries for untracked setup files (`.claude/`, `.graphifyignore`, `.kilo/`, `.mcp.json`, `.opencode/`, `.specify/`, `opencode.json`, `zcode.json`) — written to `.gitignore.local` (symlink to `./.git/info/exclude`) when present, else `.gitignore`
 
 ### ai-files version
@@ -757,6 +777,40 @@ make graphify-enable-local    # project-local: write the skill into this repo (-
 ```
 
 After enabling, **restart your agent**, then run `/graphify .` in a project to build the graph. Query it with `graphify query "..."`, `graphify path A B`, or `graphify explain X`.
+
+### Local Ollama as the LLM backend
+
+graphify's semantic pass (docs/papers/images; code is local AST) can run on a local Ollama instead of a paid API:
+
+```bash
+make configure-graphify-ollama    # register provider "ollama-local" → http://localhost:11434/v1
+```
+
+- Model is auto-picked from the models installed in your Ollama (override: `GRAPHIFY_OLLAMA_MODEL=…`, host: `GRAPHIFY_OLLAMA_HOST=…`). An already-registered provider is respected — re-register with `GRAPHIFY_OLLAMA_FORCE=1`.
+- graphify deliberately never lets local shadow a paid key (its F-029 rule). To make `ollama-local` the auto-detected default, export `OLLAMA_API_KEY` (any non-empty value; Ollama ignores auth) in your shell profile — auto-detect picks it whenever no paid API key is set.
+- Model naming: on the ollama registry `glm-5.3` / `glm-5.3-flash` / `glm-5.2` exist **only as `:cloud` tags** (no local weights); `glm-4.7-flash` is the newest GLM Flash that actually pulls and runs locally — hence the setup preset.
+
+### Per-repo backend: the `ai-files-graphify` wrapper
+
+> Not to be confused with the `ai-files-graphify` **marketplace plugin** (the `/graphify` skill) — this is the `bin/ai-files-graphify` script.
+
+`ai-files setup` (step 4) stores the graphify backend per repo in git config; the wrapper pre-applies it so you never type `--backend`/`--model`:
+
+| git config key | written when | effect |
+|---|---|---|
+| `aifiles.graphify-backend` | backend selected in setup | injected as `--backend` |
+| `aifiles.graphify-model` | `ollama-local` selected in setup | injected as `--model` |
+
+```bash
+bin/ai-files-graphify extract .                 # backend+model from git config
+bin/ai-files-graphify extract . --force         # force full reindex (skip caches)
+GRAPHIFY_FORCE=1 bin/ai-files-graphify extract . # same via env
+bin/ai-files-graphify query "how does auth work?"  # non-LLM subcommand: plain passthrough
+bin/ai-files-graphify extract . --backend gemini   # explicit flags override the config
+GRAPHIFY_BIN=echo bin/ai-files-graphify extract .  # debug: print the assembled command
+```
+
+Injection applies only to the LLM subcommands (`extract`, `label`, `cluster-only`) and only for flags you did not pass yourself; everything else is forwarded verbatim. For `ollama`/`ollama-local` the wrapper also exports `OLLAMA_API_KEY` (required by graphify's custom providers, ignored by local Ollama). Outside a git repo, or with nothing configured, it is a plain `graphify` passthrough.
 
 ### Disable / uninstall
 

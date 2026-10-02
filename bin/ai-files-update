@@ -59,6 +59,12 @@ PROTECTED_PATTERNS=("memory.db*")
 # hardcoded ignore list for all agent traversals in this command.
 RUNTIME_ARTIFACTS=("node_modules" "package.json" "package-lock.json" ".gitignore")
 
+# dot* entries the target agent owns and rewrites in place (Claude Code reads
+# and rewrites settings.local.json itself and rejects symlinks there). These
+# are COPIED into the agent dir, never symlinked; a locally modified copy is
+# only overwritten after an explicit confirmation (never under -y).
+LOCAL_COPY_FILES=("settings.local.json")
+
 # Tracking arrays
 declare -a COPIED_FILES=()
 declare -a SKIPPED_FILES=()
@@ -1270,6 +1276,10 @@ For example:
   Becomes:
   .claude/commands/foo.md -> .ai-files/commands/bar.md
 
+settings.local.json is the exception: it is COPIED (Claude Code rewrites it
+in place and rejects symlinks). A locally modified copy is only overwritten
+after confirmation — '-y' keeps it and warns instead.
+
 Options:
     -d, --dry-run       Show what would be done without making changes
     -v, --verbose       Enable verbose output
@@ -1331,6 +1341,51 @@ process_dotclaude_entry() {
         else
             echo "  📁 Would create directory: $target_display/${relative_path%/*}"
         fi
+    fi
+
+    # Locally-owned files (LOCAL_COPY_FILES) are copied, never symlinked.
+    if [[ " ${LOCAL_COPY_FILES[*]} " == *" $relative_path "* ]]; then
+        if [[ -f "$target_file" && ! -L "$target_file" ]]; then
+            if cmp -s "$source_file" "$target_file"; then
+                if [[ "$VERBOSE" == "true" ]]; then
+                    echo "  ✓ Up to date: $target_display/$relative_path"
+                fi
+                return
+            fi
+            # Locally modified copy: only overwrite on explicit confirmation.
+            if [[ "$AUTO_YES" == "true" ]]; then
+                print_warning "Conflict at $target_display/$relative_path (locally modified) — keeping local copy"
+                SKIPPED_FILES+=("$target_display/$relative_path")
+                return
+            fi
+            echo -n "Overwrite $target_display/$relative_path with copy from ${source_root#$GIT_ROOT/}/$relative_path? [y/N/a/q]: "
+            read -r response
+            case "$response" in
+                [Yy]|[Aa]) ;;
+                [Qq]*)
+                    print_info "Quitting"
+                    exit 0
+                    ;;
+                *)
+                    SKIPPED_FILES+=("$target_display/$relative_path")
+                    echo "  ⏭️  Skipped: $target_display/$relative_path"
+                    return
+                    ;;
+            esac
+        elif [[ -L "$target_file" ]]; then
+            # Legacy symlink from an older link-claude run: replace with a real
+            # copy. Lossless (the symlink pointed at this same source), so it
+            # happens without prompting, even under -y.
+            :
+        fi
+        if [[ "$DRY_RUN" == "false" ]]; then
+            rm -f "$target_file"
+            cp "$source_file" "$target_file"
+            echo "  📄 Copied: $target_display/$relative_path"
+        else
+            echo "  📄 Would copy: $target_display/$relative_path"
+        fi
+        return
     fi
 
     # Check if source is a symlink
@@ -1634,10 +1689,12 @@ cmd_link_claude() {
     fi
 
     # Traverse dotclaude and create symlinks
-    while IFS= read -r -d '' entry; do
+    # fd 3 for the find feed: stdin stays free for the interactive prompts
+    # inside process_dotclaude_entry (reading stdin here would hit EOF).
+    while IFS= read -r -u 3 -d '' entry; do
         local relative_path="${entry#$dotclaude_source/}"
         process_dotclaude_entry "$dotclaude_source" "$claude_target" "$relative_path"
-    done < <(find_linkable "$dotclaude_source")
+    done 3< <(find_linkable "$dotclaude_source")
 
     # Also create symlinks from .ai-files/agents/, .ai-files/skills/ to .claude/
     # Process agents
@@ -1834,10 +1891,10 @@ cmd_link_kilo() {
     fi
 
     # Traverse dotkilo and create symlinks
-    while IFS= read -r -d '' entry; do
+    while IFS= read -r -u 3 -d '' entry; do
         local relative_path="${entry#$dotkilo_source/}"
         process_dotclaude_entry "$dotkilo_source" "$kilo_target" "$relative_path"
-    done < <(find_linkable "$dotkilo_source")
+    done 3< <(find_linkable "$dotkilo_source")
 
     # Earlier runs (before the prune) may have left .kilo/node_modules full of
     # symlinks into .ai-files/dotkilo — flag it so it gets rebuilt by the tool.
@@ -2074,10 +2131,10 @@ cmd_link_opencode() {
     fi
 
     # Traverse dotopencode and create symlinks
-    while IFS= read -r -d '' entry; do
+    while IFS= read -r -u 3 -d '' entry; do
         local relative_path="${entry#$dotopencode_source/}"
         process_dotclaude_entry "$dotopencode_source" "$opencode_target" "$relative_path"
-    done < <(find_linkable "$dotopencode_source")
+    done 3< <(find_linkable "$dotopencode_source")
 
     # Also create symlinks from .ai-files/agents/, .ai-files/skills/, .ai-files/rules/ to .opencode/
     # Process agents

@@ -9,6 +9,7 @@ KNOWN_KEYS=(
     "vault-default-path"
     "vault-session-default-path"
     "vault-memory-default-path"
+    "memory-db-path"
 )
 
 is_known_key() {
@@ -477,6 +478,8 @@ Known keys:
   vault-default-path         Default folder path within vault
   vault-session-default-path Default session folder path within vault
   vault-memory-default-path  Default memory folder path within vault
+  memory-db-path             Pinned repo-memory sqlite DB path (absolute; managed
+                             by 'ai-files mcp memory-path')
 
 Setup options (any option or -y switches to unattended mode; prompts and
 obsidian/fzf requirements are skipped, proposals are applied as-is):

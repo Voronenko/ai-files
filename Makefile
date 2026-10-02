@@ -614,6 +614,46 @@ install-graphify:
 	pipx inject graphifyy openai
 	pipx inject graphifyy tree-sitter-hcl
 
+## graphify + local Ollama — register a custom LLM provider for the local
+## Ollama (OpenAI-compatible) endpoint via `graphify provider add`.
+## graphify ships a built-in `ollama` backend whose name cannot be overridden,
+## so the custom entry is named `ollama-local`. Unlike the built-in, a custom
+## provider requires its env-key at call time — export OLLAMA_API_KEY (any
+## non-empty value; local Ollama ignores auth) before extract/label.
+## Usage: graphify extract <path> --backend ollama-local
+GRAPHIFY_OLLAMA_PROVIDER ?= ollama-local
+GRAPHIFY_OLLAMA_HOST ?= http://localhost:11434
+GRAPHIFY_OLLAMA_MODEL ?=
+GRAPHIFY_OLLAMA_FORCE ?=
+
+configure-graphify-ollama: _graphify-require
+	@set -euo pipefail; \
+	models_json="$$(curl -fsS --max-time 5 "$(GRAPHIFY_OLLAMA_HOST)/api/tags")" || { \
+		echo "ERROR: Ollama not reachable at $(GRAPHIFY_OLLAMA_HOST) (override with GRAPHIFY_OLLAMA_HOST=…)"; \
+		exit 1; \
+	}; \
+	model="$(GRAPHIFY_OLLAMA_MODEL)"; \
+	if [ -z "$$model" ]; then \
+		model="$$(printf '%s' "$$models_json" | jq -r '.models[0].model // empty' 2>/dev/null)"; \
+	fi; \
+	[ -n "$$model" ] || { \
+		echo "ERROR: no models installed in local Ollama — run: ollama pull <model>  (or set GRAPHIFY_OLLAMA_MODEL=…)"; \
+		exit 1; \
+	}; \
+	if [ "$(GRAPHIFY_OLLAMA_FORCE)" != "1" ] && graphify provider show "$(GRAPHIFY_OLLAMA_PROVIDER)" >/dev/null 2>&1; then \
+		echo "✅ graphify provider '$(GRAPHIFY_OLLAMA_PROVIDER)' already configured (respecting existing setup):"; \
+		graphify provider show "$(GRAPHIFY_OLLAMA_PROVIDER)"; \
+		echo "   To re-register: make configure-graphify-ollama GRAPHIFY_OLLAMA_FORCE=1"; \
+		exit 0; \
+	fi; \
+	graphify provider add "$(GRAPHIFY_OLLAMA_PROVIDER)" \
+		--base-url "$(GRAPHIFY_OLLAMA_HOST)/v1" \
+		--default-model "$$model" \
+		--env-key OLLAMA_API_KEY < /dev/null; \
+	echo "   • Use:        OLLAMA_API_KEY=x graphify extract <path> --backend $(GRAPHIFY_OLLAMA_PROVIDER)"; \
+	echo "   • Default:    export OLLAMA_API_KEY=ollama in your shell profile — auto-detect"; \
+	echo "                 then picks $(GRAPHIFY_OLLAMA_PROVIDER) whenever no paid API keys are set."
+
 install-codegraph:
 	@set -eu; \
 	mkdir -p ./bin; \

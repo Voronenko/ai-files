@@ -268,6 +268,276 @@ else
     echo "SKIP t15 (sqlite3 unavailable)"
 fi
 
+echo "=== T16: memory-path env-driven rewrite + git-config pin ==="
+T16=$BASE/t16; fresh t16
+(cd "$T16" && "$MCP" add repo-memory -y) >/dev/null 2>&1
+expect "t16 first check in sync (primary adopted as canonical)" \
+    bash -c "cd '$T16' && '$MCP' memory-path --check"
+# --check never writes; a plain run seeds aifiles.memory-db-path silently
+(cd "$T16" && "$MCP" memory-path -y) >/dev/null 2>&1
+expect "t16 git config seeded to absolute default path" \
+    test "$(git -C "$T16" config --local aifiles.memory-db-path)" = "$T16/.ai-files/memory.db"
+NEW16="$T16/shared/memory2.db"
+expect "t16 check exits 1 when env var points elsewhere" \
+    bash -c "cd '$T16' && MCP_MEMORY_SQLITE_PATH='$NEW16' '$MCP' memory-path --check >/dev/null 2>&1; test \$? -eq 1"
+mkdir -p "$T16/shared"
+(cd "$T16" && MCP_MEMORY_SQLITE_PATH="$NEW16" "$MCP" memory-path -y) >/dev/null 2>&1
+expect "t16 all three configs rewritten to env path" \
+    bash -c "jq -e '.mcpServers[\"repo-memory\"].env.MCP_MEMORY_SQLITE_PATH == \"$NEW16\"' '$T16/.mcp.json' && jq -e '.mcp[\"repo-memory\"].environment.MCP_MEMORY_SQLITE_PATH == \"$NEW16\"' '$T16/opencode.json' && jq -e '.mcp.servers[\"repo-memory\"].environment.MCP_MEMORY_SQLITE_PATH == \"$NEW16\"' '$T16/zcode.json'"
+expect "t16 git config pinned to new absolute path" \
+    test "$(git -C "$T16" config --local aifiles.memory-db-path)" = "$NEW16"
+expect "t16 check in sync again with env set" \
+    bash -c "cd '$T16' && MCP_MEMORY_SQLITE_PATH='$NEW16' '$MCP' memory-path --check"
+expect "t16 relative env value compares equivalent (no spurious drift)" \
+    bash -c "cd '$T16' && MCP_MEMORY_SQLITE_PATH='shared/memory2.db' '$MCP' memory-path --check"
+
+echo "=== T17: memory-path repairs drift from stored value (no env) ==="
+T17=$BASE/t17; fresh t17
+(cd "$T17" && "$MCP" add repo-memory -y) >/dev/null 2>&1
+NEW17="$T17/shared/new.db"
+(cd "$T17" && MCP_MEMORY_SQLITE_PATH="$NEW17" "$MCP" memory-path -y) >/dev/null 2>&1
+jq '.mcp.servers["repo-memory"].environment.MCP_MEMORY_SQLITE_PATH = ".ai-files/memory.db"' \
+    "$T17/zcode.json" > "$BASE/z17.tmp" && mv "$BASE/z17.tmp" "$T17/zcode.json"
+(cd "$T17" && "$MCP" memory-path --check) >/dev/null 2>&1
+expect "t17 --check detects drift without env var" test $? -eq 1
+(cd "$T17" && "$MCP" memory-path -y) >/dev/null 2>&1
+expect "t17 drifted zcode restored to stored path" \
+    bash -c "jq -e '.mcp.servers[\"repo-memory\"].environment.MCP_MEMORY_SQLITE_PATH == \"$NEW17\"' '$T17/zcode.json'"
+expect "t17 back in sync" bash -c "cd '$T17' && '$MCP' memory-path --check"
+
+# --- shared fixtures for memory-import tests ---------------------------------
+# MEMFIX builds minimal mcp-memory-service-shaped DBs (memories + graph +
+# beliefs + FTS5, no vec0 table — the documented raw-mode degraded path, so
+# no sqlite3 CLI / service install is needed). AIFILES_MEMIMPORT_REEXEC=1 in
+# the invocations below pins the helper to that raw mode for determinism on
+# hosts that DO have the mcp-memory-service pipx env.
+MEMFIX="$BASE/memfix.py"
+cat > "$MEMFIX" <<'MEMFIX_EOF'
+import sqlite3, hashlib, json, sys
+
+def chash(s):
+    return hashlib.sha256(s.strip().lower().encode()).hexdigest()
+
+def mkdb(path, mems, edges, beliefs):
+    c = sqlite3.connect(path)
+    c.executescript("""
+    CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content_hash TEXT UNIQUE NOT NULL, content TEXT NOT NULL, tags TEXT,
+        memory_type TEXT, metadata TEXT, created_at REAL, updated_at REAL,
+        created_at_iso TEXT, updated_at_iso TEXT, deleted_at REAL, store TEXT,
+        parent_id TEXT, version INTEGER DEFAULT 1, confidence REAL DEFAULT 1.0,
+        last_accessed INTEGER, superseded_by TEXT);
+    CREATE TABLE memory_graph (source_hash TEXT NOT NULL, target_hash TEXT NOT NULL,
+        similarity REAL NOT NULL, connection_types TEXT NOT NULL, metadata TEXT,
+        created_at REAL NOT NULL, relationship_type TEXT DEFAULT 'related',
+        PRIMARY KEY (source_hash, target_hash));
+    CREATE TABLE beliefs (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        belief_hash TEXT UNIQUE NOT NULL, content TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0.5, status TEXT NOT NULL DEFAULT 'candidate',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        derived_from TEXT NOT NULL DEFAULT '[]', contradicted_by TEXT NOT NULL DEFAULT '[]',
+        metadata TEXT DEFAULT '{}');
+    CREATE VIRTUAL TABLE memory_content_fts USING fts5(content, content='memories',
+        content_rowid='id');
+    CREATE TRIGGER memories_fts_ai AFTER INSERT ON memories BEGIN
+        INSERT INTO memory_content_fts(rowid, content) VALUES (new.id, new.content); END;
+    """)
+    for text, tags in mems:
+        c.execute("INSERT INTO memories (content_hash, content, tags) VALUES (?,?,?)",
+                  (chash(text), text, tags))
+    for a, b in edges:
+        c.execute("INSERT INTO memory_graph (source_hash, target_hash, similarity, "
+                  "connection_types, created_at) VALUES (?,?,?,'[]',1.0)",
+                  (chash(a), chash(b), 0.9))
+    for b in beliefs:
+        c.execute("INSERT INTO beliefs (belief_hash, content, created_at, updated_at) "
+                  "VALUES (?,?,'x','x')", (chash(b), b))
+    c.commit(); c.close()
+
+mkdb(sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3]), json.loads(sys.argv[4]))
+MEMFIX_EOF
+qdb() { # qdb <db> <sql> -> first column of first row
+    python3 -c 'import sqlite3,sys
+print(sqlite3.connect(sys.argv[1]).execute(sys.argv[2]).fetchone()[0])' "$1" "$2" 2>/dev/null
+}
+
+echo "=== T18: import offered+run when path changes and both DBs exist ==="
+T18=$BASE/t18; fresh t18
+(cd "$T18" && "$MCP" add repo-memory -y) >/dev/null 2>&1
+mkdir -p "$T18/.ai-files"
+OLD18="$T18/.ai-files/memory.db"
+NEW18="$T18/shared/memory2.db"; mkdir -p "$T18/shared"
+python3 "$MEMFIX" "$OLD18" \
+    '[["alpha memory one","t1"],["shared memory","t3"]]' \
+    '[["alpha memory one","shared memory"],["alpha memory one","missing endpoint"]]' \
+    '["belief one"]'
+python3 "$MEMFIX" "$NEW18" \
+    '[["shared memory","dest"],["gamma memory three","dest"]]' '[]' '[]'
+(cd "$T18" && AIFILES_MEMIMPORT_REEXEC=1 MCP_MEMORY_SQLITE_PATH="$NEW18" "$MCP" memory-path -y) >/dev/null 2>&1
+expect "t18 path change executed cleanly" test $? -eq 0
+expect "t18 dedup held: 3 memories in target" \
+    test "$(qdb "$NEW18" 'SELECT count(*) FROM memories')" = "3"
+TAGS18=$(qdb "$NEW18" "SELECT tags FROM memories WHERE content='alpha memory one'")
+if printf '%s' "$TAGS18" | grep -q 'imported:'; then ok "t18 provenance tag on imported row"; else bad "t18 provenance tag on imported row ($TAGS18)"; fi
+META18=$(qdb "$NEW18" "SELECT metadata FROM memories WHERE content='alpha memory one'")
+if printf '%s' "$META18" | grep -q 'merge_id'; then ok "t18 merge_id recorded in metadata"; else bad "t18 merge_id recorded in metadata ($META18)"; fi
+expect "t18 complete edge merged, dangling skipped" \
+    test "$(qdb "$NEW18" 'SELECT count(*) FROM memory_graph')" = "1"
+expect "t18 belief merged" \
+    test "$(qdb "$NEW18" 'SELECT count(*) FROM beliefs')" = "1"
+FTS18=$(qdb "$NEW18" "SELECT count(*) FROM memory_content_fts WHERE memory_content_fts MATCH 'alpha'")
+expect "t18 FTS index covers imported content" test "$FTS18" -ge 1
+expect "t18 configs now use the new path" \
+    bash -c "jq -e '.mcpServers[\"repo-memory\"].env.MCP_MEMORY_SQLITE_PATH == \"$NEW18\"' '$T18/.mcp.json'"
+
+echo "=== T19: standalone memory-import (dry-run default, --execute, errors) ==="
+T19=$BASE/t19; fresh t19
+(cd "$T19" && "$MCP" add repo-memory -y) >/dev/null 2>&1
+mkdir -p "$T19/.ai-files"
+S19=$BASE/src19.db; D19=$BASE/dst19.db
+python3 "$MEMFIX" "$S19" '[["one","a"],["two","a"]]' '[["one","two"]]' '[]'
+python3 "$MEMFIX" "$D19" '[["two","b"],["three","b"]]' '[]' '[]'
+python3 "$MEMFIX" "$T19/.ai-files/memory.db" '[["nine","n"]]' '[]' '[]'
+OUT19=$( (cd "$T19" && AIFILES_MEMIMPORT_REEXEC=1 "$MCP" memory-import "$S19" "$D19") 2>&1)
+if printf '%s' "$OUT19" | grep -q 'DRY-RUN'; then ok "t19 default run is a dry-run"; else bad "t19 default run is a dry-run"; fi
+expect "t19 dry-run left target unchanged" \
+    test "$(qdb "$D19" 'SELECT count(*) FROM memories')" = "2"
+(cd "$T19" && AIFILES_MEMIMPORT_REEXEC=1 "$MCP" memory-import "$S19" "$D19" --execute) >/dev/null 2>&1
+expect "t19 execute merged with dedup" \
+    test "$(qdb "$D19" 'SELECT count(*) FROM memories')" = "3"
+(cd "$T19" && AIFILES_MEMIMPORT_REEXEC=1 "$MCP" memory-import "$S19" --execute) >/dev/null 2>&1
+expect "t19 omitted target defaults to configured DB path" \
+    test "$(qdb "$T19/.ai-files/memory.db" 'SELECT count(*) FROM memories')" = "3"
+expect_fail "t19 missing source fails" \
+    bash -c "cd '$T19' && AIFILES_MEMIMPORT_REEXEC=1 '$MCP' memory-import '$BASE/no-such.db' '$D19'"
+expect_fail "t19 missing target fails" \
+    bash -c "cd '$T19' && AIFILES_MEMIMPORT_REEXEC=1 '$MCP' memory-import '$S19' '$BASE/no-target.db'"
+
+echo "=== T20: aifiles.memory-db-path managed via ai-files-config ==="
+T20=$BASE/t20; fresh t20
+CFG="$REPO_ROOT/bin/ai-files-config"
+(cd "$T20" && "$CFG" set memory-db-path /tmp/x.db) >/dev/null 2>&1
+expect "t20 set memory-db-path" \
+    test "$(git -C "$T20" config --local aifiles.memory-db-path)" = "/tmp/x.db"
+expect "t20 get memory-db-path" \
+    bash -c "cd '$T20' && '$CFG' get memory-db-path | grep -q '/tmp/x.db'"
+(cd "$T20" && "$CFG" unset memory-db-path) >/dev/null 2>&1
+expect "t20 unset clears key" \
+    test -z "$(git -C "$T20" config --local aifiles.memory-db-path 2>/dev/null || true)"
+expect_fail "t20 unknown key still rejected" \
+    bash -c "cd '$T20' && '$CFG' set bogus-key v"
+
+echo "=== T21: ai-files-setup realigns via memory-path (drift prompt, decline-safe) ==="
+T21=$BASE/t21; fresh t21
+mkdir -p "$T21/.ai-files"
+(cd "$T21" && PATH="$SHIM:$PATH" "$MCP" add repo-memory -y) >/dev/null 2>&1
+OLD21="$T21/.ai-files/memory.db"; NEW21="$T21/shared/memory2.db"
+mkdir -p "$T21/shared"
+python3 "$MEMFIX" "$OLD21" '[["one","a"]]' '[]' '[]'
+python3 "$MEMFIX" "$NEW21" '[["two","b"]]' '[]' '[]'
+SETUP_OUT21=$( (cd "$T21" && PATH="$SHIM:$PATH" AIFILES_MEMIMPORT_REEXEC=1 \
+    MCP_MEMORY_SQLITE_PATH="$NEW21" "$SETUP") </dev/null 2>&1)
+RC=$?
+export SETUP_OUT21
+expect "t21 setup exits 0 with env var set" test $RC -eq 0
+# read -p prompts are suppressed without a tty, so the drift branch is proven
+# by its decline message + the ABSENCE of the in-sync message the --check-ok
+# path would print.
+if printf '%s' "$SETUP_OUT21" | grep -q 'Keeping current memory DB paths'; then ok "t21 drift branch reached and declined (EOF default-no)"; else bad "t21 drift branch reached and declined"; fi
+if printf '%s' "$SETUP_OUT21" | grep -q 'Memory DB path already in sync'; then bad "t21 drift was NOT detected (in-sync message present)"; else ok "t21 drift detected (no in-sync message)"; fi
+expect "t21 configs NOT rewritten after decline" \
+    bash -c "jq -e '.mcpServers[\"repo-memory\"].env.MCP_MEMORY_SQLITE_PATH == \".ai-files/memory.db\"' '$T21/.mcp.json'"
+
+echo "=== T22: memory-import SERVICE mode via pipx env (embedding copy) ==="
+# Real service-mode coverage: no AIFILES_MEMIMPORT_REEXEC guard here, so the
+# helper auto-detects the pipx venv, re-execs into it, and copies embeddings
+# through the sqlite-vec extension. CI installs the package via pipx
+# (.github/workflows/tests.yml); hosts without it SKIP (T15 sqlite3 pattern).
+PIPX_PY="$HOME/.local/pipx/venvs/mcp-memory-service/bin/python"
+# When pipx's home is relocated, fall back to the `memory` CLI's interpreter
+# (pipx entry scripts carry the venv python in their shebang).
+if [[ ! -x "$PIPX_PY" ]] && command -v memory >/dev/null 2>&1; then
+    CAND22=$(head -1 "$(command -v memory)" | sed 's/^#!//' | cut -d' ' -f1)
+    [[ "$CAND22" == *python* && -x "$CAND22" ]] && PIPX_PY="$CAND22"
+fi
+if [[ -x "$PIPX_PY" ]]; then
+    T22=$BASE/t22; fresh t22
+    (cd "$T22" && "$MCP" add repo-memory -y) >/dev/null 2>&1
+    S22=$BASE/src22.db; D22=$BASE/dst22.db
+    "$PIPX_PY" - "$S22" "$D22" <<'PY22'
+import sqlite3, sqlite_vec, hashlib, struct, sys
+
+def chash(s):
+    return hashlib.sha256(s.strip().lower().encode()).hexdigest()
+
+def mkdb(path, contents):
+    c = sqlite3.connect(path)
+    c.enable_load_extension(True); sqlite_vec.load(c); c.enable_load_extension(False)
+    c.executescript("""CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content_hash TEXT UNIQUE NOT NULL, content TEXT NOT NULL, tags TEXT);
+    CREATE VIRTUAL TABLE memory_embeddings USING vec0(
+        content_embedding FLOAT[384] distance_metric=cosine, store TEXT partition key);""")
+    for text in contents:
+        cur = c.execute("INSERT INTO memories (content_hash, content) VALUES (?,?)",
+                        (chash(text), text))
+        seed = int(chash(text)[:8], 16)
+        c.execute("INSERT INTO memory_embeddings (rowid, content_embedding, store) "
+                  "VALUES (?,?, 'default')",
+                  (cur.lastrowid, struct.pack("384f",
+                      *[((seed >> (k % 32)) & 1) - 0.5 for k in range(384)])))
+    c.commit(); c.close()
+
+mkdb(sys.argv[1], ["t22 alpha", "t22 shared"])
+mkdb(sys.argv[2], ["t22 shared", "t22 gamma"])
+PY22
+    expect "t22 helper env probe succeeds" "$REPO_ROOT/bin/ai-files-mcp-memory-import" --check-env
+    OUT22=$( (cd "$T22" && "$MCP" memory-import "$S22" "$D22" --execute) 2>&1)
+    export OUT22
+    expect "t22 service mode selected (copy plan, not raw)" \
+        bash -c "printf '%s' \"\$OUT22\" | grep -q 'copy (384-dim, service mode)'"
+    qdb22() { "$PIPX_PY" -c 'import sqlite3, sqlite_vec, sys
+c = sqlite3.connect(sys.argv[1])
+c.enable_load_extension(True); sqlite_vec.load(c); c.enable_load_extension(False)
+print(c.execute(sys.argv[2]).fetchone()[0])' "$1" "$2" 2>/dev/null; }
+    expect "t22 dedup held in service mode" \
+        test "$(qdb22 "$D22" 'SELECT count(*) FROM memories')" = "3"
+    expect "t22 embeddings copied with rowid remap" \
+        test "$(qdb22 "$D22" 'SELECT count(*) FROM memory_embeddings')" = "3"
+else
+    echo "SKIP t22 (mcp-memory-service pipx env not installed)"
+fi
+
+echo "=== T23: junit-report converter produces valid JUnit XML ==="
+JUNIT="$REPO_ROOT/tests/junit-report.py"
+L23="$BASE/fake-suite.log"; X23="$BASE/fake-junit.xml"; S23="$BASE/fake-summary.md"
+cat > "$L23" <<'LOG23'
+some setup noise
+PASS: first check <with> "xml" & specials
+FAIL: second check
+SKIP tN (optional dependency missing)
+PASS=1 FAIL=1
+LOG23
+python3 "$JUNIT" --out "$X23" --summary "$S23" "$L23" >/dev/null 2>&1
+expect "t23 converter exits 0" test $? -eq 0
+python3 - "$X23" "$S23" <<'PY23' >/dev/null 2>&1
+import sys, xml.dom.minidom
+doc = xml.dom.minidom.parse(sys.argv[1])
+ts = doc.documentElement
+assert ts.tagName == "testsuites" and ts.getAttribute("tests") == "3"
+assert ts.getAttribute("failures") == "1" and ts.getAttribute("skipped") == "1"
+suite, = doc.getElementsByTagName("testsuite")
+cases = doc.getElementsByTagName("testcase")
+assert len(cases) == 3
+names = [c.getAttribute("name") for c in cases]
+assert any("<with>" in n for n in names), names  # XML-escaped round-trip
+assert len(doc.getElementsByTagName("failure")) == 1
+assert len(doc.getElementsByTagName("skipped")) == 1
+summary = open(sys.argv[2]).read()
+assert "| fake-suite | 3 | 1 | 1 |" in summary and "**Total** | **3**" in summary
+PY23
+expect "t23 junit xml valid with correct counts + escaping" test $? -eq 0
+expect_fail "t23 converter requires at least one log" python3 "$JUNIT" --out "$BASE/x.xml"
+
 echo ""
 echo "================================"
 echo "PASS=$PASS FAIL=$FAIL"

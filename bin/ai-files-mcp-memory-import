@@ -1,0 +1,564 @@
+#!/usr/bin/env python3
+"""Merge one mcp-memory-service sqlite_vec database into another.
+
+Identity is the content hash (sha256 of stripped lowercase content — stable
+across machines): rows whose hash already exists in the destination are
+skipped, and source primary keys are NEVER preserved (the destination assigns
+fresh ids; a hash -> new-id map remaps embedding rowids). Explicit column
+lists, never SELECT * — the service schema evolves and missing columns must
+not break the merge.
+
+Modes (first that applies):
+  service  mcp_memory_service + sqlite_vec importable here, or re-exec'd into
+           the venv python given by MCP_MEMORY_PYTHON / the `memory` CLI
+           shebang. Embeddings are COPIED directly when both databases use
+           the same vector dimension, re-embedded via the service API when
+           they differ.
+  raw      stdlib only (--raw forces this): memories + graph + beliefs are
+           merged, embeddings skipped. Exact/FTS search still sees imported
+           rows; semantic search does not until they are re-stored.
+
+Default run is a dry-run preview; --execute applies the merge. Imported rows
+gain the tag `imported:<label>` and a metadata block {source, imported_at,
+merge_id} so a merge can be traced (and, later, undone) via merge_id.
+"""
+
+import argparse
+import asyncio
+import json
+import os
+import re
+import sqlite3
+import sys
+import uuid
+from datetime import datetime
+
+# Never `id` — the destination assigns fresh ids (source/dest ids may collide).
+MEMORY_COLUMNS = (
+    "content_hash", "content", "tags", "memory_type", "metadata",
+    "created_at", "updated_at", "created_at_iso", "updated_at_iso",
+    "deleted_at", "store", "parent_id", "version", "confidence",
+    "last_accessed", "superseded_by",
+)
+GRAPH_COLUMNS = (
+    "source_hash", "target_hash", "similarity", "connection_types",
+    "metadata", "created_at", "relationship_type",
+)
+BELIEF_COLUMNS = (
+    "belief_hash", "content", "confidence", "status", "created_at",
+    "updated_at", "derived_from", "contradicted_by", "metadata",
+)
+REEXEC_GUARD = "AIFILES_MEMIMPORT_REEXEC"
+
+
+def warn(msg):
+    print(f"WARNING: {msg}", file=sys.stderr)
+
+
+def die(msg, code=1):
+    print(f"ERROR: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def parse_args(argv):
+    p = argparse.ArgumentParser(
+        prog="ai-files-mcp-memory-import",
+        description="Merge a source mcp-memory-service memory.db into a target one.",
+    )
+    # Not argparse-required: --check-env runs standalone without paths.
+    p.add_argument("--source", help="source memory.db")
+    p.add_argument("--destination", help="target memory.db")
+    p.add_argument("--execute", action="store_true",
+                   help="apply the merge (default: dry-run preview)")
+    p.add_argument("--yes", action="store_true", help="accepted for caller symmetry; ignored")
+    p.add_argument("--label", default=None,
+                   help="provenance label (default: source project folder name)")
+    p.add_argument("--raw", action="store_true",
+                   help="force stdlib-only mode; skip embedding handling entirely")
+    p.add_argument("--check-env", action="store_true",
+                   help="exit 0 when the mcp-memory-service env is usable, 1 otherwise")
+    return p.parse_args(argv)
+
+
+def service_python_candidates():
+    """Interpreters that might have mcp_memory_service importable, best first.
+    The pipx venv is the common install; the `memory` CLI shebang helps when
+    PATH exposes the venv's entry script directly (pyenv shims only point at
+    an env indirection and are skipped — probing covers those cases)."""
+    cands = []
+    env_py = os.environ.get("MCP_MEMORY_PYTHON")
+    if env_py:
+        cands.append(env_py)
+    pipx_home = os.environ.get("PIPX_HOME", os.path.expanduser("~/.local/pipx"))
+    cands.append(os.path.join(pipx_home, "venvs", "mcp-memory-service", "bin", "python"))
+    cands.append(sys.executable)
+    cands.append("python3")
+
+    import shutil
+    cli = shutil.which("memory")
+    if cli:
+        try:
+            with open(cli, encoding="utf-8", errors="replace") as f:
+                first = f.readline().strip()
+        except OSError:
+            first = ""
+        if first.startswith("#!"):
+            for token in first[2:].split():
+                if "env" in token.split("/"):
+                    continue
+                if os.path.basename(token).startswith("python"):
+                    cands.append(token)
+                    break
+    return [c for c in cands if c]
+
+
+def probe_service_python(candidates):
+    """First candidate where `import mcp_memory_service, sqlite_vec` succeeds."""
+    import subprocess
+    for py in candidates:
+        if "/" in py and not os.access(py, os.X_OK):
+            continue
+        try:
+            r = subprocess.run(
+                [py, "-c", "import mcp_memory_service, sqlite_vec"],
+                capture_output=True, timeout=15)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if r.returncode == 0:
+            return py
+    return None
+
+
+def service_importable():
+    try:
+        import mcp_memory_service  # noqa: F401
+        import sqlite_vec  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def try_reexec():
+    """Re-exec into an interpreter that has the service package. Guarded so a
+    missing package in every candidate degrades to raw mode instead of looping.
+    The env is never installed from here — install it with
+    'pipx install mcp-memory-service' (the GitHub tests workflow does)."""
+    if os.environ.get(REEXEC_GUARD) == "1":
+        return
+    py = probe_service_python(service_python_candidates())
+    if py:
+        os.environ[REEXEC_GUARD] = "1"
+        os.execv(py, [py, os.path.abspath(__file__)] + sys.argv[1:])
+
+
+def open_source(path):
+    uri = "file:" + path.replace("?", "%3f").replace("#", "%23") + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.execute("PRAGMA busy_timeout=5000")  # WAL: a live server may hold locks
+    return conn
+
+
+def open_dest(path):
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
+def table_exists(conn, name):
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone()
+    return row is not None
+
+
+def table_columns(conn, name):
+    return [r[1] for r in conn.execute(f"PRAGMA table_info({name})")]
+
+
+def shared_columns(conn_a, conn_b, table, candidates):
+    """Columns present in BOTH databases — the only ones safe to copy."""
+    a = set(table_columns(conn_a, table))
+    b = set(table_columns(conn_b, table))
+    return [c for c in candidates if c in a and c in b]
+
+
+def vec0_dim(conn):
+    """Vector dimension from the vec0 CREATE statement, or None when the
+    table is absent (schema string like: ... content_embedding FLOAT[384] ...)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE name='memory_embeddings'"
+    ).fetchone()
+    if not row or not row[0]:
+        return None
+    m = re.search(r"FLOAT\[(\d+)\]", row[0])
+    return int(m.group(1)) if m else None
+
+
+def load_sqlite_vec(conn):
+    import sqlite_vec
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+
+
+def default_label(source):
+    """Project folder of the source db: strip a trailing .ai-files[-*]
+    component so `<project>/.ai-files/memory.db` labels as `<project>`."""
+    d = os.path.dirname(os.path.abspath(source))
+    if os.path.basename(d).startswith(".ai-files"):
+        d = os.path.dirname(d)
+    return os.path.basename(d.rstrip(os.sep)) or "unknown"
+
+
+def provenance_tags(tags, label):
+    current = [t.strip() for t in (tags or "").split(",") if t.strip()]
+    tag = f"imported:{label}"
+    if tag not in current:
+        current.append(tag)
+    return ",".join(current)
+
+
+def provenance_metadata(metadata, source, merge_id):
+    try:
+        meta = json.loads(metadata) if metadata else {}
+        if not isinstance(meta, dict):
+            meta = {}
+    except (ValueError, TypeError):
+        meta = {}  # unparseable metadata: keep the merge alive, drop the old blob
+    meta["import_info"] = {
+        "source": os.path.abspath(source),
+        "imported_at": datetime.now().isoformat(),
+        "merge_id": merge_id,
+    }
+    return json.dumps(meta)
+
+
+def scan(src, dst, args):
+    """Phase 0 — read-only analysis; also the body of the dry-run."""
+    for conn, path, role in ((src, args.source, "source"), (dst, args.destination, "destination")):
+        if not table_exists(conn, "memories"):
+            die(f"{role} {path} has no 'memories' table — not a mcp-memory-service database")
+
+    src_cols = shared_columns(src, dst, "memories", MEMORY_COLUMNS)
+    for required in ("content_hash", "content"):
+        if required not in src_cols:
+            die(f"memories table lacks required column '{required}'")
+
+    src_rows = [dict(zip(src_cols, r)) for r in
+                src.execute(f"SELECT {', '.join(src_cols)} FROM memories")]
+    dest_hashes = {r[0] for r in dst.execute("SELECT content_hash FROM memories")}
+    new_rows = [r for r in src_rows if r["content_hash"] not in dest_hashes]
+    new_hashes = {r["content_hash"] for r in new_rows}
+    known = dest_hashes | new_hashes
+
+    graph = []
+    graph_skipped = 0
+    if table_exists(src, "memory_graph") and table_exists(dst, "memory_graph"):
+        cols = shared_columns(src, dst, "memory_graph", GRAPH_COLUMNS)
+        for r in src.execute(f"SELECT {', '.join(cols)} FROM memory_graph"):
+            row = dict(zip(cols, r))
+            if row["source_hash"] in known and row["target_hash"] in known:
+                graph.append(row)
+            else:
+                graph_skipped += 1
+
+    dest_belief_hashes = set()
+    beliefs = []
+    if table_exists(src, "beliefs") and table_exists(dst, "beliefs"):
+        cols = shared_columns(src, dst, "beliefs", BELIEF_COLUMNS)
+        dest_belief_hashes = {r[0] for r in dst.execute("SELECT belief_hash FROM beliefs")}
+        for r in src.execute(f"SELECT {', '.join(cols)} FROM beliefs"):
+            row = dict(zip(cols, r))
+            if row["belief_hash"] not in dest_belief_hashes:
+                beliefs.append(row)
+
+    return {
+        "src_rows": src_rows,
+        "new_rows": new_rows,
+        "duplicates": len(src_rows) - len(new_rows),
+        "mem_cols": src_cols,
+        "graph": graph,
+        "graph_skipped": graph_skipped,
+        "beliefs": beliefs,
+        "dest_hashes": dest_hashes,
+        "src_dim": vec0_dim(src),
+        "dst_dim": vec0_dim(dst),
+    }
+
+
+def embedding_plan(stats, service_mode, args):
+    """copy | re-embed | skip — copy needs service mode, both vec0 tables and
+    equal dimensions (same dimension is the strongest available compatibility
+    invariant; the model name is not persisted in the db)."""
+    if not service_mode:
+        return "skip"
+    if not stats["new_rows"]:
+        return "none"
+    if stats["src_dim"] and stats["dst_dim"] and stats["src_dim"] == stats["dst_dim"]:
+        return "copy"
+    return "re-embed"
+
+
+def print_summary(stats, plan, args, label, merge_id):
+    src_n = len(stats["src_rows"])
+    print(f"Source:      {args.source} (memories {src_n})")
+    print(f"Destination: {args.destination} "
+          f"(memories {len(stats['dest_hashes'])})")
+    print("Merge plan:")
+    print(f"  new memories:   {len(stats['new_rows'])}")
+    print(f"  duplicates:     {stats['duplicates']} (skipped, content_hash match)")
+    if stats["graph"] or stats["graph_skipped"]:
+        print(f"  relationships:  {len(stats['graph'])} "
+              f"({stats['graph_skipped']} dangling skipped)")
+    if stats["beliefs"]:
+        print(f"  beliefs:        {len(stats['beliefs'])}")
+    print(f"  provenance:     imported:{label} + merge_id {merge_id}")
+    if plan == "copy":
+        print(f"Embeddings:  copy ({stats['src_dim']}-dim, service mode)")
+    elif plan == "re-embed":
+        print("Embeddings:  re-embed with destination model (dimension mismatch "
+              f"{stats['src_dim']} -> {stats['dst_dim']})")
+    elif plan == "skip":
+        print("Embeddings:  skipped (raw mode) — semantic search will not see "
+              "imported rows until re-stored; exact/FTS search still works")
+    else:
+        print("Embeddings:  none needed (no new memories)")
+
+
+def insert_memories_sql(dst, rows, mem_cols, args, label, merge_id):
+    """Phase 1 (copy/skip plans): plain SQL insert with explicit columns."""
+    cols = mem_cols
+    placeholders = ", ".join("?" for _ in cols)
+    stmt = f"INSERT INTO memories ({', '.join(cols)}) VALUES ({placeholders})"
+    hash_to_id = {}
+    for row in rows:
+        values = []
+        for c in cols:
+            if c == "tags":
+                values.append(provenance_tags(row.get("tags"), label))
+            elif c == "metadata":
+                values.append(provenance_metadata(row.get("metadata"), args.source, merge_id))
+            else:
+                values.append(row.get(c))
+        cur = dst.execute(stmt, values)
+        hash_to_id[row["content_hash"]] = cur.lastrowid
+    return hash_to_id
+
+
+async def store_memories_via_service(dst_path, rows, args, label, merge_id):
+    """Phase 1 (re-embed plan): store through the service API so embeddings
+    and FTS are generated by the destination's own model. Returns
+    (stored_rows, failed_rows); a construction failure returns (None, rows)
+    so the caller degrades to plain SQL for everything."""
+    from mcp_memory_service.models.memory import Memory
+    from mcp_memory_service.storage.sqlite_vec import SqliteVecMemoryStorage
+
+    storage = None
+    try:
+        storage = SqliteVecMemoryStorage(str(dst_path))
+        # store() returns (False, msg) until the schema/model is initialized.
+        init = getattr(storage, "initialize", None)
+        if init:
+            result = init()
+            if asyncio.iscoroutine(result):
+                await result
+    except Exception as exc:  # noqa: BLE001 — service unavailable mid-run
+        warn(f"service-mode storage unavailable ({exc}); falling back to SQL insert")
+        return None, rows
+
+    stored, failed = [], []
+    for row in rows:
+        try:
+            memory = Memory(
+                content=row["content"],
+                content_hash=row["content_hash"],
+                tags=[t for t in (row.get("tags") or "").split(",") if t.strip()]
+                     + [f"imported:{label}"],
+                created_at=row.get("created_at"),
+                updated_at=row.get("updated_at") or row.get("created_at"),
+                memory_type=row.get("memory_type") or "note",
+                metadata=json.loads(provenance_metadata(
+                    row.get("metadata"), args.source, merge_id)),
+            )
+            ok, msg = await storage.store(memory)
+            if ok:
+                stored.append(row)
+            else:
+                failed.append(row)
+                warn(f"service store() rejected {row['content_hash'][:12]}: {msg}")
+        except Exception as exc:  # noqa: BLE001 — per-row isolation
+            failed.append(row)
+            warn(f"service store() failed for {row['content_hash'][:12]}: {exc}")
+    close = getattr(storage, "close", None)
+    if close:
+        try:
+            result = close()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:  # noqa: BLE001 — best-effort cleanup
+            pass
+    print(f"Stored {len(stored)} memory(ies) via service API (embeddings regenerated).")
+    return stored, failed
+
+
+def copy_embeddings(src, dst, stats, hash_to_id):
+    """Phase 2 (copy plan): move float32 blobs across, remapping rowids via
+    the hash -> new-id map (source rowid != destination rowid by construction)."""
+    load_sqlite_vec(src)
+    load_sqlite_vec(dst)
+    src_id_to_hash = dict(src.execute("SELECT id, content_hash FROM memories"))
+    src_has_store = "store" in table_columns(src, "memory_embeddings")
+    dst_has_store = "store" in table_columns(dst, "memory_embeddings")
+
+    if src_has_store:
+        embedding_rows = src.execute(
+            "SELECT rowid, content_embedding, store FROM memory_embeddings")
+    else:  # legacy non-partitioned vec0 table
+        embedding_rows = (
+            (r[0], r[1], None) for r in src.execute(
+                "SELECT rowid, content_embedding FROM memory_embeddings"))
+
+    copied = 0
+    for rowid, blob, store_val in embedding_rows:
+        h = src_id_to_hash.get(rowid)
+        new_id = hash_to_id.get(h) if h else None
+        if new_id is None:
+            continue  # duplicate row — its memory was not imported
+        if dst_has_store and src_has_store:
+            dst.execute(
+                "INSERT INTO memory_embeddings (rowid, content_embedding, store) "
+                "VALUES (?, ?, ?)", (new_id, blob, store_val))
+        else:
+            dst.execute(
+                "INSERT INTO memory_embeddings (rowid, content_embedding) "
+                "VALUES (?, ?)", (new_id, blob))
+        copied += 1
+    return copied
+
+
+def copy_aux_tables(dst, stats):
+    """Phase 3: graph edges + beliefs, INSERT OR IGNORE (identity keys), only
+    rows whose endpoints survived the memory merge."""
+    graph_done = belief_done = 0
+    if stats["graph"]:
+        cols = [c for c in GRAPH_COLUMNS if c in stats["graph"][0]]
+        placeholders = ", ".join("?" for _ in cols)
+        before = dst.total_changes
+        dst.executemany(
+            f"INSERT OR IGNORE INTO memory_graph ({', '.join(cols)}) "
+            f"VALUES ({placeholders})",
+            [tuple(r[c] for c in cols) for r in stats["graph"]],
+        )
+        graph_done = dst.total_changes - before
+    if stats["beliefs"]:
+        cols = [c for c in BELIEF_COLUMNS if c in stats["beliefs"][0]]
+        placeholders = ", ".join("?" for _ in cols)
+        before = dst.total_changes
+        dst.executemany(
+            f"INSERT OR IGNORE INTO beliefs ({', '.join(cols)}) "
+            f"VALUES ({placeholders})",
+            [tuple(r[c] for c in cols) for r in stats["beliefs"]],
+        )
+        belief_done = dst.total_changes - before
+    return graph_done, belief_done
+
+
+def rebuild_fts(dst):
+    """Phase 4: idempotent belt-and-braces — the AFTER INSERT triggers on
+    memories usually kept FTS in step already."""
+    if not table_exists(dst, "memory_content_fts"):
+        return False
+    try:
+        dst.execute("INSERT INTO memory_content_fts(memory_content_fts) VALUES ('rebuild')")
+        return True
+    except sqlite3.Error as exc:
+        warn(f"FTS rebuild skipped: {exc}")
+        return False
+
+
+def main(argv):
+    args = parse_args(argv)
+
+    if args.check_env:
+        # Standalone probe for callers (bash wrapper gates its install prompt
+        # on this); prefers an already-importable env, else finds one to re-exec.
+        sys.exit(0 if (service_importable() or
+                       probe_service_python(service_python_candidates())) else 1)
+
+    if not args.source or not args.destination:
+        die("--source and --destination are required (see --help)")
+
+    service_mode = False
+    if not args.raw:
+        if service_importable():
+            service_mode = True
+        elif os.environ.get(REEXEC_GUARD) == "1":
+            # Forced context (tests, or a re-exec that lost the package):
+            # straight to raw, no probing loop.
+            warn("mcp-memory-service environment not available — raw mode "
+                 "(embeddings will be skipped)")
+        else:
+            try_reexec()  # returns only when no interpreter was found
+            service_mode = service_importable()
+            if not service_mode:
+                warn("mcp-memory-service environment not found — raw mode "
+                     "(embeddings will be skipped)")
+
+    if not os.path.isfile(args.source):
+        die(f"source database not found: {args.source}")
+    if not os.path.isfile(args.destination):
+        die(f"destination database not found: {args.destination}")
+
+    label = args.label or default_label(args.source)
+    merge_id = f"merge-{datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
+    src = open_source(args.source)
+    dst = open_dest(args.destination)
+    try:
+        stats = scan(src, dst, args)
+        plan = embedding_plan(stats, service_mode, args)
+        print_summary(stats, plan, args, label, merge_id)
+
+        if not args.execute:
+            print("DRY-RUN — no changes applied (pass --execute)")
+            return 0
+
+        if plan == "re-embed":
+            stored, failed = asyncio.run(store_memories_via_service(
+                args.destination, stats["new_rows"], args, label, merge_id))
+            if stored is None:  # service unavailable -> degrade to SQL insert
+                plan = "skip"
+            elif failed:
+                # rows the service could not store still land, minus embeddings
+                insert_memories_sql(dst, failed, stats["mem_cols"],
+                                    args, label, merge_id)
+        if plan in ("copy", "skip", "none"):
+            hash_to_id = insert_memories_sql(
+                dst, stats["new_rows"], stats["mem_cols"], args, label, merge_id)
+        else:
+            hash_to_id = {}  # rows were stored via the service API
+
+        if plan == "copy":
+            copied = copy_embeddings(src, dst, stats, hash_to_id)
+            print(f"Copied {copied} embedding(s) with remapped rowids.")
+
+        graph_done, belief_done = copy_aux_tables(dst, stats)
+        if graph_done:
+            print(f"Merged {graph_done} relationship(s).")
+        if belief_done:
+            print(f"Merged {belief_done} belief(s).")
+        if rebuild_fts(dst):
+            print("FTS index rebuilt.")
+        dst.commit()
+        print(f"Merge complete: {len(stats['new_rows'])} new memor"
+              f"{'y' if len(stats['new_rows']) == 1 else 'ies'}, "
+              f"{stats['duplicates']} duplicate(s) skipped "
+              f"(merge_id {merge_id}).")
+        return 0
+    finally:
+        src.close()
+        dst.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

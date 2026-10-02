@@ -2,16 +2,17 @@
 name: tests
 
 "on":
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
+  push: {} # every commit on every branch; for same-repo PRs the push run on the head SHA doubles as the PR check
+
+permissions:
+  contents: read
+  checks: write # dorny/test-reporter publishes the Tests-tab check run
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install PyYAML (marketplace-update dependency)
         run: python3 -m pip install --quiet pyyaml
@@ -21,12 +22,16 @@ jobs:
           sudo curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64" -o /usr/local/bin/yq
           sudo chmod +x /usr/local/bin/yq
 
+      - name: Install mcp-memory-service (service-mode memory-import tests)
+        run: pipx install mcp-memory-service
+
       - name: Shellcheck bin scripts
         run: shellcheck -S warning bin/ai-files-mcp bin/ai-files-setup bin/ai-files-config bin/ai-files-marketplace bin/ai-files-marketplace-install bin/ai-files-skills-add bin/ai-files-skills-install bin/ai-files-skills-remove bin/ai-files-skills-explore bin/ai-files-skills-sync bin/ai-files-skill-enable bin/ai-files-skill-disable bin/ai-files-update
 
       - name: Run integration suites
         run: |
           fail=0
+          mkdir -p reports
           # Guard: every shell suite in tests/ must be matched by the loop
           # below — a misnamed file would otherwise never run in CI.
           for f in tests/*.sh; do
@@ -35,9 +40,35 @@ jobs:
               *) echo "::error::suite not matched by CI loop: $f"; fail=1 ;;
             esac
           done
+          # Default shell is bash -e -o pipefail, so `| tee` still propagates
+          # the suite's exit code into the || branch.
           for s in tests/run-tests.sh tests/test-*.sh; do
             echo "::group::==> $s"
-            bash "$s" || fail=1
+            bash "$s" 2>&1 | tee "reports/$(basename "$s" .sh).log" || fail=1
             echo "::endgroup::"
           done
+          # JUnit report: generated from the logs before honoring $fail, so a
+          # report exists even for failing runs; converter errors fail the job.
+          python3 tests/junit-report.py --out reports/junit.xml \
+            --summary "$GITHUB_STEP_SUMMARY" reports/*.log
+          python3 -c "import xml.dom.minidom; xml.dom.minidom.parse('reports/junit.xml')"
           exit $fail
+
+      - name: Upload test reports (JUnit XML + suite logs)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-test-reports
+          path: reports/
+
+      # Renders reports/junit.xml into the run's Tests tab with per-test
+      # results and inline annotations for failures. GitHub has no native
+      # JUnit rendering — this action is what makes the report "picked up".
+      - name: Test report
+        if: always()
+        uses: dorny/test-reporter@v3
+        with:
+          name: ai-files test suites
+          path: reports/junit.xml
+          reporter: java-junit
+          fail-on-error: false # the suites step's exit code already decides the job
