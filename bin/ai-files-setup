@@ -10,6 +10,8 @@ set -euo pipefail
 #   3) Relink agent folders                        (ai-files update link-*)
 #   4) Initialize graphify                         (copy .graphifyignore)
 #      + select graphify backend/model             (git config aifiles.graphify-*)
+#      + install graphify git hooks                (graphify hook install)
+#      + build graphify-out/graph.json when absent (ai-files graphify .)
 #   5) Create missing dotfile templates            (.mcp.json, opencode.json, zcode.json)
 #   6) Register known MCP servers when missing     (ai-files mcp add <name>)
 #      + shared memory DB proposal for nested checkouts (<repo>/<clone>)
@@ -374,9 +376,60 @@ graphify_backend_config() {
     print_info "Use 'bin/ai-files-graphify' — it applies this backend/model automatically."
 }
 
+# Step 4c: graphify git hooks (post-commit/post-checkout rebuild + graph.json
+# merge driver). 'graphify hook status' exits 0 regardless, so absence is
+# detected from the "not installed"/"not registered" lines in its output.
+graphify_hooks_config() {
+    if ! command -v graphify >/dev/null 2>&1; then
+        print_info "[4/7] graphify not installed (make install-graphify) — skipping hook check."
+        return 0
+    fi
+    local status
+    status="$(graphify hook status </dev/null 2>/dev/null || true)"
+    if ! grep -qE 'not installed|not registered' <<<"$status"; then
+        print_info "[4/7] graphify hooks already installed:"
+        sed 's/^/    /' <<<"$status"
+        return 0
+    fi
+    print_warning "[4/7] graphify hooks not fully installed:"
+    sed 's/^/    /' <<<"$status"
+    if confirm "Install graphify hooks (graphify hook install)?"; then
+        graphify hook install </dev/null
+        print_success "[4/7] graphify hooks installed."
+    else
+        print_warning "[4/7] Skipping graphify hooks."
+    fi
+}
+
+# Step 4d: build the graph when none exists yet. 'ai-files graphify .' runs
+# bin/ai-files-graphify (backend/model from git config applied automatically).
+# We are at the git root (require_git_root), so '.' is the repo root.
+graphify_graph_build() {
+    if [[ -f "graphify-out/graph.json" ]]; then
+        print_info "[4/7] graphify-out/graph.json present — graph exists."
+        return 0
+    fi
+    print_warning "[4/7] No graphify graph (graphify-out/graph.json not found)."
+    if ! confirm "Index this repo now (ai-files graphify .)?"; then
+        print_warning "[4/7] Skipping graphify indexing."
+        return 0
+    fi
+    if ! command -v graphify >/dev/null 2>&1; then
+        print_error "[4/7] graphify binary not found — install with 'make install-graphify' (ai-files repo)."
+        return 0
+    fi
+    if run_ai_files graphify .; then
+        print_success "[4/7] graphify graph built."
+    else
+        print_warning "[4/7] graphify extraction failed."
+    fi
+}
+
 step4_graphify() {
     step4_graphify_init
     graphify_backend_config
+    graphify_hooks_config
+    graphify_graph_build
 }
 
 # Step 5: create missing dotfile templates.
@@ -436,6 +489,9 @@ step6_mcp_servers() {
             print_warning "[6/7] .mcp.json absent — registering a server bootstraps the MCP config files."
         fi
         for name in "${missing[@]}"; do
+            if [[ "$name" == "graphify" && ! -f "graphify-out/graph.json" ]]; then
+                print_warning "[6/7] graphify: graphify-out/graph.json not found — build it first (bin/ai-files-graphify extract <path> or the /graphify skill) or the server starts empty."
+            fi
             if confirm "[6/7] Register '${name}' MCP server (writes .mcp.json, opencode.json, zcode.json)?"; then
                 if run_ai_files mcp add "$name"; then
                     print_success "  ${name} registered."
@@ -568,6 +624,8 @@ Steps:
   3  Relink agent folders                        (ai-files update link-*)
   4  Initialize graphify                         (copy .graphifyignore)
      + select graphify backend/model             (git config aifiles.graphify-*)
+     + install graphify git hooks                (graphify hook install)
+     + build graphify-out/graph.json when absent (ai-files graphify .)
   5  Create missing dotfile templates            (.mcp.json, opencode.json, zcode.json)
   6  Register known MCP servers when missing     (.mcp.json / opencode.json / zcode.json)
      + shared memory DB proposal for nested checkouts (<x>/<x>)

@@ -54,6 +54,14 @@
         "--mcp"
       ],
       "enabled": true
+    },
+    "graphify": {
+      "type": "local",
+      "command": [
+        "graphify-mcp",
+        "graphify-out/graph.json"
+      ],
+      "enabled": true
     }
   }
 }

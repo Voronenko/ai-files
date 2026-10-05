@@ -612,7 +612,12 @@ publish-memory-bank:
 install-graphify:
 	pipx install graphifyy
 	pipx inject graphifyy openai
+	# [mcp] extra (mcp + starlette) — required by the graphify-mcp entry point
+	pipx inject graphifyy mcp starlette
 	pipx inject graphifyy tree-sitter-hcl
+	# remaining graphifyy[all] language parsers — without these .sql/.dm/.p/.ml/.lisp
+	# files are silently dropped from the graph (see tree_sitter_sql warning #1745)
+	pipx inject graphifyy tree-sitter-sql tree-sitter-dm tree-sitter-pascal tree-sitter-ocaml tree-sitter-commonlisp
 
 ## graphify + local Ollama — register a custom LLM provider for the local
 ## Ollama (OpenAI-compatible) endpoint via `graphify provider add`.

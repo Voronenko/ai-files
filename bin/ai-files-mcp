@@ -495,7 +495,7 @@ memory_import_helper() { # <args...> passthrough
 
 known_server_names() {
     # One per line — consumers (setup step 6, help text) read line-wise.
-    printf '%s\n' "$SERVER_MEMORY" ssh-manager codegraph
+    printf '%s\n' "$SERVER_MEMORY" ssh-manager codegraph graphify
 }
 
 is_known_server() {
@@ -577,11 +577,35 @@ known_codegraph_json() {
     }'
 }
 
+# graphifyy's stdio server over the built knowledge graph. All tools are
+# read-only queries → fully autoApproved. graphify-out/graph.json is relative
+# to the project root (stdio servers are launched from there).
+known_graphify_json() {
+    jq -n '{
+        type: "stdio",
+        command: "graphify-mcp",
+        args: ["graphify-out/graph.json"],
+        autoApprove: [
+            "mcp__graphify__query_graph",
+            "mcp__graphify__get_node",
+            "mcp__graphify__get_neighbors",
+            "mcp__graphify__get_community",
+            "mcp__graphify__god_nodes",
+            "mcp__graphify__graph_stats",
+            "mcp__graphify__shortest_path",
+            "mcp__graphify__list_prs",
+            "mcp__graphify__get_pr_impact",
+            "mcp__graphify__triage_prs"
+        ]
+    }'
+}
+
 known_server_json() { # <name> -> canonical primary-format JSON
     case "$1" in
         repo-memory) known_repo_memory_json ;;
         ssh-manager) known_ssh_manager_json ;;
         codegraph)   known_codegraph_json ;;
+        graphify)    known_graphify_json ;;
         *) return 1 ;;
     esac
 }
@@ -1319,6 +1343,7 @@ Known servers (registerable by name):
   repo-memory   memory CLI server with sqlite_vec backend + autoApprove set
   ssh-manager   SSH management server + autoApprove set
   codegraph     tree-sitter code graph server (codegraph serve --mcp)
+  graphify      knowledge-graph query server (graphify-mcp graphify-out/graph.json)
 
 Options for 'add':
   --transport http|sse|stdio

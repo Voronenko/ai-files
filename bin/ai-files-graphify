@@ -5,9 +5,10 @@ set -euo pipefail
 #
 # Reads 'aifiles.graphify-backend' and 'aifiles.graphify-model' (written by
 # 'ai-files setup', step 4) from the LOCAL git config of the current directory.
-# For graphify subcommands that talk to an LLM (extract, label, cluster-only)
-# it injects --backend/--model unless the caller already passed them; every
-# other argument is passed through untouched. Outside a git repo (or with no
+# For graphify invocations that talk to an LLM (extract, label, cluster-only,
+# or a bare `graphify <path>`, which defaults to extract) it injects
+# --backend/--model unless the caller already passed them; every other
+# argument is passed through untouched. Outside a git repo (or with no
 # config stored) it is a plain passthrough.
 #
 # GRAPHIFY_BIN overrides the wrapped binary (handy for testing: GRAPHIFY_BIN=echo).
@@ -36,20 +37,28 @@ has_flag() {
 }
 
 inject=()
+# Inject for LLM subcommands (extract, label, cluster-only) and for a bare
+# `graphify <path>` invocation — graphify defaults that to extract. Every
+# non-LLM subcommand from `graphify --help` is excluded explicitly (keep in
+# sync with the full command list; `hook` and `query` must never get flags).
+llm_cmd=1
 case "${1:-}" in
-    extract|label|cluster-only)
-        if [[ -n "$backend" ]] && ! has_flag --backend "$@"; then
-            inject+=(--backend "$backend")
-        fi
-        if [[ -n "$model" ]] && ! has_flag --model "$@"; then
-            inject+=(--model "$model")
-        fi
-        # graphify custom providers (unlike the built-in 'ollama') require a
-        # non-empty API key env var; local Ollama ignores its value.
-        case "$backend" in
-            ollama|ollama-local) export OLLAMA_API_KEY="${OLLAMA_API_KEY:-ollama}" ;;
-        esac
-        ;;
+    extract|label|cluster-only) ;;
+    install|uninstall|path|explain|diagnose|clone|merge-driver|merge-graphs|add|watch|update|provider|detect|version|help|hook|query|affected|god-nodes|prs|save-result|reflect|check-update|tree|global|benchmark|''|-*) llm_cmd=0 ;;
 esac
+if [[ "$llm_cmd" == 1 ]]; then
+    if [[ -n "$backend" ]] && ! has_flag --backend "$@"; then
+        inject+=(--backend "$backend")
+    fi
+    if [[ -n "$model" ]] && ! has_flag --model "$@"; then
+        inject+=(--model "$model")
+    fi
+    # graphify custom providers (unlike the built-in 'ollama') require a
+    # non-empty API key env var; local Ollama ignores its value.
+    case "$backend" in
+        ollama|ollama-local) export OLLAMA_API_KEY="${OLLAMA_API_KEY:-ollama}" ;;
+    esac
+fi
 
+echo "ai-files-graphify:" "$GRAPHIFY_BIN" "$@" ${inject[@]+"${inject[@]}"} >&2
 exec "$GRAPHIFY_BIN" "$@" ${inject[@]+"${inject[@]}"}
