@@ -564,6 +564,25 @@ ai-files setup [--shared-memory]
 6. Register known MCP servers when missing — offers `ai-files mcp add repo-memory` / `add ssh-manager` (each writes `.mcp.json`, `opencode.json`, `zcode.json` in one run); when the repo is a nested checkout (`<git-repo-name>/<clone-folder>`) or `--shared-memory` was passed, additionally proposes sharing the memory DB + session files at `../.ai-files-shared/`; finally validates the memory DB path on every run — a global `MCP_MEMORY_SQLITE_PATH` env var (or the stored `aifiles.memory-db-path` git-config key) wins over whatever the configs use, realigning all three via `ai-files mcp memory-path` and offering a memory import when both old and new DBs exist
 7. Suggest ignore entries for untracked setup files (`.claude/`, `.graphifyignore`, `.kilo/`, `.mcp.json`, `.opencode/`, `.specify/`, `opencode.json`, `zcode.json`) — written to `.gitignore.local` (symlink to `./.git/info/exclude`) when present, else `.gitignore`
 
+**Setting up a repo in shared memory + session files mode**
+
+To share the repo-memory database and workout session files with sibling clones at any checkout path (not only nested `<repo>/<clone>` layouts):
+
+```bash
+cd <repo-root>
+ai-files setup --shared-memory
+```
+
+Walk through the steps as usual; at step 6 answer `y` to "Use shared memory DB + session files at ../.ai-files-shared/?". The migration then:
+
+- creates `<parent>/.ai-files-shared/` next to the checkout,
+- rewrites `MCP_MEMORY_SQLITE_PATH` from `.ai-files/memory.db` to `../.ai-files-shared/memory.db` in every config still on the default path (custom paths are reported, never touched),
+- copies the repo's `memory.db` into the shared folder **only when none exists there yet** — a shared DB from another clone is kept as is (merge memories manually with `ai-files mcp memory-import` when needed),
+- merges `.ai-files/sessions/` into `<parent>/.ai-files-shared/sessions/` without overriding existing shared session files, then replaces the directory with a relative symlink — every clone under the same parent records its workouts in one shared history,
+- re-pins `aifiles.memory-db-path` to the shared path so later setup runs stay quiet.
+
+Nothing is overridden: existing shared files always win, and answering `n` at the prompt leaves the repo fully per-repo. Run the same command in each sibling clone to adopt the shared state. Note: a global `MCP_MEMORY_SQLITE_PATH` env var outranks the shared path — unset it in this mode. Re-running is safe: an already-shared repo is detected and skipped.
+
 ### ai-files version
 
 Show version information for the ai-files project. The version is derived from git tags, branch names, or commit hashes.

@@ -1063,6 +1063,22 @@ cmd_shared_memory() {
         fi
     done
 
+    # The migration changed the canonical DB path: follow a previously pinned
+    # aifiles.memory-db-path (left by an earlier 'ai-files setup' run) so the
+    # memory-path validation doesn't flag drift and offer to point configs
+    # back at the repo-local path. Only a pin still on the old default is
+    # updated — a pin to some custom path is an explicit user choice, kept.
+    local adopted=0 pin
+    for kind in primary opencode zcode; do
+        [[ "$(sqlite_path_in "$kind")" == "$SHARED_DB_REL" ]] && adopted=1
+    done
+    pin="$(stored_memory_path)"
+    if [[ "$adopted" -eq 1 && -n "$pin" && "$DRY_RUN" != "true" ]] \
+       && [[ "$(norm_path "$pin")" == "$(norm_path "$DEFAULT_DB_REL")" ]]; then
+        store_memory_path "$(norm_path "$SHARED_DB_REL")"
+        print_info "Pinned aifiles.memory-db-path updated to the shared DB path."
+    fi
+
     local old_db="${GIT_ROOT}/${DEFAULT_DB_REL}"
     local new_db="${shared_dir%/}/memory.db"
     if [[ -f "$old_db" && -f "$new_db" ]]; then

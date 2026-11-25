@@ -593,6 +593,8 @@ cat > "$T26/opencode.json" <<'JSON'
 { "mcp": { "repo-memory": { "type": "local", "command": ["memory","server"], "enabled": true,
   "environment": { "MCP_MEMORY_SQLITE_PATH": ".ai-files/memory.db" } } } }
 JSON
+# A previous setup run pins the then-current (repo-local) DB path:
+git -C "$T26" config --local aifiles.memory-db-path "$T26/.ai-files/memory.db"
 expect_fail "t26 --check still exits 1 when non-nested and not forced" \
     bash -c "cd '$T26' && '$MCP' shared-memory --check"
 expect "t26 --check --force exits 0" \
@@ -609,6 +611,10 @@ expect "t26 opencode rewritten to shared path" \
     jqc "$T26/opencode.json" '.mcp["repo-memory"].environment.MCP_MEMORY_SQLITE_PATH == "../.ai-files-shared/memory.db"'
 expect "t26 existing shared memory.db kept as is" \
     test "$(cat "$BASE/.ai-files-shared/memory.db")" = "existing-shared-db"
+expect "t26 stale pin follows migration to shared path" \
+    test "$(git -C "$T26" config --local aifiles.memory-db-path)" = "$BASE/.ai-files-shared/memory.db"
+expect "t26 memory-path in sync after migration (no realign prompt later)" \
+    bash -c "cd '$T26' && '$MCP' memory-path --check"
 expect "t26 kept-as-is message printed" \
     bash -c "printf '%s\n' \"\$SM26\" | grep -q 'kept as is'"
 expect "t26 unique session file merged into shared folder" \

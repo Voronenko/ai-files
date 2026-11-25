@@ -176,6 +176,23 @@ expect "s6b with flag: forced proposal printed" \
 expect "s6b with flag: forced migration invoked" \
     grep -qx "ai-files mcp shared-memory -y --force" "$STUB_LOG"
 
+echo "=== S7: generated tooling folders offered for ignoring (step 7) ==="
+T=s7; fresh "$T"
+mkdir -p "$BASE/$T/.agents" "$BASE/$T/.codegraph" "$BASE/$T/graphify-out" "$BASE/$T/.ai-files"
+touch "$BASE/$T/.agents/x" "$BASE/$T/.codegraph/x" "$BASE/$T/graphify-out/graph.json"
+S7_OUT="$(run_setup "$T" yes)"; RC=$?
+export S7_OUT
+expect "s7 exits 0" test "$RC" -eq 0
+# The untracked list prints each candidate indented by 4 spaces (plain echo).
+expect "s7 .agents/ offered" \
+    bash -c "printf '%s' \"\$S7_OUT\" | grep -qxF '    .agents/'"
+expect "s7 .codegraph/ offered" \
+    bash -c "printf '%s' \"\$S7_OUT\" | grep -qxF '    .codegraph/'"
+expect "s7 graphify-out/ offered" \
+    bash -c "printf '%s' \"\$S7_OUT\" | grep -qxF '    graphify-out/'"
+expect "s7 answered yes: all three written to .gitignore" \
+    bash -c "grep -qxF '.agents/' '$BASE/$T/.gitignore' && grep -qxF '.codegraph/' '$BASE/$T/.gitignore' && grep -qxF 'graphify-out/' '$BASE/$T/.gitignore'"
+
 echo ""
 echo "================================"
 echo "PASS=$PASS FAIL=$FAIL"

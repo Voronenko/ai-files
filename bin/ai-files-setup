@@ -19,7 +19,8 @@ set -euo pipefail
 #      + memory DB path validation (env MCP_MEMORY_SQLITE_PATH vs aifiles.memory-db-path)
 #      + secondary config drift repair (ai-files mcp sync --check)
 #      + CodeGraph initialization when 'codegraph' MCP server is registered
-#   7) Suggest .gitignore for untracked setup files
+#   7) Suggest .gitignore for untracked setup files (.agents/, .claude/,
+#      .codegraph/, graphify-out/ included)
 
 # Resolve the real path of the script, even if invoked via symlink (same as bin/ai-files).
 SCRIPT_PATH="$0"
@@ -463,7 +464,8 @@ step5_dotfiles() {
 }
 
 # Files this setup may create or link that typically should not be tracked.
-GITIGNORE_CANDIDATES=(.claude/ .graphifyignore .kilo/ .mcp.json .opencode/ .specify/ opencode.json zcode.json)
+# .agents/, .codegraph/ and graphify-out/ hold generated agent/tooling state.
+GITIGNORE_CANDIDATES=(.agents/ .claude/ .codegraph/ .graphifyignore .kilo/ .mcp.json .opencode/ .specify/ graphify-out/ opencode.json zcode.json)
 
 # Step 6: register known MCP servers when missing. 'ai-files mcp add <name>'
 # writes .mcp.json (primary) and syncs the converted entry into opencode.json
@@ -659,7 +661,9 @@ Steps:
      + memory DB path validation (MCP_MEMORY_SQLITE_PATH vs aifiles.memory-db-path)
      + secondary config drift repair (ai-files mcp sync --check)
      + CodeGraph init when 'codegraph' MCP server is registered
-  7  Suggest ignore entries for untracked setup files (.gitignore / .gitignore.local)
+  7  Suggest ignore entries for untracked setup files (.agents/, .claude/, .codegraph/,
+     graphify-out/, .kilo/, .mcp.json, .opencode/, .specify/, opencode.json, zcode.json,
+     .graphifyignore) (.gitignore / .gitignore.local)
 
 Options:
   -h, --help         Show this help and exit
