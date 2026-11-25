@@ -573,6 +573,65 @@ BEFORE25="$(jq -Sc . "$T25/.mcp.json")"
 expect "t25 --check left .mcp.json unchanged" \
     test "$(jq -Sc . "$T25/.mcp.json")" = "$BEFORE25"
 
+echo "=== T26: --force shares memory DB + session files at any path (merge, no override) ==="
+T26=$BASE/t26; fresh t26
+# Pre-existing shared state from OTHER clones: must never be overridden.
+mkdir -p "$BASE/.ai-files-shared/sessions"
+printf 'existing-shared-db' > "$BASE/.ai-files-shared/memory.db"
+printf 'shared version' > "$BASE/.ai-files-shared/sessions/2026-01-01-0900-clash.md"
+# This repo's local state: unique + clashing session files, default-path configs.
+mkdir -p "$T26/.ai-files/sessions"
+printf 'session body' > "$T26/.ai-files/sessions/2026-02-02-1000-test.md"
+printf 'repo version' > "$T26/.ai-files/sessions/2026-01-01-0900-clash.md"
+printf '2026-02-02-1000-test.md' > "$T26/.ai-files/sessions/.current-session"
+printf 'x' > "$T26/.ai-files/memory.db"
+cat > "$T26/.mcp.json" <<'JSON'
+{ "mcpServers": { "repo-memory": { "type": "stdio", "command": "memory", "args": ["server"],
+  "env": { "MCP_MEMORY_SQLITE_PATH": ".ai-files/memory.db", "MCP_MEMORY_STORAGE_BACKEND": "sqlite_vec" } } } }
+JSON
+cat > "$T26/opencode.json" <<'JSON'
+{ "mcp": { "repo-memory": { "type": "local", "command": ["memory","server"], "enabled": true,
+  "environment": { "MCP_MEMORY_SQLITE_PATH": ".ai-files/memory.db" } } } }
+JSON
+expect_fail "t26 --check still exits 1 when non-nested and not forced" \
+    bash -c "cd '$T26' && '$MCP' shared-memory --check"
+expect "t26 --check --force exits 0" \
+    bash -c "cd '$T26' && '$MCP' shared-memory --check --force"
+SM26=$(cd "$T26" && "$MCP" shared-memory -y --force 2>&1); RC=$?
+export SM26
+expect "t26 migration exits 0" test $RC -eq 0
+expect "t26 forced label printed" \
+    bash -c "printf '%s\n' \"\$SM26\" | grep -q 'Shared memory forced (--force)'"
+expect "t26 shared dir created next to repo" test -d "$BASE/.ai-files-shared"
+expect "t26 primary rewritten to shared path" \
+    jqc "$T26/.mcp.json" '.mcpServers["repo-memory"].env.MCP_MEMORY_SQLITE_PATH == "../.ai-files-shared/memory.db"'
+expect "t26 opencode rewritten to shared path" \
+    jqc "$T26/opencode.json" '.mcp["repo-memory"].environment.MCP_MEMORY_SQLITE_PATH == "../.ai-files-shared/memory.db"'
+expect "t26 existing shared memory.db kept as is" \
+    test "$(cat "$BASE/.ai-files-shared/memory.db")" = "existing-shared-db"
+expect "t26 kept-as-is message printed" \
+    bash -c "printf '%s\n' \"\$SM26\" | grep -q 'kept as is'"
+expect "t26 unique session file merged into shared folder" \
+    test -f "$BASE/.ai-files-shared/sessions/2026-02-02-1000-test.md"
+expect "t26 .current-session merged into shared folder" \
+    test -f "$BASE/.ai-files-shared/sessions/.current-session"
+expect "t26 clashing shared session NOT overridden" \
+    test "$(cat "$BASE/.ai-files-shared/sessions/2026-01-01-0900-clash.md")" = "shared version"
+expect "t26 .ai-files/sessions is the expected relative symlink" \
+    test "$(readlink "$T26/.ai-files/sessions")" = "../../.ai-files-shared/sessions"
+expect "t26 session content readable through symlink" \
+    test "$(cat "$T26/.ai-files/sessions/2026-02-02-1000-test.md")" = "session body"
+expect "t26 .current-session readable through symlink" \
+    test "$(cat "$T26/.ai-files/sessions/.current-session")" = "2026-02-02-1000-test.md"
+SM26B=$(cd "$T26" && "$MCP" shared-memory -y --force 2>&1); RC=$?
+export SM26B
+expect "t26 idempotent second run exits 0" test $RC -eq 0
+expect "t26 second run reports sessions already shared" \
+    bash -c "printf '%s\n' \"\$SM26B\" | grep -q 'Session files already shared'"
+expect "t26 second run keeps session files" \
+    test -f "$BASE/.ai-files-shared/sessions/2026-02-02-1000-test.md"
+rm -rf "$BASE/.ai-files-shared"
+
 echo ""
 echo "================================"
 echo "PASS=$PASS FAIL=$FAIL"

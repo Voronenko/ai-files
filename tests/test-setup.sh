@@ -49,6 +49,11 @@ STUB_LOG="$BASE/stub.log"; export STUB_LOG STUB_STATE
 cat > "$STUBS/ai-files" <<'EOF'
 #!/usr/bin/env bash
 echo "ai-files $*" >> "$STUB_LOG"
+# Mimic the real catalog so step 6 runs past its early "known is empty" exit.
+[[ "$1 $2" == "mcp known" ]] && printf 'repo-memory\n'
+# 'mcp has' exits 0 => every known server counts as already registered.
+# Simulate a NON-nested checkout: the shared-memory probe must report "no".
+[[ "$1 $2 $3" == "mcp shared-memory --check" ]] && exit 1
 exit 0
 EOF
 cat > "$STUBS/graphify" <<'EOF'
@@ -79,9 +84,10 @@ chmod +x "$STUBS/ai-files" "$STUBS/graphify"
 # ollama or fzf, mirroring a clean CI runner.
 HERMETIC="$STUBS:/usr/bin:/bin"
 
-run_setup() { # run_setup <dir> <stdin-mode: yes|no|null>
-    (cd "$BASE/$1" && PATH="$HERMETIC" "$SETUP" \
-        < <(case "$2" in yes) yes ;; no) yes n ;; null) cat /dev/null ;; esac) \
+run_setup() { # run_setup <dir> <stdin-mode: yes|no|null> [extra setup args...]
+    local dir="$1" mode="$2"; shift 2
+    (cd "$BASE/$dir" && PATH="$HERMETIC" "$SETUP" "$@" \
+        < <(case "$mode" in yes) yes ;; no) yes n ;; null) cat /dev/null ;; esac) \
         2>&1)
 }
 
@@ -147,6 +153,28 @@ echo "=== S5: help documents the new step-4 actions ==="
 HELP_OUT="$("$SETUP" -h 2>&1)"
 echo "$HELP_OUT" | grep -q "graphify hook install" && ok "s5 help lists hook install" || bad "s5 help lists hook install"
 echo "$HELP_OUT" | grep -q "ai-files graphify ." && ok "s5 help lists indexing command" || bad "s5 help lists indexing command"
+echo "$HELP_OUT" | grep -q -- "--shared-memory" && ok "s5 help lists --shared-memory" || bad "s5 help lists --shared-memory"
+
+echo "=== S6: --shared-memory forces the proposal at a non-nested path ==="
+# The stub's shared-memory --check exits 1 (non-nested): without the flag the
+# proposal must not appear; with it, the forced migration must run.
+T=s6; fresh "$T"; : > "$STUB_LOG"
+S6_OUT="$(run_setup "$T" yes)"; RC=$?
+export S6_OUT
+expect "s6 without flag: setup exits 0" test "$RC" -eq 0
+expect "s6 without flag: no shared-memory proposal" \
+    bash -c "! printf '%s' \"\$S6_OUT\" | grep -q 'Use shared memory DB'"
+expect "s6 without flag: no migration invoked (probe --check may appear)" \
+    bash -c "! grep -q '^ai-files mcp shared-memory -y' '$STUB_LOG'"
+
+T=s6b; fresh "$T"; : > "$STUB_LOG"
+S6B_OUT="$(run_setup "$T" yes --shared-memory)"; RC=$?
+export S6B_OUT
+expect "s6b with flag: setup exits 0" test "$RC" -eq 0
+expect "s6b with flag: forced proposal printed" \
+    bash -c "printf '%s' \"\$S6B_OUT\" | grep -q 'Shared memory forced (--shared-memory)'"
+expect "s6b with flag: forced migration invoked" \
+    grep -qx "ai-files mcp shared-memory -y --force" "$STUB_LOG"
 
 echo ""
 echo "================================"

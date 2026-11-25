@@ -161,7 +161,7 @@ ai-files mcp <command> [options]
 | `get <name>` | Get details about a specific server (primary) |
 | `add-json <name> <json>` | Add server via raw JSON configuration |
 | `sync [-y] [--dry-run] [--check]` | Propagate `.mcp.json` entries into `opencode.json` / `zcode.json`; `--check` is a read-only drift probe (exit 0/1); reports secondary-only servers untouched |
-| `shared-memory [-y] [--dry-run] [--check]` | Shared memory DB for nested checkouts (see below) |
+| `shared-memory [-y] [--dry-run] [--check] [--force]` | Shared memory DB + session files for nested checkouts; `--force` shares at any repo path (see below) |
 | `memory-path [-y] [--dry-run] [--check]` | Align the memory DB path across configs (see below) |
 | `memory-import <src.db> [tgt.db] [--execute]` | Merge memories from one `memory.db` into another (dry-run by default) |
 | `known` | Print built-in server names (one per line) |
@@ -231,11 +231,13 @@ ai-files mcp serve --env XYZ=111 -- ./server-binary --stdio
 When a repository is checked out inside a folder named after the repo itself — `<git-repo-name>/<clone-folder>` (e.g. `premapp-backend/mig-repo` or `premapp-backend/premapp-backend`); the repo name is taken from the remote origin URL, falling back to the checkout folder name — sibling clones under the same parent can share one memory database:
 
 ```bash
-ai-files mcp shared-memory          # detect + propose migration
-ai-files mcp shared-memory --check  # silent exit code probe (0 = nested)
+ai-files mcp shared-memory               # detect + propose migration
+ai-files mcp shared-memory --check        # silent exit code probe (0 = nested)
+ai-files mcp shared-memory --force        # share at ANY repo path
+ai-files setup --shared-memory            # same, from the setup wizard
 ```
 
-It creates `<parent>/.ai-files-shared/`, rewrites `MCP_MEMORY_SQLITE_PATH` from `.ai-files/memory.db` to `../.ai-files-shared/memory.db` in every config that still uses the default path (custom paths are reported but never touched), and offers to copy an existing database using a consistent `sqlite3 .backup` snapshot (raw-copy fallback when sqlite3 is unavailable). `ai-files mcp add repo-memory` proposes the shared path automatically when a nested checkout is detected.
+It creates `<parent>/.ai-files-shared/`, rewrites `MCP_MEMORY_SQLITE_PATH` from `.ai-files/memory.db` to `../.ai-files-shared/memory.db` in every config that still uses the default path (custom paths are reported but never touched), and offers to copy an existing database using a consistent `sqlite3 .backup` snapshot (raw-copy fallback when sqlite3 is unavailable). An existing `memory.db` in the shared folder is **never touched** — memories can be merged manually with `ai-files mcp memory-import`. It also offers to share session files: `.ai-files/sessions/` is merged into `<parent>/.ai-files-shared/sessions/` (existing shared session files are never overridden) and replaced by a relative symlink, so every clone under the parent records its workouts in one shared history. `--force` applies all of this at any repo path, not only nested checkouts. `ai-files mcp add repo-memory` proposes the shared path automatically when a nested checkout is detected.
 
 **Sharing the memory DB across projects (`memory-path` / `memory-import`)**
 
@@ -547,8 +549,10 @@ Must be run from the **root** of a git repository (exits with an error otherwise
 
 **Usage:**
 ```bash
-ai-files setup
+ai-files setup [--shared-memory]
 ```
+
+`--shared-memory` forces the shared memory proposal of step 6 at **any** repo path (memory DB + session files at `../.ai-files-shared/`), not only for nested checkouts.
 
 **Steps (each interactive):**
 0. Bootstrap `.ai-files/` if missing (`ai-files update files`)
@@ -557,7 +561,7 @@ ai-files setup
 3. Relink agent folders — per-agent y/N for `link-claude`, `link-kilo`, `link-opencode`, `link-specify`
 4. Initialize graphify — copies `.graphifyignore` to the repo root when `graphify-out/` is absent (a present `.graphifyignore` counts as done); then validates the graphify backend stored in repo git config (`aifiles.graphify-backend` / `aifiles.graphify-model`) — when unset, offers a numbered selection over graphify built-ins + registered custom providers (`ollama-local` is the default). Choosing `ollama-local` asks for the model: an fzf picker over presets (`glm-4.7-flash`, `deepseek-coder-v2:latest`) plus installed models, any custom name accepted (plain prompt when fzf is absent); the choice is validated against `ollama list`, offering `ollama pull` on the spot — a failed pull re-asks, declining keeps the name unverified
 5. Create missing dotfile templates — `.mcp.json`, `opencode.json`, `zcode.json` copied from the ai-files install root
-6. Register known MCP servers when missing — offers `ai-files mcp add repo-memory` / `add ssh-manager` (each writes `.mcp.json`, `opencode.json`, `zcode.json` in one run); when the repo is a nested checkout (`<git-repo-name>/<clone-folder>`), additionally proposes migrating repo-memory to the shared `../.ai-files-shared/memory.db`; finally validates the memory DB path on every run — a global `MCP_MEMORY_SQLITE_PATH` env var (or the stored `aifiles.memory-db-path` git-config key) wins over whatever the configs use, realigning all three via `ai-files mcp memory-path` and offering a memory import when both old and new DBs exist
+6. Register known MCP servers when missing — offers `ai-files mcp add repo-memory` / `add ssh-manager` (each writes `.mcp.json`, `opencode.json`, `zcode.json` in one run); when the repo is a nested checkout (`<git-repo-name>/<clone-folder>`) or `--shared-memory` was passed, additionally proposes sharing the memory DB + session files at `../.ai-files-shared/`; finally validates the memory DB path on every run — a global `MCP_MEMORY_SQLITE_PATH` env var (or the stored `aifiles.memory-db-path` git-config key) wins over whatever the configs use, realigning all three via `ai-files mcp memory-path` and offering a memory import when both old and new DBs exist
 7. Suggest ignore entries for untracked setup files (`.claude/`, `.graphifyignore`, `.kilo/`, `.mcp.json`, `.opencode/`, `.specify/`, `opencode.json`, `zcode.json`) — written to `.gitignore.local` (symlink to `./.git/info/exclude`) when present, else `.gitignore`
 
 ### ai-files version

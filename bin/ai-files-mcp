@@ -22,7 +22,8 @@ set -euo pipefail
 # per-file presence. 'shared-memory' handles nested checkouts — a repo cloned
 # into a folder named after the repo itself (<git-repo-name>/<clone-folder>,
 # matched via remote origin, e.g. premapp-backend/mig-repo) — by pointing
-# repo-memory at ../.ai-files-shared/memory.db.
+# repo-memory at ../.ai-files-shared/memory.db, sharing session files via an
+# .ai-files/sessions symlink; --force shares at ANY repo path.
 
 get_git_root() {
     git rev-parse --show-toplevel 2>/dev/null || echo ""
@@ -972,28 +973,33 @@ cmd_sync() {
 }
 
 ############################################
-# shared-memory (nested checkout migration)
+# shared-memory (nested checkout migration; --force shares at any path)
 ############################################
 
 cmd_shared_memory() {
-    local check_only=false
+    local check_only=false force=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -y|--yes) AUTO_YES=true; shift ;;
             --dry-run) DRY_RUN=true; shift ;;
             --check) check_only=true; shift ;;
+            --force) force=true; shift ;;
             -h|--help) show_mcp_help; return 0 ;;
             *) print_error "Unknown shared-memory option: $1"; exit 1 ;;
         esac
     done
 
     if [[ "$check_only" == "true" ]]; then
+        # --force overrides the nested-checkout detection: eligible everywhere.
+        if [[ "$force" == "true" ]]; then
+            return 0
+        fi
         is_nested_checkout
         return $?
     fi
 
-    if ! is_nested_checkout; then
-        print_info "Not a nested checkout (no <git-repo-name>/<clone-folder> parent match) — nothing to do."
+    if [[ "$force" != "true" ]] && ! is_nested_checkout; then
+        print_info "Not a nested checkout (no <git-repo-name>/<clone-folder> parent match) — nothing to do. Re-run with --force to share the memory DB + session files anyway."
         return 0
     fi
 
@@ -1003,7 +1009,11 @@ cmd_shared_memory() {
     # <parent>/.ai-files-shared/
     local shared_dir
     shared_dir="$(dirname "${GIT_ROOT}/${SHARED_DB_REL}")"
-    print_warning "Nested checkout detected: $(nested_checkout_label)"
+    if [[ "$force" == "true" ]] && ! is_nested_checkout; then
+        print_warning "Shared memory forced (--force): memory DB + session files at ${parent_name}/${SHARED_DIR_NAME}/."
+    else
+        print_warning "Nested checkout detected: $(nested_checkout_label)"
+    fi
 
     # Without the shared folder, rewrites would point configs at a nonexistent
     # path and the DB copy would fail mid-run — skip the whole migration
@@ -1055,7 +1065,10 @@ cmd_shared_memory() {
 
     local old_db="${GIT_ROOT}/${DEFAULT_DB_REL}"
     local new_db="${shared_dir%/}/memory.db"
-    if [[ -f "$old_db" && ! -f "$new_db" ]]; then
+    if [[ -f "$old_db" && -f "$new_db" ]]; then
+        # A shared DB from another clone already exists — never touch it.
+        print_info "Shared memory.db already exists — kept as is (merge manually with 'ai-files mcp memory-import ${DEFAULT_DB_REL} ${SHARED_DB_REL} --execute' if needed)."
+    elif [[ -f "$old_db" && ! -f "$new_db" ]]; then
         if confirm "Copy existing database into the shared location?"; then
             if [[ "$DRY_RUN" != "true" ]]; then
                 # sqlite3 .backup takes a consistent snapshot even while a
@@ -1074,6 +1087,37 @@ cmd_shared_memory() {
         else
             print_warning "Existing database not copied (server starts fresh in the shared location)."
         fi
+    fi
+
+    # Session files: share .ai-files/sessions/ between clones via a relative
+    # symlink into the shared folder (relative = portable across clones and
+    # worktrees). MERGE, never override: files already in the shared folder
+    # (from other clones) are kept as is; the repo's files only fill the
+    # gaps. The repo dir is then replaced by the symlink.
+    local sessions="${GIT_ROOT}/.ai-files/sessions"
+    local sessions_link="../../${SHARED_DIR_NAME}/sessions"
+    if [[ -L "$sessions" ]]; then
+        if [[ "$(readlink "$sessions")" == "$sessions_link" ]]; then
+            print_info "Session files already shared (${sessions_link})."
+        else
+            print_warning ".ai-files/sessions is a symlink to '$(readlink "$sessions")' — left untouched."
+        fi
+    elif confirm "Share session files too (.ai-files/sessions -> ${sessions_link})?"; then
+        if [[ "$DRY_RUN" != "true" ]]; then
+            mkdir -p "${shared_dir%/}/sessions"
+            if [[ -d "$sessions" ]]; then
+                # -n = no-clobber: existing shared files win on name clash
+                # (timestamped session names rarely clash; a clashing repo
+                # file is dropped in favor of the shared version).
+                cp -a -n "${sessions%/}/." "${shared_dir%/}/sessions/"
+                rm -rf "$sessions"
+            fi
+            mkdir -p "${sessions%/*}"
+            ln -s "$sessions_link" "$sessions"
+        fi
+        print_success "Session files merged into ${parent_name}/${SHARED_DIR_NAME}/sessions (existing shared files kept); .ai-files/sessions symlinked."
+    else
+        print_warning "Session files stay per-repo."
     fi
 
     if [[ "$DRY_RUN" == "true" ]]; then
@@ -1366,7 +1410,7 @@ Commands:
   list                                   List servers with per-file presence
   get <name>                             Get details about a server
   sync [-y] [--dry-run] [--check]        Propagate .mcp.json to other configs (--check: read-only drift probe, exit 0/1)
-  shared-memory [-y] [--dry-run] [--check]  Shared DB for nested (<repo>/<clone>) checkouts
+  shared-memory [-y] [--dry-run] [--check] [--force]  Shared DB (+session files) for nested (<repo>/<clone>) checkouts; --force shares at any path
   memory-path [-y] [--dry-run] [--check]  Align memory DB path (MCP_MEMORY_SQLITE_PATH env > aifiles.memory-db-path)
   memory-import <src.db> [tgt.db] [--execute]  Merge memories src→tgt (default: dry-run preview)
   known                                  Print built-in server names (one per line)
@@ -1392,6 +1436,7 @@ Examples:
   ai-files mcp add --transport stdio git --env TOKEN=AA -- npx -y git-mcp-server
   ai-files mcp sync --dry-run                        # preview drift repair
   ai-files mcp shared-memory                         # migrate to ../.ai-files-shared
+  ai-files mcp shared-memory --force                 # share even when not a nested checkout
   ai-files mcp memory-path -y                        # realign configs + pin aifiles.memory-db-path
   ai-files mcp memory-import ../old/memory.db        # preview merge into current DB
   ai-files mcp memory-import ../old/memory.db --execute
