@@ -120,11 +120,17 @@ expect "s2 reports graph exists" \
     bash -c "printf '%s' \"\$S2_OUT\" | grep -q 'graph exists'"
 
 echo "=== S3: graphify binary absent — skip messages, no crash ==="
+# Hermetic like every other scenario: ai-files stays stubbed (the real
+# 'ai-files update files' needs a built dist/, which CI checkouts lack);
+# only the graphify binary is absent — that absence is what S3 tests.
+NOGRAPHIFY="$BASE/stubs-nographify"
+mkdir -p "$NOGRAPHIFY"
+ln -sf "$STUBS/ai-files" "$NOGRAPHIFY/ai-files"
 rm -f "$STUB_STATE/hooks-installed"
 T=s3; fresh "$T"
 git -C "$BASE/$T" config --unset aifiles.graphify-backend
 : > "$STUB_LOG"
-S3_OUT="$(cd "$BASE/$T" && PATH="${STUBS%/stubs}:/usr/bin:/bin" "$SETUP" \
+S3_OUT="$(cd "$BASE/$T" && PATH="$NOGRAPHIFY:/usr/bin:/bin" "$SETUP" \
     </dev/null 2>&1)"; RC=$?
 export S3_OUT
 expect "s3 exits 0" test "$RC" -eq 0

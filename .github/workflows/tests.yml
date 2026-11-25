@@ -30,6 +30,7 @@ jobs:
 
       - name: Run integration suites
         run: |
+          set -o pipefail
           fail=0
           mkdir -p reports
           # Guard: every shell suite in tests/ must be matched by the loop
@@ -40,8 +41,9 @@ jobs:
               *) echo "::error::suite not matched by CI loop: $f"; fail=1 ;;
             esac
           done
-          # Default shell is bash -e -o pipefail, so `| tee` still propagates
-          # the suite's exit code into the || branch.
+          # The runner's default shell for run: is bash -e WITHOUT pipefail —
+          # enabled above so `| tee` propagates each suite's exit code into
+          # the || branch (a failing suite must fail the job).
           for s in tests/run-tests.sh tests/test-*.sh; do
             echo "::group::==> $s"
             bash "$s" 2>&1 | tee "reports/$(basename "$s" .sh).log" || fail=1
