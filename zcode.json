@@ -23,7 +23,8 @@
           "serve",
           "--mcp"
         ],
-        "enabled": true
+        "enabled": true,
+        "alwaysLoad": true
       },
       "graphify": {
         "type": "stdio",

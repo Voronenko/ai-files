@@ -538,6 +538,41 @@ PY23
 expect "t23 junit xml valid with correct counts + escaping" test $? -eq 0
 expect_fail "t23 converter requires at least one log" python3 "$JUNIT" --out "$BASE/x.xml"
 
+echo "=== T24: alwaysLoad propagates to secondaries + drift via list/sync/--check ==="
+T24=$BASE/t24; fresh t24
+(cd "$T24" && "$MCP" add codegraph -y) >/dev/null 2>&1
+expect "t24 alwaysLoad in primary" \
+    bash -c "jq -e '.mcpServers.codegraph.alwaysLoad == true' '$T24/.mcp.json'"
+expect "t24 alwaysLoad converted into opencode + zcode" \
+    bash -c "jq -e '.mcp.codegraph.alwaysLoad == true' '$T24/opencode.json' && jq -e '.mcp.servers.codegraph.alwaysLoad == true' '$T24/zcode.json'"
+expect "t24 autoApprove still absent in secondaries" \
+    bash -c "jq -e '.mcp.codegraph | has(\"autoApprove\") | not' '$T24/opencode.json' && jq -e '.mcp.servers.codegraph | has(\"autoApprove\") | not' '$T24/zcode.json'"
+expect "t24 sync --check exit 0 when in sync" \
+    bash -c "cd '$T24' && '$MCP' sync --check"
+jq 'del(.mcp.servers.codegraph.alwaysLoad)' "$T24/zcode.json" > "$BASE/z24.tmp" && mv "$BASE/z24.tmp" "$T24/zcode.json"
+expect_fail "t24 sync --check exit 1 on alwaysLoad drift" \
+    bash -c "cd '$T24' && '$MCP' sync --check"
+LIST_OUT=$(cd "$T24" && "$MCP" list)
+export LIST_OUT
+expect "t24 list marks codegraph diverged (~) in zcode column" \
+    bash -c "printf '%s\n' \"\$LIST_OUT\" | awk '\$1==\"codegraph\"{exit !(\$4==\"~\")}'"
+(cd "$T24" && "$MCP" sync -y) >/dev/null 2>&1
+expect "t24 sync restores alwaysLoad in zcode" \
+    bash -c "jq -e '.mcp.servers.codegraph.alwaysLoad == true' '$T24/zcode.json'"
+expect "t24 back in sync" bash -c "cd '$T24' && '$MCP' sync --check"
+
+echo "=== T25: sync --check is read-only (no creation, no writes) ==="
+T25=$BASE/t25; fresh t25
+printf '{"mcpServers":{"codegraph":{"type":"stdio","command":"codegraph","args":["serve","--mcp"],"alwaysLoad":true}}}\n' > "$T25/.mcp.json"
+expect_fail "t25 absent secondaries count as drift (exit 1)" \
+    bash -c "cd '$T25' && '$MCP' sync --check"
+expect "t25 --check created no opencode.json" test ! -f "$T25/opencode.json"
+expect "t25 --check created no zcode.json"    test ! -f "$T25/zcode.json"
+BEFORE25="$(jq -Sc . "$T25/.mcp.json")"
+(cd "$T25" && "$MCP" sync --check) >/dev/null 2>&1 || true
+expect "t25 --check left .mcp.json unchanged" \
+    test "$(jq -Sc . "$T25/.mcp.json")" = "$BEFORE25"
+
 echo ""
 echo "================================"
 echo "PASS=$PASS FAIL=$FAIL"

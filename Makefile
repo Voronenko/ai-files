@@ -1320,6 +1320,9 @@ install-mcp-memory-service:
 install-mcp-ssh-manager:
 	npm install -g mcp-ssh-manager
 
+install-mcp-jira:
+	pipx install "mcp-atlassian[wpad]"
+
 install-cli-to-local-bin:
 	@set -e; \
 	SRC="$(PWD)/bin/ai-files"; \

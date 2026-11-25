@@ -16,6 +16,7 @@ set -euo pipefail
 #   6) Register known MCP servers when missing     (ai-files mcp add <name>)
 #      + shared memory DB proposal for nested checkouts (<repo>/<clone>)
 #      + memory DB path validation (env MCP_MEMORY_SQLITE_PATH vs aifiles.memory-db-path)
+#      + secondary config drift repair (ai-files mcp sync --check)
 #      + CodeGraph initialization when 'codegraph' MCP server is registered
 #   7) Suggest .gitignore for untracked setup files
 
@@ -531,6 +532,19 @@ step6_mcp_servers() {
         fi
     fi
 
+    # Secondary drift: opencode.json/zcode.json entries missing or diverged
+    # from .mcp.json (e.g. alwaysLoad added to a known server later). Runs
+    # AFTER the memory-path block: a declined realign leaves intentional
+    # path drift the user can equally decline to repair here.
+    if ! run_ai_files mcp sync --check >/dev/null 2>&1; then
+        print_warning "[6/7] MCP config drift: opencode.json/zcode.json entries missing or diverged from .mcp.json."
+        if confirm "[6/7] Repair drift (ai-files mcp sync)?"; then
+            run_ai_files mcp sync -y
+        else
+            print_info "[6/7] Keeping drifted MCP configs."
+        fi
+    fi
+
     # CodeGraph: offer initialization when its MCP server is registered in
     # .mcp.json (possibly just added above). Idempotent guard: .codegraph/
     # already present means the index exists — nothing to initialize.
@@ -630,6 +644,7 @@ Steps:
   6  Register known MCP servers when missing     (.mcp.json / opencode.json / zcode.json)
      + shared memory DB proposal for nested checkouts (<x>/<x>)
      + memory DB path validation (MCP_MEMORY_SQLITE_PATH vs aifiles.memory-db-path)
+     + secondary config drift repair (ai-files mcp sync --check)
      + CodeGraph init when 'codegraph' MCP server is registered
   7  Suggest ignore entries for untracked setup files (.gitignore / .gitignore.local)
 

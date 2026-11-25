@@ -44,6 +44,7 @@
       ]
     },
     "ssh-manager": {
+      "type": "stdio",
       "command": "mcp-ssh-manager",
       "args": [],
       "autoApprove": [
@@ -61,7 +62,8 @@
       "args": [
         "serve",
         "--mcp"
-      ]
+      ],
+      "alwaysLoad": true
     },
     "graphify": {
       "type": "stdio",

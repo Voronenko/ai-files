@@ -15,7 +15,8 @@ set -euo pipefail
 # write the primary first, then apply the equivalent converted change to both
 # secondary files (skeletons are created on demand; unrelated top-level keys
 # are merged, never overwritten). autoApprove is stored in .mcp.json only —
-# opencode/zcode do not support it.
+# opencode/zcode do not support it. alwaysLoad IS carried into both
+# secondaries by the converters (convert_to_*).
 #
 # 'sync' repairs drift from the primary into the secondaries; 'list' shows
 # per-file presence. 'shared-memory' handles nested checkouts — a repo cloned
@@ -204,7 +205,8 @@ convert_to_opencode() { # primary JSON on stdin -> opencode JSON on stdout
           then ({ type: "local",
                   command: ([.command] + (.args // [])),
                   enabled: true }
-                + (if (.env // null) != null then { environment: .env } else {} end))
+                + (if (.env // null) != null then { environment: .env } else {} end)
+                + (if has("alwaysLoad") then { alwaysLoad: .alwaysLoad } else {} end))
           else (if (.transport // null) != null and (.type // null) == null
                 then . + { type: .transport } | del(.transport)
                 else .
@@ -219,7 +221,8 @@ convert_to_zcode() { # primary JSON on stdin -> zcode JSON on stdout
                   command: .command,
                   args: (.args // []),
                   enabled: true }
-                + (if (.env // null) != null then { environment: .env } else {} end))
+                + (if (.env // null) != null then { environment: .env } else {} end)
+                + (if has("alwaysLoad") then { alwaysLoad: .alwaysLoad } else {} end))
           else (if (.transport // null) != null and (.type // null) == null
                 then . + { type: .transport } | del(.transport)
                 else .
@@ -878,16 +881,19 @@ mcp_add() {
 ############################################
 
 cmd_sync() {
+    local check_only=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -y|--yes) AUTO_YES=true; shift ;;
             --dry-run) DRY_RUN=true; shift ;;
+            --check) check_only=true; shift ;;
             -h|--help) show_mcp_help; return 0 ;;
             *) print_error "Unknown sync option: $1"; exit 1 ;;
         esac
     done
 
-    ensure_primary
+    # --check is a read-only probe: it must not create .mcp.json.
+    [[ "$check_only" == "true" ]] || ensure_primary
     preflight_validate || return 1
 
     # Hoist names out of the stream: confirm() below reads stdin, so a
@@ -895,6 +901,33 @@ cmd_sync() {
     # answers (a server named "y" would approve its own sync).
     local -a names=()
     mapfile -t names < <(primary_names)
+
+    # --check: read-only drift probe. Uses the exact conditions the loop
+    # below offers to fix (absent file or absent/diverged entry) so the
+    # check can never disagree with the repair. Secondary-only servers are
+    # informational only and do not affect the exit code.
+    if [[ "$check_only" == "true" ]]; then
+        local drift=0 name json
+        for name in "${names[@]}"; do
+            [[ -z "$name" ]] && continue
+            json="$(primary_get "$name")"
+            [[ -z "$json" ]] && continue
+            if [[ -f "$CONFIG_OPENCODE" ]] && opencode_has "$name"; then
+                opencode_entry_matches "$name" "$json" || { print_error "drift: '$name' differs in opencode.json"; drift=1; }
+            else
+                print_error "drift: '$name' missing in opencode.json"
+                drift=1
+            fi
+            if [[ -f "$CONFIG_ZCODE" ]] && zcode_has "$name"; then
+                zcode_entry_matches "$name" "$json" || { print_error "drift: '$name' differs in zcode.json"; drift=1; }
+            else
+                print_error "drift: '$name' missing in zcode.json"
+                drift=1
+            fi
+        done
+        [[ $drift -eq 0 ]] && print_success "Configs in sync with .mcp.json."
+        exit $drift
+    fi
 
     local updated=0 name json
     for name in "${names[@]}"; do
@@ -1292,6 +1325,8 @@ JSON
                   {}
                 end
               )
+              +
+              (if has("alwaysLoad") then { alwaysLoad: .alwaysLoad } else {} end)
             else
               .
             end
@@ -1330,7 +1365,7 @@ Commands:
   remove [-y] [--dry-run] <name>         Remove server from all configs (asks unless -y)
   list                                   List servers with per-file presence
   get <name>                             Get details about a server
-  sync [-y] [--dry-run]                  Propagate .mcp.json to other configs
+  sync [-y] [--dry-run] [--check]        Propagate .mcp.json to other configs (--check: read-only drift probe, exit 0/1)
   shared-memory [-y] [--dry-run] [--check]  Shared DB for nested (<repo>/<clone>) checkouts
   memory-path [-y] [--dry-run] [--check]  Align memory DB path (MCP_MEMORY_SQLITE_PATH env > aifiles.memory-db-path)
   memory-import <src.db> [tgt.db] [--execute]  Merge memories src→tgt (default: dry-run preview)

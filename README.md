@@ -142,7 +142,7 @@ Configure and manage MCP (Model Context Protocol) servers across three project c
 - `opencode.json` — secondary (`mcp` section, opencode format)
 - `zcode.json` — secondary (`mcp.servers`, zcode format)
 
-Every mutating command (`add`, `add-json`, `remove`) writes the primary first, then applies the equivalent converted change to both secondaries in the same run. Unrelated keys (e.g. `permission`, `lsp` in `opencode.json`) are merged, never overwritten; missing files are created from skeletons. The per-server `autoApprove` list is stored in `.mcp.json` only — opencode/zcode do not support it. Re-syncing an existing server preserves its secondary `enabled` flag, so a deliberately disabled server stays disabled. Before writing, all three config files are validated as JSON to avoid partial multi-file updates.
+Every mutating command (`add`, `add-json`, `remove`) writes the primary first, then applies the equivalent converted change to both secondaries in the same run. Unrelated keys (e.g. `permission`, `lsp` in `opencode.json`) are merged, never overwritten; missing files are created from skeletons. The per-server `autoApprove` list is stored in `.mcp.json` only — opencode/zcode do not support it. The per-server `alwaysLoad` flag (e.g. codegraph) is carried into both secondary configs by the converters. Re-syncing an existing server preserves its secondary `enabled` flag, so a deliberately disabled server stays disabled. Before writing, all three config files are validated as JSON to avoid partial multi-file updates.
 
 **Usage:**
 ```bash
@@ -155,12 +155,12 @@ ai-files mcp <command> [options]
 |---------|-------------|
 | `serve [options] -- <cmd> [args...]` | Start an MCP stdio server with environment variables |
 | `add [-y] [--dry-run] <name> <cmd|url> [...]` | Add MCP server entry with specified transport |
-| `add [-y] [--dry-run] <known-name>` | Register a built-in server (`repo-memory`, `ssh-manager`) into all configs |
+| `add [-y] [--dry-run] <known-name>` | Register a built-in server (`repo-memory`, `ssh-manager`, `codegraph`, `graphify`) into all configs |
 | `remove [-y] [--dry-run] <name>` | Remove MCP server from all configs (asks for confirmation unless `-y`) |
 | `list` | List servers with per-file presence (`✓` in sync, `~` diverged, `-` absent) |
 | `get <name>` | Get details about a specific server (primary) |
 | `add-json <name> <json>` | Add server via raw JSON configuration |
-| `sync [-y] [--dry-run]` | Propagate `.mcp.json` entries into `opencode.json` / `zcode.json`; reports secondary-only servers untouched |
+| `sync [-y] [--dry-run] [--check]` | Propagate `.mcp.json` entries into `opencode.json` / `zcode.json`; `--check` is a read-only drift probe (exit 0/1); reports secondary-only servers untouched |
 | `shared-memory [-y] [--dry-run] [--check]` | Shared memory DB for nested checkouts (see below) |
 | `memory-path [-y] [--dry-run] [--check]` | Align the memory DB path across configs (see below) |
 | `memory-import <src.db> [tgt.db] [--execute]` | Merge memories from one `memory.db` into another (dry-run by default) |
